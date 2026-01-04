@@ -1,8 +1,16 @@
+# python/market/price_feed.py
 import requests
 from datetime import datetime, timezone
+
 from config import SYMBOL, VS_CURRENCY
 
+
 def fetch_price_with_time():
+    """
+    v0.1 price feed:
+    - CoinGecko simple price
+    - returns (price, timestamp_utc)
+    """
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {"ids": SYMBOL, "vs_currencies": VS_CURRENCY}
     resp = requests.get(url, params=params, timeout=10)
