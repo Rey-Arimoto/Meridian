@@ -1,183 +1,175 @@
-Meridian
+# Meridian
 
-Meridian is an entropy-native intelligence for on-chain markets.
-It earns alpha from entropy, protects capital from entropy, and refuses to act when entropy dominates.
+**Intelligence Against Entropy**
 
-Meridian is not a “trading bot.”
-It is a stateful intelligence system designed to survive and profit in markets that become increasingly chaotic, reflexive, and automated.
+Meridian is an entropy-native intelligence layer for markets.  
+It exists to preserve, grow, and protect capital when markets become unexplainable.
 
-⸻
+---
 
-Core Idea
+## What is Meridian?
 
-Markets do not fail because of lack of strategies.
-They fail because the underlying assumptions silently break.
+Meridian is **not a trading bot** and **not a price prediction system**.
 
-Meridian treats entropy as a first-class state variable:
+It is a system that continuously measures **market entropy** —  
+how explainable the current market state is relative to existing rules, assumptions, and strategies —  
+and decides **whether action itself is justified**.
 
-Entropy = how much the current market state becomes unexplained by existing rules, models, and strategies.
+When explanation collapses, Meridian does not attempt to trade.
+It refuses to act.
 
-When entropy is low, structure exists → action is allowed.
-When entropy rises, structure collapses → restraint becomes intelligence.
+This refusal is not passive.
+It is enforced intelligence.
 
-Meridian’s core belief:
+---
 
-The most valuable action in high-entropy markets is often non-action.
+## Alpha: Intelligence Against Entropy
 
-⸻
+Meridian does not seek alpha by predicting prices better.
 
-What Meridian Is (and Is Not)
+It extracts alpha by **measuring entropy** and **aligning action with market explainability**.
 
-Meridian IS
-	•	An entropy-native market intelligence
-	•	A system that earns alpha when structure emerges
-	•	A system that automatically freezes when structure collapses
-	•	A foundation for intelligence-native on-chain markets
+Markets are classified into **Entropy Regimes**:
 
-Meridian IS NOT
-	•	A high-frequency trading bot
-	•	A prediction engine
-	•	A “black box AI that always trades”
-	•	A strategy optimized only for returns
+- **Stable Regime** — low entropy, assumptions hold
+- **Unstable Regime** — entropy rising, assumptions weakening
+- **Chaotic Regime** — high entropy, behavior unexplainable
+- **Reformation Regime** — entropy declining, new order forming
 
-⸻
+All strategies are subordinated to the current Entropy Regime.
 
-Why Entropy?
+### The NoOp Premium
 
-Traditional indicators assume stability.
-Entropy measures when that assumption itself breaks.
+Meridian’s most distinctive alpha source is **NoOp**.
 
-Meridian’s entropy is:
-	•	Not volatility
-	•	Not randomness
-	•	Not noise
+In Chaotic Regimes:
+- signals lose meaning,
+- correlations spike,
+- forced action destroys capital.
 
-It is a measure of explanation failure.
+Meridian treats **not acting** as a first-class strategic action, enforced by constitutional rules.
 
-When entropy crosses a constitutional threshold, Meridian must stop.
+Avoiding catastrophic loss during chaos — and re-entering early during reformation —  
+creates a compounding advantage others cannot replicate.
 
-📄 Detailed definition:
-👉 docs/entropy_spec.md
+👉 For a detailed explanation, see [docs/alpha.md](docs/alpha.md).
 
-⸻
+---
 
-Constitution Summary (5 Lines)
-	1.	Entropy is the primary state variable.
-	2.	Action is permitted only when entropy allows explanation.
-	3.	Non-action (NoOp) is a first-class decision.
-	4.	Freeze is mandatory at critical entropy.
-	5.	Survival precedes profit.
+## Why Entropy?
 
-⸻
+Traditional systems assume markets are always interpretable.
 
-Current Status
+Meridian rejects this assumption.
 
-Phase A — v0.1 ✅
+Entropy answers a different question:
 
-Paper Trading Loop (Completed)
-	•	Composite entropy calculation
-	•	Entropy-based freeze (bp threshold)
-	•	Deterministic decision loop
-	•	CSV logging for every state and action
-	•	Capital-preserving paper broker
+> *Is the market still explainable by what we think we know?*
 
-Key property:
+When the answer is no, prediction is meaningless.
+Meridian stops.
 
-Meridian can prove why it did nothing.
+Entropy in Meridian is a **state variable**, not a signal.
 
-⸻
+👉 See [docs/entropy_spec.md](docs/entropy_spec.md).
 
-Phase B — v0.2 (Starting)
+---
 
-Sui Objectization
-	•	Meridian state becomes an on-chain object
-	•	Deterministic state transitions
-	•	Off-chain execution with on-chain verification
-	•	No learning, no randomness, full reproducibility
+## Architecture (v0.1)
 
-⸻
+Meridian v0.1 is intentionally simple and conservative.
 
-Repository Structure
+- Composite entropy calculation (volatility + structural dispersion)
+- Entropy expressed in **basis points (bp)**
+- Constitutional freeze above critical entropy
+- Explicit NoOp / Freeze behavior
+- Deterministic, explainable decisions
+- Full CSV logging (every decision is auditable)
 
-Meridian/
-├── README.md
-├── docs/
-│   ├── vision.md          # Philosophy & long-term vision
-│   ├── entropy_spec.md    # Formal entropy definition
-│   └── decisions.md       # ADR (design decisions)
-├── python/
-│   ├── entropy.py         # Canonical entropy implementation
-│   ├── core/              # Policy, guards, logging
-│   ├── market/            # Price feeds
-│   ├── brokers/           # Paper / real brokers
-│   └── realtime/          # v0.1 execution loop
-├── move/                  # (v0.2) On-chain contracts
-├── ts-gateway/            # (future) execution gateway
-└── logs/                  # Runtime logs (gitignored)
+There is no learning, no optimization, and no hidden behavior.
 
-Running v0.1 (Paper)
+Stability precedes intelligence.
 
-cd Meridian
-python3 -m venv .venv
-source .venv/bin/activate
-pip install requests pandas
+---
 
-python python/realtime/run_realtime.py
+## Development Roadmap
 
-Logs are written to:
+**Phase 1 — v0.1: Entropy Constitutional Core**
+- Entropy measurement
+- Freeze enforcement
+- Deterministic paper trading
+- Immutable decision logs
 
-logs/meridian_realtime_log.csv
+**Phase 2 — v0.2: State Objectization (Sui)**
+- On-chain MeridianState
+- Entropy Regime as persistent state
+- Deterministic state transitions
 
-Design Decisions (ADR)
+**Phase 3 — v0.5–0.8: Agent Core (Constrained)**
+- Plan / Act separation
+- Suggestions without execution authority
+- Hard constitutional guards remain dominant
 
-All irreversible design choices are documented.
+**Phase 4 — v1.0: Integrated Intelligence**
+- Multi-market, multi-strategy
+- Regime-driven strategy selection
+- Self-diagnosis and automatic contraction
 
-👉 docs/decisions.md
+---
 
-This includes:
-	•	Why entropy is primary
-	•	Why freeze is mandatory
-	•	Why learning is deferred
-	•	Why non-action is explicit
+## Design Principles (Constitution)
 
-⸻
+- **Regime overrides strategy**
+- **NoOp is a valid action**
+- **High entropy forces non-action**
+- **Determinism before learning**
+- **Survival before profit**
 
-Why This Matters
+These rules are non-negotiable.
 
-As markets move on-chain:
-	•	Automation increases
-	•	Reflexivity accelerates
-	•	Failure cascades become faster
+---
 
-In such markets:
+## Documentation
 
-Survival itself becomes alpha.
+- Alpha model: [docs/alpha.md](docs/alpha.md)
+- Entropy specification: [docs/entropy_spec.md](docs/entropy_spec.md)
+- Design decisions (ADR): [docs/decisions.md](docs/decisions.md)
+- Vision: [docs/vision.md](docs/vision.md)
 
-Meridian is designed not for the next trade,
-but for the next decade of intelligence-native markets.
+---
 
-⸻
+## Why Now
 
-Roadmap Snapshot
-	•	v0.1: Entropy-aware paper intelligence ✅
-	•	v0.2: On-chain state (Sui Objects)
-	•	v0.5: Weak agent loop (Plan / Act / Reflect)
-	•	v1.0: Integrated Intelligence-Native Market Agent
+Markets are becoming:
+- faster,
+- more composable,
+- more reflexive,
+- more chaotic.
 
-⸻
+On-chain systems amplify entropy instead of absorbing it.
 
-License
+In such an environment, **entropy-aware intelligence is no longer optional infrastructure**.
 
-MIT License
-See LICENSE
+---
 
-⸻
+## Why It Is Hard to Copy
 
-Final Note
+- Entropy is not a price signal
+- NoOp must be enforced against incentives
+- Regime must dominate strategy
+- Constitutional freezes cannot be overridden
+- Loss avoidance is culturally undervalued but mathematically dominant
 
-Meridian is built under one assumption:
+---
 
-Markets will continue to become more complex faster than humans can react.
+## Status
 
-In that world,
-the intelligence that knows when not to act will outlive the intelligence that always does.
+Meridian is under active development.  
+v0.1 is running as a paper system with full logging.
+
+Meridian optimizes for **survival first**, because only surviving systems get to compound.
+
+---
+
+**Meridian**  
+*Intelligence Against Entropy.*
