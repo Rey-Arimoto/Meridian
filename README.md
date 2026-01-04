@@ -1,166 +1,100 @@
-# Meridian
-Deterministic, entropy-driven stateful intelligence for survivable trading and on-chain auditability.
+Meridian
 
-Meridian is not a “smart trading bot.”  
-It is a system designed to **know when action is no longer meaningful**.
+Meridian is an entropy-native intelligence for on-chain markets.
+It earns alpha from entropy, protects capital from entropy, and refuses to act when entropy dominates.
 
----
+Meridian is not a “trading bot.”
+It is a stateful intelligence system designed to survive and profit in markets that become increasingly chaotic, reflexive, and automated.
 
-## Constitution Summary
+⸻
 
-1. Meridian acts only when the environment is interpretable; high entropy forbids action.
-2. Non-action (NoOp) is a deliberate, first-class decision and is always recorded.
-3. All state transitions are deterministic and reproducible.
-4. Execution is a privilege gated by strict guards, never an entitlement.
-5. When meaning collapses, Meridian freezes rather than degrades.
+Core Idea
 
----
+Markets do not fail because of lack of strategies.
+They fail because the underlying assumptions silently break.
 
-## Overview
+Meridian treats entropy as a first-class state variable:
 
-Meridian is a deterministic, stateful execution system driven by **entropy**, not prediction.
+Entropy = how much the current market state becomes unexplained by existing rules, models, and strategies.
 
-Most automated systems fail by continuing to act after market structure collapses.
-Meridian is designed around the opposite principle:
+When entropy is low, structure exists → action is allowed.
+When entropy rises, structure collapses → restraint becomes intelligence.
 
-> **Survival and interpretability precede profit.**
+Meridian’s core belief:
 
-The system explicitly models when signals lose semantic meaning and
-treats *non-action* as an intelligent outcome.
+The most valuable action in high-entropy markets is often non-action.
 
----
+⸻
 
-## Core Ideas
+What Meridian Is (and Is Not)
 
-### Entropy as the Primary Signal
-Meridian does not optimize for returns.
-It measures whether **structure exists at all**.
+Meridian IS
+	•	An entropy-native market intelligence
+	•	A system that earns alpha when structure emerges
+	•	A system that automatically freezes when structure collapses
+	•	A foundation for intelligence-native on-chain markets
 
-Entropy is used to detect:
-- loss of directional meaning
-- regime collapse
-- environments where decisions become indistinguishable from noise
+Meridian IS NOT
+	•	A high-frequency trading bot
+	•	A prediction engine
+	•	A “black box AI that always trades”
+	•	A strategy optimized only for returns
 
-When entropy exceeds a constitutional threshold, Meridian freezes completely.
+⸻
 
-### NoOp Is Intelligence
-Choosing not to act is not a fallback.
-It is a recorded, auditable decision with a reason.
+Why Entropy?
 
-### Determinism First
-Given the same inputs:
-- prices
-- entropy
-- deviation
-- volatility
+Traditional indicators assume stability.
+Entropy measures when that assumption itself breaks.
 
-Meridian will always produce the same state transition.
+Meridian’s entropy is:
+	•	Not volatility
+	•	Not randomness
+	•	Not noise
 
-This property is non-negotiable.
+It is a measure of explanation failure.
 
----
+When entropy crosses a constitutional threshold, Meridian must stop.
 
-## Architecture (v0.1–v0.2)
+📄 Detailed definition:
+👉 docs/entropy_spec.md
 
-### Off-chain (Executor)
-- Price observation
-- Indicator computation (entropy, deviation, volatility)
-- Deterministic state transition (`transition_offchain`)
-- Execution gating (NoOp / Freeze / Execute)
-- Full decision logging
+⸻
 
-### On-chain (starting v0.2)
-- MeridianState object
-  - phase
-  - intent
-  - last transition
-- Entropy anchoring (hash / value)
-- Freeze reason verifiability
+Constitution Summary (5 Lines)
+	1.	Entropy is the primary state variable.
+	2.	Action is permitted only when entropy allows explanation.
+	3.	Non-action (NoOp) is a first-class decision.
+	4.	Freeze is mandatory at critical entropy.
+	5.	Survival precedes profit.
 
-Execution keys are **never** stored on-chain or in Python.
-They live only in the TS Gateway `.env`.
+⸻
 
----
+Current Status
 
-## Phases & Intent (Conceptual)
+Phase A — v0.1 ✅
 
-- **Phase (P0–P5)**: What posture the system is in  
-  (Stop, Withdraw, Observe, Probe, Strike, Harvest)
+Paper Trading Loop (Completed)
+	•	Composite entropy calculation
+	•	Entropy-based freeze (bp threshold)
+	•	Deterministic decision loop
+	•	CSV logging for every state and action
+	•	Capital-preserving paper broker
 
-- **Intent (I1–I4)**: How aggressively it is allowed to act  
-  (Defensive → Emergency → Cautious → Normal)
+Key property:
 
-Execution is allowed only when **both phase and intent permit it**.
+Meridian can prove why it did nothing.
 
----
+⸻
 
-## Freeze Conditions (Critical)
+Phase B — v0.2 (Starting)
 
-Meridian will **always stop** when:
+Sui Objectization
+	•	Meridian state becomes an on-chain object
+	•	Deterministic state transitions
+	•	Off-chain execution with on-chain verification
+	•	No learning, no randomness, full reproducibility
 
-- Composite entropy ≥ CRITICAL_ENTROPY
-- Sign entropy indicates semantic collapse
-- Safety invariants are violated (slippage, loss, execution errors)
+⸻
 
-Freeze is:
-- explicit
-- logged
-- reproducible
-- expected
-
-A system that never stops is considered broken.
-
----
-
-## Usage (v0.1)
-
-1. Run the executor with price feed enabled
-2. Observe:
-   - entropy
-   - phase
-   - intent
-   - target weight
-3. Verify that:
-   - NoOp decisions are logged
-   - Freeze conditions are triggered deterministically
-
-Meridian v0.1 is about **observability**, not profit.
-
----
-
-## Roadmap
-
-- **v0.1**: Observable, deterministic execution (current)
-- **v0.2**: Sui Object–based state persistence
-- **v0.5**: Agent-style Plan/Act loop (suggestion-only)
-- **v1.0**: Multi-market, multi-strategy unified intelligence
-
-At no point will execution authority bypass entropy-based guards.
-
----
-
-## Philosophy
-
-Meridian does not attempt to be intelligent everywhere.
-
-It attempts to know **where intelligence ends**.
-
----
-
-## License
-
-MIT License
-
-## Core Documents
-
-- **Vision**  
-  Conceptual foundation and philosophy of Meridian  
-  → [`docs/vision.md`](docs/vision.md)
-
-- **Entropy Specification**  
-  Formal definition of entropy as the system’s highest authority  
-  → [`docs/entropy_spec.md`](docs/entropy_spec.md)
-
-- **Architecture Decision Records (ADR)**  
-  Irreversible design decisions and their rationale  
-  → [`docs/decisions.md`](docs/decisions.md)
+Repository Structure
