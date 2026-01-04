@@ -160,3 +160,7 @@ MIT License
 - **Entropy Specification**  
   Formal definition of entropy as the system’s highest authority  
   → [`docs/entropy_spec.md`](docs/entropy_spec.md)
+
+- **Architecture Decision Records (ADR)**  
+  Irreversible design decisions and their rationale  
+  → [`docs/decisions.md`](docs/decisions.md)
