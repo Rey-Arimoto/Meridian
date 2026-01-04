@@ -1,7 +1,7 @@
 SYMBOL = "sui"
 VS_CURRENCY = "usd"
 
-MA_PERIOD = 3
+MA_PERIOD = 14
 ENTROPY_WINDOW = 10
 
 # Constitutional freeze threshold (bp: 0..10000)
