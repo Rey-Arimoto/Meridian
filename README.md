@@ -150,3 +150,13 @@ It attempts to know **where intelligence ends**.
 ## License
 
 MIT License
+
+## Core Documents
+
+- **Vision**  
+  Conceptual foundation and philosophy of Meridian  
+  → [`docs/vision.md`](docs/vision.md)
+
+- **Entropy Specification**  
+  Formal definition of entropy as the system’s highest authority  
+  → [`docs/entropy_spec.md`](docs/entropy_spec.md)
