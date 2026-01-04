@@ -1,195 +1,263 @@
-# Architecture Decision Records (ADR)
+# Architectural Decision Records (ADR)
+**Meridian Project**
 
-This document records the **irreversible design decisions** of Meridian.
+This document records the **key design decisions** made in Meridian,
+including *why they were made*, *what alternatives were rejected*,
+and *what consequences they impose*.
 
-Each ADR exists to answer one question:
-> *“Why is the system this way, and what failure does it avoid?”*
-
-These decisions are treated as **constitutional** unless explicitly superseded
-by a new ADR.
-
----
-
-## ADR-001: Determinism Over Adaptivity
-
-**Status:** Accepted  
-**Decision:**  
-Meridian prioritizes deterministic state transitions over adaptive or learned behavior.
-
-**Rationale:**  
-A system that changes its decision logic in response to outcomes
-cannot be reliably audited or replayed.
-Determinism ensures that identical inputs always produce identical outputs.
-
-**Consequences:**  
-- Pros: auditability, reproducibility, resistance to hindsight bias  
-- Cons: slower adaptation, no automatic optimization  
-
-This trade-off is intentional.
+This file serves as:
+- a long-term memory for the project,
+- a guard against accidental design drift,
+- and an audit trail for future contributors and investors.
 
 ---
 
-## ADR-002: Entropy as the Primary Authority
+## ADR-001: Entropy as a State Variable, Not a Signal
 
-**Status:** Accepted  
-**Decision:**  
-Entropy is the highest-order signal governing whether action is allowed.
+**Status**: Accepted  
+**Context**: Early design (v0.1)
 
-**Rationale:**  
-Most failures occur not because systems choose the wrong action,
-but because they continue acting after meaning collapses.
-Entropy measures the loss of interpretability itself.
+### Decision
 
-**Consequences:**  
-- All other signals are subordinate to entropy  
-- High entropy invalidates action entirely  
+Entropy in Meridian is defined as a **state variable representing explanation failure**,  
+not as a predictive signal or trading indicator.
 
----
+### Rationale
 
-## ADR-003: Hard CRITICAL_ENTROPY Threshold
+- Predictive signals invite overfitting and regime collapse.
+- State variables define *boundaries*, not *opportunities*.
+- Intelligence begins by knowing when **not** to act.
 
-**Status:** Accepted  
-**Decision:**  
-Meridian enforces a hard, non-adaptive CRITICAL_ENTROPY threshold.
+Entropy answers:
+> *Should action be allowed at all?*
 
-**Rationale:**  
-Soft degradation encourages rationalization.
-A hard threshold produces a binary, inspectable freeze event.
+### Alternatives Considered
 
-**Consequences:**  
-- Missed opportunities are acceptable  
-- Late freezes are not  
+- Volatility-based indicators (rejected: directional misuse)
+- Probabilistic regime classifiers (rejected: opacity)
+- ML-based anomaly detection (rejected: non-determinism)
 
-Changing this threshold requires a new ADR.
+### Consequences
+
+- Entropy must be computed **before** any strategy logic.
+- High entropy forbids action entirely.
+- Strategy quality is irrelevant under entropy violation.
 
 ---
 
-## ADR-004: NoOp as First-Class Decision
+## ADR-002: Composite Entropy via Max(EA, ES)
 
-**Status:** Accepted  
-**Decision:**  
-Non-action (NoOp) is treated as an explicit, logged decision.
+**Status**: Accepted  
+**Context**: v0.1 entropy definition
 
-**Rationale:**  
-In high-uncertainty environments, restraint is intelligence.
-Failing to record NoOp obscures system intent.
+### Decision
 
-**Consequences:**  
-- Every tick produces a decision  
-- “Doing nothing” always has a reason  
+Composite entropy is defined as:
+Entropy = max(EA_norm, ES_norm)
+Where:
+- EA = Entropy of Amplitude
+- ES = Entropy of Structure
 
----
+### Rationale
 
-## ADR-005: Separation of State and Execution
+- Explanation fails if **either** magnitude or structure collapses.
+- Averaging would mask single-dimension failure.
+- Max preserves worst-case explanatory breakdown.
 
-**Status:** Accepted  
-**Decision:**  
-Meridian separates state representation from execution authority.
+### Alternatives Considered
 
-**Rationale:**  
-Combining state and execution creates opaque coupling and hidden mutation.
-Separating them enables verification without granting power.
+- Arithmetic mean (rejected: hides collapse)
+- Weighted sum (rejected: introduces subjective tuning)
+- Multiplicative form (rejected: unstable scaling)
 
-**Consequences:**  
-- On-chain state is declarative  
-- Off-chain execution is revocable  
+### Consequences
 
----
-
-## ADR-006: Phases as Posture, Not Strategy
-
-**Status:** Accepted  
-**Decision:**  
-Meridian models behavior through phases (posture) rather than strategies.
-
-**Rationale:**  
-Strategies imply beliefs about outcomes.
-Phases describe allowed behavior under uncertainty.
-
-**Consequences:**  
-- Phases constrain execution, not prediction  
-- Strategy can change without redefining phase  
+- Entropy is conservative by construction.
+- One failure dimension is sufficient to freeze action.
 
 ---
 
-## ADR-007: Guardrails Above Intelligence
+## ADR-003: Normalization to [0.0, 1.0] and Basis Points
 
-**Status:** Accepted  
-**Decision:**  
-Risk and safety guardrails cannot be overridden by intelligence components.
+**Status**: Accepted  
+**Context**: Logging and determinism
 
-**Rationale:**  
-Any intelligence that violates its own survival constraints is invalid.
+### Decision
 
-**Consequences:**  
-- Guards are constitutional  
-- Optimization never weakens constraints  
+All entropy values are normalized to:
+[0.0, 1.0] → [0, 10000 bp]
+### Rationale
 
----
+- Enables deterministic thresholds.
+- Simplifies audit logs.
+- Avoids floating-point ambiguity in governance rules.
 
-## ADR-008: Freeze as a Normal State
+### Alternatives Considered
 
-**Status:** Accepted  
-**Decision:**  
-System freeze is treated as a valid, expected operational state.
+- Raw statistical values (rejected: non-comparable)
+- Percent only (rejected: insufficient precision)
 
-**Rationale:**  
-A system that never stops is brittle.
-Freeze preserves capital, coherence, and future optionality.
+### Consequences
 
-**Consequences:**  
-- Freeze events are logged and analyzed  
-- Recovery requires explicit conditions  
+- `Entropy_bp` is the canonical decision value.
+- All freeze logic depends on basis points.
 
 ---
 
-## ADR-009: No Learning at the Core (v0.x)
+## ADR-004: Constitutional Freeze (Entropy-Based)
 
-**Status:** Accepted  
-**Decision:**  
-Learning or LLM components are excluded from core state transition logic in v0.x.
+**Status**: Accepted  
+**Context**: Core safety mechanism
 
-**Rationale:**  
-Learning obscures causality and breaks determinism.
-Meridian must first be fully inspectable.
+### Decision
 
-**Consequences:**  
-- Learning may suggest, but not decide  
-- Core transitions remain rule-based  
+Meridian enforces an unconditional freeze rule:
+If Entropy_bp ≥ CRITICAL_ENTROPY_BP:
+Action = FREEZE (NoOp enforced)
+### Rationale
 
----
+- Strategy competence is meaningless under explanation failure.
+- Survival precedes optimization.
+- Intelligence must have inviolable boundaries.
 
-## ADR-010: Basis-Point Comparison Only
+### Alternatives Considered
 
-**Status:** Accepted  
-**Decision:**  
-All thresholds are compared using integer basis points, not floats.
+- Soft position reduction (rejected: still acting)
+- Strategy-specific overrides (rejected: unsafe)
+- Manual intervention (rejected: non-deterministic)
 
-**Rationale:**  
-Floating-point comparison introduces ambiguity near boundaries.
-Integer comparison guarantees deterministic behavior.
+### Consequences
 
-**Consequences:**  
-- Threshold behavior is explicit  
-- Boundary conditions are reproducible  
+- Freeze cannot be overridden by signals or agents.
+- Freeze events are logged with explicit reason.
+- No capital deployment during chaos.
 
 ---
 
-## Amendment Process
+## ADR-005: NoOp as a First-Class Action
 
-Any change to these decisions requires:
-1. A new ADR
-2. Explicit statement of what failure is now accepted
-3. Acceptance that previous guarantees may no longer hold
+**Status**: Accepted  
+**Context**: Action semantics
 
-Silently changing behavior is considered a system failure.
+### Decision
+
+NoOp is treated as a **deliberate, logged action**, not as absence of action.
+
+### Rationale
+
+- In chaotic regimes, restraint is the optimal action.
+- Silence without intent is ambiguous.
+- Intelligence must *choose* not to act.
+
+### Alternatives Considered
+
+- Implicit inactivity (rejected: unauditable)
+- Pause states (rejected: unclear semantics)
+
+### Consequences
+
+- NoOp appears explicitly in logs.
+- Freeze = enforced NoOp with reason.
+- Future agents must justify non-action.
 
 ---
 
-## Closing Note
+## ADR-006: Determinism as a Hard Requirement (v0.x)
 
-Meridian’s decisions are not optimized for profit.
+**Status**: Accepted  
+**Context**: Pre-agent phase
 
-They are optimized for **coherence, survival, and explainability**.
+### Decision
 
-Anything that compromises these values is considered out of scope.
+Meridian v0.x forbids:
+- learning,
+- parameter adaptation,
+- stochastic decision logic.
+
+### Rationale
+
+- Determinism enables trust.
+- Determinism enables audit.
+- Non-determinism before governance is unsafe.
+
+### Alternatives Considered
+
+- Online learning (rejected: unbounded behavior)
+- LLM-driven decisioning (rejected: non-reproducible)
+
+### Consequences
+
+- Same input → same output.
+- Future agentization must sit *above* this layer.
+- Determinism is a prerequisite for on-chain state.
+
+---
+
+## ADR-007: Separation of Entropy and Alpha
+
+**Status**: Accepted  
+**Context**: Strategic architecture
+
+### Decision
+
+Entropy **never generates alpha**.  
+Alpha operates **only within entropy-permitted regimes**.
+
+### Rationale
+
+- Mixing safety and profit corrupts both.
+- Alpha must be earned, not assumed.
+- Entropy defines *where* intelligence is allowed.
+
+### Alternatives Considered
+
+- Entropy-weighted strategies (rejected: conflation)
+- Entropy-driven entries (rejected: misuse)
+
+### Consequences
+
+- Alpha is regime-conditional.
+- Reformation Regime becomes the primary alpha zone.
+- Safety logic remains strategy-agnostic.
+
+---
+
+## ADR-008: Evolutionary Path (v0.1 → v1.0)
+
+**Status**: Accepted  
+**Context**: Roadmap alignment
+
+### Decision
+
+Meridian evolves in strictly ordered layers:
+
+1. Entropy (boundary)
+2. Policy (constraint)
+3. Alpha (strategy)
+4. Agent (planning)
+5. On-chain state (governance)
+
+### Rationale
+
+- Premature agency is dangerous.
+- Boundaries must precede autonomy.
+- Governance must precede learning.
+
+### Consequences
+
+- v0.1 is intentionally weak but safe.
+- v0.2 introduces persistence, not intelligence.
+- v1.0 integrates agents under constitutional control.
+
+---
+
+## Summary
+
+Meridian’s design decisions are unified by one principle:
+
+> **Intelligence is defined by what it refuses to do under uncertainty.**
+
+These ADRs are binding unless explicitly superseded
+by a new, recorded decision.
+
+---
