@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.env
+
+# Logs / data
+logs/
+*.csv
+
+# Node / TS Gateway
+node_modules/
+dist/
+
+# OS
+.DS_Store
