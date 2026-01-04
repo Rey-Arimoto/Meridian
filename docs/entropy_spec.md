@@ -1,221 +1,216 @@
-# Entropy Specification
-
-## Purpose
-
-This document defines **what “Entropy” means in Meridian** and how it is used.
-
-In Meridian, entropy is **not**:
-- a volatility proxy
-- a risk metric
-- a statistical ornament
-
-Entropy is the system’s **primary test of interpretability**.
-
-If entropy is high, Meridian assumes that:
-
-> **meaning has collapsed and action is no longer justified.**
+# Entropy Specification  
+**Meridian Canonical Definition**
 
 ---
 
-## Design Principles
+## 1. Purpose
 
-Meridian’s entropy model is built on four non-negotiable principles:
+This document defines **Entropy** as used by Meridian.
 
-1. **Deterministic**  
-   Given the same inputs, entropy must always evaluate to the same value.
+It is not a generic statistical entropy.
+It is not volatility.
+It is not randomness.
 
-2. **State-agnostic**  
-   Entropy measures the environment, not the strategy.
+Entropy in Meridian is a **state variable** that determines whether action is permissible.
 
-3. **Composable**  
-   Multiple entropy components can be combined without breaking interpretation.
-
-4. **Action-invalidating**  
-   Beyond a critical threshold, entropy forbids execution entirely.
-
----
-
-## Why Entropy (Not Prediction)
-
-Most systems attempt to predict outcomes.
-
-Meridian instead asks:
-
-> *Is there still a structure worth responding to?*
-
-Entropy answers this question by measuring:
-- loss of directional coherence
-- collapse of sign consistency
-- amplification of indistinguishable outcomes
-
-When entropy is high, **correctness itself becomes undefined**.  
-At that point, prediction is meaningless.
+This specification exists to ensure:
+- determinism,
+- reproducibility,
+- constitutional enforcement,
+- and future on-chain verification.
 
 ---
 
-## Entropy Components
+## 2. Conceptual Definition
 
-Meridian uses a **composite entropy** built from two orthogonal components.
+> **Entropy measures how much the current market state becomes unexplainable by existing rules, assumptions, and strategies.**
 
----
+Entropy is not about price direction.
+It is about **model validity**.
 
-### 1. Amplitude Entropy (EA)
+When entropy rises:
+- causal structure weakens,
+- regime assumptions fail,
+- prediction confidence collapses.
 
-**What it measures**  
-The instability of price movement magnitude.
-
-**Definition**
-- Compute log returns over a rolling window
-- Take the absolute value
-- Measure dispersion (standard deviation)
-
-**Interpretation**
-- Low EA → movements have stable scale
-- High EA → magnitude is erratic and unbounded
-
-Amplitude entropy detects **structural turbulence**, not direction.
+When entropy exceeds a critical threshold, **all actions must stop**.
 
 ---
 
-### 2. Sign Entropy (ES)
+## 3. Relationship to Classical Entropy
 
-**What it measures**  
-The loss of directional meaning.
+Meridian entropy is conceptually aligned with entropy in physics and information theory:
 
-**Definition**
-- Observe the sign (+ / −) of returns
-- Compute binary entropy of sign distribution
-- Normalize to `[0, 1]`
+| Domain | Entropy Meaning |
+|------|-----------------|
+| Thermodynamics | Loss of usable energy |
+| Information Theory | Uncertainty / information dispersion |
+| Meridian | Loss of explanatory power |
 
-**Interpretation**
-- ES ≈ 0 → direction is consistent
-- ES ≈ 1 → direction is indistinguishable from randomness
+In all cases, entropy represents **irreversibility and loss of structure**.
 
-If sign entropy is high, **“up” and “down” no longer carry meaning**.
-
----
-
-## Composite Entropy
-
-Meridian combines amplitude and sign entropy into a single value:
-
-E = wA * EA_norm + wS * ES_norm
-Where:
-- `EA_norm ∈ [0,1]`
-- `ES_norm ∈ [0,1]`
-- `wA + wS = 1`
-
-**Default weights**
-- `wA = 0.4`
-- `wS = 0.6`
-
-The system intentionally prioritizes **semantic collapse (sign entropy)**  
-over raw turbulence.
+Meridian treats markets as **information-processing systems**,  
+and entropy as **structural information decay**.
 
 ---
 
-## Normalization Strategy
+## 4. What Entropy Is NOT
 
-### Sign Entropy
-- Naturally normalized via information entropy
-- No historical scaling required
+Entropy is explicitly **not**:
+- volatility (price amplitude),
+- variance,
+- randomness,
+- noise,
+- unpredictability in isolation.
 
-### Amplitude Entropy
-- Normalized using a rolling, robust min/max
-- Percentile-based to avoid single-spike distortion
-- Clipped defensively to preserve determinism
-
-This ensures:
-- comparability across environments
-- resistance to regime-specific scale
-- reproducible results
+High volatility with stable structure is **low entropy**.  
+Low volatility with broken assumptions is **high entropy**.
 
 ---
 
-## Entropy Scale
+## 5. Formal Properties
 
-Meridian represents entropy in two equivalent forms:
+Meridian entropy `H_t` satisfies the following:
 
-- **Percent**: `0.00 – 100.00`
-- **Basis points (bp)**: `0 – 10000`
+- Domain:
 
-All execution logic compares **basis points**, never floats.  
-This avoids threshold ambiguity.
+H_t ∈ [0, 1]
+
+- Monotonic meaning:
+
+higher H_t ⇒ lower action permissibility
+
+- Deterministic:  
+Same inputs must produce the same `H_t`.
+
+- Observable:  
+`H_t` must be derivable from observable market data.
 
 ---
 
-## CRITICAL_ENTROPY
+## 6. Composite Entropy (v0.1)
 
-`CRITICAL_ENTROPY` defines the point at which action is **constitutionally forbidden**.
+In v0.1, entropy is implemented as **Composite Entropy**, combining:
 
-Example:
-```text
-CRITICAL_ENTROPY = 9000 bp  (90.00%)
+### 6.1 Entropy Acceleration (EA)
 
-When:
-entropy_bp ≥ CRITICAL_ENTROPY
+Measures **how quickly structure is degrading**.
 
-Meridian must:
-	•	enter Freeze phase
-	•	set target weight to zero
-	•	record the reason
-	•	refuse execution regardless of other signals
+Intuition:
+- Sudden regime changes
+- Non-linear transitions
+- Reflexive feedback loops
 
-This rule has no override.
+EA captures second-order instability.
 
-⸻
+---
 
-Entropy and NoOp
+### 6.2 Entropy Saturation (ES)
 
-A NoOp triggered by entropy is not indecision.
+Measures **how close the system is to structural collapse**.
 
-It is an explicit conclusion that:
+Intuition:
+- Persistent explanation failure
+- Regime exhaustion
+- Lack of recoverable structure
 
-“The environment no longer supports meaningful action.”
+ES captures proximity to irreversibility.
 
-Entropy-driven NoOp is always:
-	•	intentional
-	•	logged
-	•	reproducible
-	•	auditable
+---
 
-⸻
+### 6.3 Composite Form
 
-Entropy Is Not Optimized
+H_t = f(EA_t, ES_t)
 
-Meridian does not tune entropy to improve returns.
+Where `f` is deterministic and bounded.
 
-Entropy thresholds are constitutional, not parameters.
+The exact function is implementation-specific but must preserve:
+- monotonicity,
+- boundedness,
+- reproducibility.
 
-Any system that weakens its entropy guard
-in pursuit of performance
-is considered to have lost semantic integrity.
+---
 
-⸻
+## 7. Phase Classification
 
-Relationship to Future Agents
+Based on `H_t`, Meridian classifies market states:
 
-Future agent components may:
-	•	explain entropy
-	•	reason about its implications
-	•	propose actions conditioned on it
+| Phase | Condition | Interpretation |
+|-----|----------|---------------|
+| Order (O) | `H_t < H_low` | Stable, explainable |
+| Transition (T) | `H_low ≤ H_t < H_high` | Structure degrading |
+| Disorder (D) | `H_t ≥ H_high` | Explanation failure |
 
-They may never:
-	•	override entropy thresholds
-	•	suppress entropy-based freezes
-	•	execute when entropy forbids action
+---
 
-Entropy remains the highest authority.
+## 8. Constitutional Freeze
 
-⸻
+A hard threshold exists:
 
-Summary
+H_t ≥ H_critical ⇒ FREEZE
 
-Entropy in Meridian is the system’s way of asking:
+Properties:
+- Mandatory
+- Immediate
+- Non-optimizable
+- Non-overridable
 
-“Does the environment still mean something?”
+Freeze is **not a strategy**.  
+It is constitutional law.
 
-When the answer is no,
-Meridian does not guess, hedge, or hope.
+---
 
-It stops.
+## 9. NoOp as First-Class Outcome
+
+Meridian explicitly records **NoOp** as a decision.
+
+NoOp occurs when:
+- entropy is too high,
+- signal confidence collapses,
+- constitutional constraints activate.
+
+NoOp is not absence of action.
+It is **intentional restraint**.
+
+---
+
+## 10. Determinism and Auditability
+
+Entropy computation must be:
+- deterministic,
+- replayable,
+- auditable.
+
+This enables:
+- backtesting integrity,
+- on-chain verification (v0.2+),
+- dispute resolution,
+- trustless operation.
+
+---
+
+## 11. Future Extensions
+
+Planned extensions include:
+- multi-timescale entropy,
+- cross-market entropy correlation,
+- on-chain entropy commitments,
+- entropy proofs for NoOp justification.
+
+However:
+> **No learning, no stochasticity, no optimization may violate constitutional thresholds.**
+
+---
+
+## 12. Summary
+
+Entropy in Meridian is:
+
+- a measure of explanation failure,
+- a gatekeeper of action,
+- the foundation of survival-first intelligence.
+
+> **Meridian extracts alpha from order,  
+> and preserves capital against entropy.**
+
+This specification defines the boundary.
