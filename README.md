@@ -171,5 +171,46 @@ Meridian optimizes for **survival first**, because only surviving systems get to
 
 ---
 
+## Frozen Baselines
+
+Meridian is developed through **immutable baseline snapshots**.
+Each baseline represents a verifiable reference point and MUST NOT be modified.
+
+### v0.1 — Foundational Baseline (Frozen)
+
+This release establishes Meridian’s constitutional core.
+
+**What is frozen**
+- `/docs/v0.1`
+  - Vision
+  - Entropy specification
+  - Design decisions (ADR)
+- `/code/v0.1/python`
+  - Deterministic paper execution loop
+  - Composite Entropy (basis-point scaled)
+  - Constitutional entropy freeze (NoOp / Freeze)
+  - Full CSV audit logging
+- `/code/v0.1/ts-gateway`
+  - Explicit execution boundary
+  - Private-key isolation
+  - Minimal swap API skeleton (non-executable in v0.1)
+
+**What v0.1 guarantees**
+- Deterministic behavior
+- Explainable state transitions
+- Safety-first design (non-intervention is a first-class action)
+
+**What v0.1 explicitly does NOT do**
+- No live trading
+- No learning or optimization
+- No autonomous agent behavior
+
+GitHub Release:
+👉 https://github.com/Rey-Arimoto/Meridian/releases/tag/v0.1
+
+All future development MUST build on top of this baseline.
+
+---
+
 **Meridian**  
 *Intelligence Against Entropy.*
