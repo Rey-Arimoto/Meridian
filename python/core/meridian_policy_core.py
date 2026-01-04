@@ -1,12 +1,21 @@
+# python/core/meridian_policy_core.py
 from config import CRITICAL_ENTROPY_BP
 
+
 class MeridianPolicyCore:
+    """
+    v0.1 policy core:
+    - deliberately simple
+    - exposure is reduced as entropy rises
+    - if entropy >= CRITICAL, action is frozen elsewhere (and target is forced to 0.0)
+    """
+
     def __init__(self):
-        # v0.1: fixed posture baseline (later replaced by policy engine)
-        self.target_weight_default = 0.5
+        self.target_weight_default = 0.5  # baseline exposure
 
     @staticmethod
     def classify_volatility_band(entropy_bp: int) -> str:
+        # v0.1: entropy_bp is used as proxy for volatility regime
         if entropy_bp < 2000:
             return "V1"
         elif entropy_bp < 8000:
