@@ -1,191 +1,178 @@
-# Meridian Vision
-
-## What Meridian Is
-
-Meridian is not a trading strategy.  
-It is not a prediction engine.  
-It is not an optimization system.
-
-Meridian is a **stateful intelligence** whose primary responsibility is
-to determine **whether action is still meaningful**.
-
-Most automated systems answer:
-> “What should I do now?”
-
-Meridian asks first:
-> **“Is doing anything still justified?”**
+# Meridian Vision  
+**Intelligence Against Entropy**
 
 ---
 
-## The Core Failure Meridian Addresses
+## 1. The Problem: Markets Do Not Break — They Become Unexplainable
 
-Automated systems rarely fail because they lack signals.
-They fail because they **continue acting after meaning disappears**.
+Markets have traditionally been treated as systems that can be explained by:
+- models,
+- strategies,
+- heuristics,
+- and historical assumptions.
 
-Typical failure modes:
-- chasing noise after regime collapse
-- gradual overtrading in high-entropy environments
-- rationalizing losses instead of stopping
-- optimizing parameters until the boundary vanishes
+But modern markets — especially on-chain markets — are changing structurally.
 
-Meridian is designed around a single inversion:
+Automation, algorithmic reflexivity, fragmented liquidity, and speed beyond human cognition cause markets to **lose explanatory coherence before they collapse**.
 
-> **Survival and interpretability precede performance.**
+The critical failure mode is not loss —  
+it is **loss of explanation**.
 
----
-
-## Why Entropy Is Central
-
-Meridian uses entropy not as a risk metric,
-but as a measure of **semantic structure**.
-
-When entropy is low:
-- outcomes retain directional meaning
-- deviations can be interpreted
-- state transitions remain coherent
-
-When entropy is high:
-- direction becomes indistinguishable from randomness
-- volatility overwhelms signal
-- correctness itself becomes undefined
-
-At that point, **any action is arbitrary**.
-
-Meridian treats this not as a risk to manage,
-but as a condition that **invalidates action entirely**.
+Meridian is built to operate precisely in this regime.
 
 ---
 
-## Intelligence Includes the Ability to Stop
+## 2. What Meridian Means by Entropy
 
-In Meridian, stopping is not a failure mode.
+Meridian’s entropy is **not volatility**  
+and **not randomness**  
+and **not noise**.
 
-It is an expression of intelligence.
+It is a state variable.
 
-Non-action (NoOp):
-- is intentional
-- is recorded
-- has a reason
-- is auditable
+> **Entropy measures how much the current market state can no longer be explained by existing rules, assumptions, and strategies.**
 
-A system that always acts is not intelligent.
-It is compulsive.
+In practice, rising entropy corresponds to:
+- breakdown of causal structure,
+- instability of regime assumptions,
+- non-linear state transitions,
+- failure of prediction frameworks.
 
----
+Meridian does not ask:
+> “Will price go up or down?”
 
-## Determinism as a Constitutional Requirement
+Meridian asks:
+> **“Is this market still explainable?”**
 
-Meridian enforces determinism at its core.
-
-Given the same:
-- price history
-- entropy values
-- deviation
-- volatility
-- previous state
-
-The system **must produce the same next state**.
-
-This property ensures:
-- auditability
-- reproducibility
-- resistance to hindsight bias
-- safe layering of future agents or models
-
-Learning systems may be added later,
-but never at the level of state transition authority.
+When explanation fails, action must stop.
 
 ---
 
-## Phases as Posture, Not Strategy
+## 3. Intelligence Against Entropy
 
-Meridian models behavior through **phases**, not strategies.
+In physics, entropy increases.  
+Order decays unless energy is continuously applied.
 
-A phase represents:
-- how much the system is allowed to act
-- not what it believes will happen
+Yet life exists.
 
-Examples:
-- Observe does not mean “no idea”
-- Freeze does not mean “panic”
-- Harvest does not mean “bearish”
+### Biological Intelligence
+- DNA preserves and repairs information.
+- Immune systems filter noise and anomalies.
+- Brains convert entropy into learning instead of loss.
 
-They are **postures toward uncertainty**, not predictions.
-
----
-
-## Guardrails Are Higher Than Intelligence
-
-Meridian treats guardrails as constitutional law.
-
-Some limits are never optimized away:
-- CRITICAL_ENTROPY freeze
-- execution size caps
-- slippage limits
-- maximum error tolerance
-
-These constraints exist to preserve the system itself,
-not to improve returns.
-
-Any intelligence that violates its own survival constraints
-is considered invalid.
+Life is a system that **locally reverses entropy at continuous cost**.
 
 ---
 
-## On-Chain State as Existence, Not Execution
+### Social and Technological Intelligence
+The same pattern appears everywhere intelligence exists:
+- Law stabilizes social disorder.
+- Money compresses economic complexity.
+- Algorithms structure information.
+- Blockchains preserve consistency under decentralization.
 
-Meridian’s long-term architecture separates:
-- **existence** from **action**
+**Intelligence is the force that maintains structure against entropy.**
 
-On-chain:
-- state
-- phase
-- intent
-- entropy proofs
-- freeze reasons
-
-Off-chain:
-- observation
-- calculation
-- execution
-
-This separation allows Meridian to be:
-- inspectable
-- replayable
-- resistant to hidden mutation
-
-The chain does not make decisions.
-It remembers them.
+Meridian applies this principle to markets.
 
 ---
 
-## What Meridian Will Never Be
+## 4. Blockchain Is Anti-Entropy — But Incomplete
 
-Meridian will never:
-- chase performance at the cost of coherence
-- hide decision logic behind opaque models
-- execute without the right to stop
-- pretend certainty where none exists
+Blockchains are anti-entropy systems:
+- immutable history,
+- verifiable state,
+- decentralized consistency.
 
----
+But blockchains only guarantee **correct recording**.
 
-## The Long-Term Goal
+They do not guarantee **correct action**.
 
-The ultimate goal of Meridian is not profit maximization.
+Recording chaos faithfully does not prevent chaos.
 
-It is the creation of a system that:
-- knows when it understands
-- knows when it does not
-- and acts accordingly
+Meridian forms a second layer:
+- blockchain preserves state integrity,
+- Meridian preserves **decision integrity**.
 
-In a world of systems that optimize until they fail,
-Meridian chooses to remain interpretable.
+Together, they form a complete anti-entropy stack.
 
 ---
 
-## Closing Statement
+## 5. Meridian’s Constitutional Principles
 
-Meridian does not attempt to be intelligent everywhere.
+### 5.1 Non-Action Is a Decision
+Doing nothing is not failure.
+It is not fear.
+It is not missed opportunity.
 
-It attempts to know  
-**where intelligence ends — and to stop there.**
+> **Refusing to act in an unexplainable market is a proof of intelligence.**
+
+NoOp is a first-class outcome.
+
+---
+
+### 5.2 Freeze Is Law, Not Strategy
+When entropy exceeds a critical threshold, Meridian must stop.
+
+This is not optimized.
+This is not tuned.
+This is not negotiable.
+
+Freeze is constitutional.
+
+---
+
+### 5.3 Survival Precedes Profit
+Meridian is not designed to maximize short-term returns.
+
+It is designed to:
+- survive regime collapse,
+- avoid irreversible loss,
+- remain operational when others fail.
+
+> **Profit is optional. Survival is mandatory.**
+
+---
+
+## 6. Toward Intelligence-Native Markets
+
+As markets move fully on-chain:
+- participants become software,
+- speed exceeds human cognition,
+- failure cascades accelerate.
+
+Future markets will not be human-readable.
+
+They will require **intelligence-native participants**:
+- entities that understand state,
+- entities that evaluate action permissibility,
+- entities that know when not to act.
+
+Meridian is designed as such an entity.
+
+---
+
+## 7. Definition
+
+Meridian can be defined precisely:
+
+> **Meridian is an intelligence system that  
+> extracts alpha from emerging order  
+> and preserves capital against entropy.**
+
+It profits from structure.
+It survives chaos.
+It refuses action when explanation disappears.
+
+---
+
+## 8. Final Statement
+
+Entropy is inevitable.
+
+Markets will become faster, more automated, and less interpretable.
+
+In that world, the most valuable intelligence will not be the one that trades the fastest —  
+but the one that **knows when trading itself is invalid**.
+
+Meridian is built to be that intelligence.
