@@ -11,7 +11,7 @@ class MeridianPolicyCore:
     """
 
     def __init__(self):
-        self.target_weight_default = 0.5  # baseline exposure
+        self.target_weight_default = 0.0  # Constitutional default: PAUSE (fail-closed)
 
     @staticmethod
     def classify_volatility_band(entropy_bp: int) -> str:
