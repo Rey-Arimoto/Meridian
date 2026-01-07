@@ -162,10 +162,32 @@ In such an environment, **entropy-aware intelligence is no longer optional infra
 
 ---
 
+## Validation (v0.2)
+
+Meridian v0.2 includes constitutional compliance validation scripts that verify:
+- Hysteresis stability (regime transitions don't oscillate)
+- Matrix invariants (Act forbidden in volatile/transition regimes)
+- Policy decision integrity (regime-first enforcement)
+- Log schema compliance (decision audit trail)
+
+Run validations:
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr4a_hysteresis_stability.py
+python3 python/validation/pr4a_matrix_invariants.py
+python3 python/validation/pr4a_policy_decision_invariants.py
+python3 python/validation/pr4a_log_schema_smoke.py
+```
+
+All scripts exit 0 on PASS, 1 on FAIL.
+
+---
+
 ## Status
 
-Meridian is under active development.  
-v0.1 is running as a paper system with full logging.
+Meridian is under active development.
+v0.2 implements constitutional regime-first decision making with full compliance validation.
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
