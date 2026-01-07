@@ -11,6 +11,10 @@ from config import (
     INTERVAL_SECONDS,
     ENV_NAME,
     AGENT_VERSION,
+    OVERLAY_ENABLED,
+    COOLDOWN_SECONDS,
+    MAX_DW_PER_STEP,
+    MIN_DW_IGNORE,
 )
 
 from entropy import CompositeEntropy
@@ -18,6 +22,7 @@ from market.price_feed import fetch_price_with_time
 from core.logging_schema import append_log_row
 from core.risk_guard import RiskGuard
 from core.meridian_policy_core import MeridianPolicyCore
+from core.safety_overlay import SafetyOverlay
 from brokers.paper_broker import PaperBroker
 
 
@@ -40,6 +45,12 @@ class RealTimeMeridianAgent:
         self.entropy_calc = CompositeEntropy(window=ENTROPY_WINDOW)
         self.guard = RiskGuard()
         self.core = MeridianPolicyCore()
+        self.overlay = SafetyOverlay(
+            enabled=OVERLAY_ENABLED,
+            cooldown_seconds=COOLDOWN_SECONDS,
+            max_dw_per_step=MAX_DW_PER_STEP,
+            min_dw_ignore=MIN_DW_IGNORE,
+        )
         self.broker = PaperBroker(init_cash=1.0)
 
     def run(self):
@@ -73,24 +84,46 @@ class RealTimeMeridianAgent:
             self.guard.clear()
             freeze = should_freeze(entropy_bp, CRITICAL_ENTROPY_BP)
 
+            # Get current weight before decision
+            current_w = self.broker.current_weight()
+
             if freeze:
                 self.guard.state.last_guard_type = "entropy_freeze"
                 self.guard.state.emergency_reason = f"{entropy_bp}bp >= {CRITICAL_ENTROPY_BP}bp"
-                target_w = 0.0
+
+                # Apply overlay (will respect emergency freeze)
+                overlay_result = self.overlay.apply(
+                    decision=None,
+                    current_weight=current_w,
+                    now_utc=now,
+                    emergency_freeze=True,
+                )
+
+                final_w = overlay_result.final_target_weight
                 action = "FREEZE"
                 regime_str = "REGIME_TRANSITION"
                 base_action_str = "PAUSE"
-                decision_reason = "EMERGENCY_FREEZE"
+                decision_reason = f"EMERGENCY_FREEZE | overlay={overlay_result.overlay_rule}"
+                overlay_rule = overlay_result.overlay_rule
             else:
                 # v0.2: Constitutional regime-first decision
-                current_w = self.broker.current_weight()
                 decision = self.core.decide(entropy_bp, current_w)
-                target_w = decision.target_weight
+
+                # PR5: Apply safety overlay
+                overlay_result = self.overlay.apply(
+                    decision=decision,
+                    current_weight=current_w,
+                    now_utc=now,
+                    emergency_freeze=False,
+                )
+
+                final_w = overlay_result.final_target_weight
                 regime_str = decision.regime.value
                 base_action_str = decision.base_action.value
-                decision_reason = decision.reason
+                decision_reason = f"{decision.reason} | overlay={overlay_result.overlay_rule}"
+                overlay_rule = overlay_result.overlay_rule
 
-                dw = self.broker.rebalance_to_target_weight(target_w, float(price))
+                dw = self.broker.rebalance_to_target_weight(final_w, float(price))
                 action = "BUY" if dw > 0.02 else "SELL" if dw < -0.02 else "HOLD"
 
             eq = self.broker.equity(float(price))
@@ -101,7 +134,8 @@ class RealTimeMeridianAgent:
                 f"E={entropy_pct:6.2f}%({entropy_bp}bp) EA={er.ea_norm:.3f} ES={er.es_norm:.3f} "
                 f"Band={vol_band} State={entropy_state} "
                 f"Regime={regime_str} BaseAction={base_action_str} "
-                f"Act={action} w*={target_w:.2f} Eq={eq:.4f} Guard={self.guard.state.last_guard_type}"
+                f"Overlay={overlay_rule} "
+                f"Act={action} w*={final_w:.2f} Eq={eq:.4f} Guard={self.guard.state.last_guard_type}"
             )
 
             append_log_row({
@@ -123,16 +157,16 @@ class RealTimeMeridianAgent:
                 "entropy_state": entropy_state,
 
                 "action_label": action,
-                "target_weight": float(target_w),
+                "target_weight": float(final_w),  # PR5: final weight after overlay
                 "equity": float(eq),
 
                 "guard_type": self.guard.state.last_guard_type,
                 "guard_reason": self.guard.state.emergency_reason,
 
-                # v0.2 Constitutional decision fields (PR3)
+                # v0.2 Constitutional decision fields (PR3 + PR5 overlay appended)
                 "regime": regime_str,
                 "base_action": base_action_str,
-                "decision_reason": decision_reason,
+                "decision_reason": decision_reason,  # Includes overlay rule
             })
 
             time.sleep(INTERVAL_SECONDS)

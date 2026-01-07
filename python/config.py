@@ -29,3 +29,10 @@ REGIME_THRESHOLDS = {
     "emerging_exit": 2500,        # Exit emerging trend (hysteresis)
     "stable_max": 2000,           # Max entropy for stable regime
 }
+
+# Safety Overlay parameters (v0.2 PR5)
+# NOTE: These are fixed values for PR5; tuning deferred to PR6
+OVERLAY_ENABLED = True
+COOLDOWN_SECONDS = 600          # 10 minutes between weight changes
+MAX_DW_PER_STEP = 0.05          # Maximum 5% weight change per step
+MIN_DW_IGNORE = 0.02            # Ignore changes below 2%
