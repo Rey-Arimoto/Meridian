@@ -78,8 +78,16 @@ class RealTimeMeridianAgent:
                 self.guard.state.emergency_reason = f"{entropy_bp}bp >= {CRITICAL_ENTROPY_BP}bp"
                 target_w = 0.0
                 action = "FREEZE"
+                regime_str = "REGIME_TRANSITION"
+                base_action_str = "PAUSE"
             else:
-                target_w = self.core.decide_target_weight(entropy_bp)
+                # v0.2: Constitutional regime-first decision
+                current_w = self.broker.current_weight()
+                decision = self.core.decide(entropy_bp, current_w)
+                target_w = decision.target_weight
+                regime_str = decision.regime.value
+                base_action_str = decision.base_action.value
+
                 dw = self.broker.rebalance_to_target_weight(target_w, float(price))
                 action = "BUY" if dw > 0.02 else "SELL" if dw < -0.02 else "HOLD"
 
@@ -90,6 +98,7 @@ class RealTimeMeridianAgent:
                 f"[{now}] P={price:.4f} Dev={deviation:+.2f}% "
                 f"E={entropy_pct:6.2f}%({entropy_bp}bp) EA={er.ea_norm:.3f} ES={er.es_norm:.3f} "
                 f"Band={vol_band} State={entropy_state} "
+                f"Regime={regime_str} BaseAction={base_action_str} "
                 f"Act={action} w*={target_w:.2f} Eq={eq:.4f} Guard={self.guard.state.last_guard_type}"
             )
 

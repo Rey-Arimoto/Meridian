@@ -16,7 +16,7 @@ INTERVAL_SECONDS = 60
 LOG_CSV_PATH = "logs/meridian_realtime_log.csv"
 
 # Identity
-AGENT_VERSION = "meridian_v0_1_composite_entropy"
+AGENT_VERSION = "meridian_v0_2_constitutional"
 ENV_NAME = "local_paper"
 
 # Regime classifier thresholds (v0.2)
