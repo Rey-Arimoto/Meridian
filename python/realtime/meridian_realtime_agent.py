@@ -80,6 +80,7 @@ class RealTimeMeridianAgent:
                 action = "FREEZE"
                 regime_str = "REGIME_TRANSITION"
                 base_action_str = "PAUSE"
+                decision_reason = "EMERGENCY_FREEZE"
             else:
                 # v0.2: Constitutional regime-first decision
                 current_w = self.broker.current_weight()
@@ -87,6 +88,7 @@ class RealTimeMeridianAgent:
                 target_w = decision.target_weight
                 regime_str = decision.regime.value
                 base_action_str = decision.base_action.value
+                decision_reason = decision.reason
 
                 dw = self.broker.rebalance_to_target_weight(target_w, float(price))
                 action = "BUY" if dw > 0.02 else "SELL" if dw < -0.02 else "HOLD"
@@ -126,6 +128,11 @@ class RealTimeMeridianAgent:
 
                 "guard_type": self.guard.state.last_guard_type,
                 "guard_reason": self.guard.state.emergency_reason,
+
+                # v0.2 Constitutional decision fields (PR3)
+                "regime": regime_str,
+                "base_action": base_action_str,
+                "decision_reason": decision_reason,
             })
 
             time.sleep(INTERVAL_SECONDS)

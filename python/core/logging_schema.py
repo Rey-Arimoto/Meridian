@@ -30,6 +30,11 @@ LOG_COLUMNS = [
 
     "guard_type",
     "guard_reason",
+
+    # v0.2 Constitutional decision fields (PR3)
+    "regime",
+    "base_action",
+    "decision_reason",
 ]
 
 
