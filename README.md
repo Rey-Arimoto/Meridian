@@ -184,6 +184,41 @@ All scripts exit 0 on PASS, 1 on FAIL.
 
 ---
 
+## Canonical Report Generation (PR8B + PR9A)
+
+The following command is the **canonical and supported way** to generate all Meridian reports from an execution log.
+
+It enforces data integrity gates and produces all reporting artifacts in a single run.
+
+**Execution Command:**
+
+```bash
+cd ~/Meridian && source .venv/bin/activate && \
+python3 python/tools/pr8b_integrity_gate_runner.py meridian_log.csv \
+  --prefix meridian \
+  --out-dir artifacts
+```
+
+**Generated Artifacts**
+
+If the integrity gate passes, the following files will be generated in the `artifacts` directory:
+
+- `meridian_health.md` — Data health and integrity report (PR8A)
+- `meridian_investor_report.md` — Investor-facing summary (PR7A)
+- `meridian_performance.md` — Performance and risk summary (PR9A)
+- `meridian_dashboard.html` — Interactive dashboard (PR7C)
+- `meridian_timeline.png` — Timeline visualization (PR7B)
+- `meridian_overlay_hist.png` — Overlay distribution (PR7B)
+- `meridian_regime_dist.png` — Regime distribution (PR7B)
+
+**Notes**
+
+- Reports are generated only if all integrity checks pass.
+- No assumptions are made about tick frequency, capital scaling, or annualization.
+- This command is read-only and does not modify logs or trading logic.
+
+---
+
 ## Status
 
 Meridian is under active development.
