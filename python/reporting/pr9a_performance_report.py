@@ -50,6 +50,178 @@ def calculate_max_drawdown(equity_series: pd.Series) -> float:
     return max_dd if not np.isnan(max_dd) else 0.0
 
 
+def calculate_time_under_water(equity_series: pd.Series) -> int:
+    """
+    Calculate maximum time under water (TUW) in ticks.
+
+    TUW = number of ticks from peak to recovery (back to peak or higher).
+    Returns the maximum TUW across all drawdown periods.
+
+    Returns -1 if equity is N/A or empty.
+    """
+    if equity_series.empty or equity_series.isna().all():
+        return -1
+
+    equity = equity_series.reset_index(drop=True)
+    running_max = equity.expanding().max()
+
+    max_tuw = 0
+    current_tuw = 0
+
+    for i in range(len(equity)):
+        if equity.iloc[i] < running_max.iloc[i]:
+            # Under water
+            current_tuw += 1
+            max_tuw = max(max_tuw, current_tuw)
+        else:
+            # At or above peak - reset
+            current_tuw = 0
+
+    return max_tuw
+
+
+def calculate_max_drawdown_duration(equity_series: pd.Series) -> int:
+    """
+    Calculate maximum drawdown duration in ticks.
+
+    Duration = length of the longest continuous drawdown period.
+
+    Returns -1 if equity is N/A or empty.
+    """
+    if equity_series.empty or equity_series.isna().all():
+        return -1
+
+    equity = equity_series.reset_index(drop=True)
+    running_max = equity.expanding().max()
+    drawdown = (running_max - equity) / running_max
+
+    # Find the maximum drawdown value
+    max_dd_value = drawdown.max()
+
+    if np.isnan(max_dd_value) or max_dd_value == 0:
+        return 0
+
+    # Find all periods where drawdown equals max drawdown
+    # Allow small tolerance for floating point comparison
+    tolerance = 1e-9
+    max_duration = 0
+    current_duration = 0
+    in_max_dd = False
+
+    for i in range(len(drawdown)):
+        if abs(drawdown.iloc[i] - max_dd_value) < tolerance:
+            if not in_max_dd:
+                in_max_dd = True
+                current_duration = 1
+            else:
+                current_duration += 1
+            max_duration = max(max_duration, current_duration)
+        else:
+            in_max_dd = False
+            current_duration = 0
+
+    return max_duration
+
+
+def calculate_exposure_ratio(weights: pd.Series) -> float:
+    """
+    Calculate exposure ratio: fraction of ticks with non-zero weight.
+
+    Returns -1.0 if weights are N/A or empty.
+    """
+    if weights.empty or weights.isna().all():
+        return -1.0
+
+    weights_clean = weights.dropna()
+    if len(weights_clean) == 0:
+        return -1.0
+
+    exposed_count = (weights_clean.abs() > 0).sum()
+    return exposed_count / len(weights_clean)
+
+
+def calculate_turnover_proxy(weights: pd.Series) -> float:
+    """
+    Calculate turnover proxy: mean absolute weight change per tick.
+
+    Returns -1.0 if weights are N/A or empty.
+    """
+    if weights.empty or weights.isna().all():
+        return -1.0
+
+    weights_clean = weights.dropna()
+    if len(weights_clean) < 2:
+        return -1.0
+
+    weight_changes = weights_clean.diff().abs()
+    return weight_changes.mean()
+
+
+def calculate_action_switch_rate(actions: pd.Series) -> float:
+    """
+    Calculate action switch rate: fraction of ticks where action changed.
+
+    Returns -1.0 if actions are N/A or empty.
+    """
+    if actions.empty or actions.isna().all():
+        return -1.0
+
+    actions_clean = actions.dropna()
+    if len(actions_clean) < 2:
+        return -1.0
+
+    switches = (actions_clean != actions_clean.shift()).sum() - 1  # -1 to exclude first row
+    return switches / (len(actions_clean) - 1)
+
+
+def calculate_longest_streak(actions: pd.Series, target_action: str) -> int:
+    """
+    Calculate longest consecutive streak of a specific action.
+
+    Returns -1 if actions are N/A or empty.
+    """
+    if actions.empty or actions.isna().all():
+        return -1
+
+    actions_clean = actions.fillna("unknown")
+
+    max_streak = 0
+    current_streak = 0
+
+    for action in actions_clean:
+        if action == target_action:
+            current_streak += 1
+            max_streak = max(max_streak, current_streak)
+        else:
+            current_streak = 0
+
+    return max_streak
+
+
+def calculate_longest_non_hold_streak(actions: pd.Series) -> int:
+    """
+    Calculate longest consecutive streak of non-HOLD actions.
+
+    Returns -1 if actions are N/A or empty.
+    """
+    if actions.empty or actions.isna().all():
+        return -1
+
+    actions_clean = actions.fillna("unknown")
+
+    max_streak = 0
+    current_streak = 0
+
+    for action in actions_clean:
+        if action != "HOLD":
+            current_streak += 1
+            max_streak = max(max_streak, current_streak)
+        else:
+            current_streak = 0
+
+    return max_streak
+
+
 def generate_report(df: pd.DataFrame, csv_path: str) -> str:
     """Generate performance and risk summary report."""
 
@@ -95,11 +267,24 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
             end_equity = equity.iloc[-1]
             total_return_pct = ((end_equity / start_equity) - 1.0) * 100.0 if start_equity != 0 else 0.0
             max_dd_pct = calculate_max_drawdown(equity)
+            tuw_ticks = calculate_time_under_water(equity)
+            max_dd_duration = calculate_max_drawdown_duration(equity)
 
             lines.append(f"Start Equity:      {start_equity:.6f}")
             lines.append(f"End Equity:        {end_equity:.6f}")
             lines.append(f"Total Return:      {total_return_pct:+.2f}%")
             lines.append(f"Max Drawdown:      {max_dd_pct:.2f}%")
+
+            # PR11A: Drawdown supplementary metrics
+            if tuw_ticks >= 0:
+                lines.append(f"Time Under Water:  {tuw_ticks} ticks")
+            else:
+                lines.append(f"Time Under Water:  N/A")
+
+            if max_dd_duration >= 0:
+                lines.append(f"Max DD Duration:   {max_dd_duration} ticks")
+            else:
+                lines.append(f"Max DD Duration:   N/A")
         else:
             lines.append("Performance Section: N/A (equity column has no valid values)")
     else:
@@ -119,14 +304,32 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
         if len(weights) > 0:
             avg_abs_weight = weights.abs().mean()
             max_abs_weight = weights.abs().max()
+            exposure_ratio = calculate_exposure_ratio(df["target_weight"])
+            turnover_proxy = calculate_turnover_proxy(df["target_weight"])
+
             lines.append(f"Avg |Weight|:       {avg_abs_weight:.4f}")
             lines.append(f"Max |Weight|:       {max_abs_weight:.4f}")
+
+            # PR11A: Exposure metrics
+            if exposure_ratio >= 0:
+                lines.append(f"Exposure Ratio:     {exposure_ratio:.4f}")
+            else:
+                lines.append(f"Exposure Ratio:     N/A")
+
+            if turnover_proxy >= 0:
+                lines.append(f"Turnover Proxy:     {turnover_proxy:.6f}")
+            else:
+                lines.append(f"Turnover Proxy:     N/A")
         else:
             lines.append(f"Avg |Weight|:       N/A")
             lines.append(f"Max |Weight|:       N/A")
+            lines.append(f"Exposure Ratio:     N/A")
+            lines.append(f"Turnover Proxy:     N/A")
     else:
         lines.append(f"Avg |Weight|:       N/A (column missing)")
         lines.append(f"Max |Weight|:       N/A (column missing)")
+        lines.append(f"Exposure Ratio:     N/A (column missing)")
+        lines.append(f"Turnover Proxy:     N/A (column missing)")
 
     lines.append("")
 
@@ -145,6 +348,36 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
         lines.append(f"HOLD Ratio:         {hold_ratio:.1f}%")
     else:
         lines.append("Action Counts:      N/A (column missing)")
+
+    lines.append("")
+
+    # PR11A: Decision Stability
+    lines.append("-" * 70)
+    lines.append("Decision Stability")
+    lines.append("-" * 70)
+
+    if "action_label" in df.columns:
+        actions = df["action_label"]
+        switch_rate = calculate_action_switch_rate(actions)
+        hold_streak = calculate_longest_streak(actions, "HOLD")
+        non_hold_streak = calculate_longest_non_hold_streak(actions)
+
+        if switch_rate >= 0:
+            lines.append(f"Action Switch Rate: {switch_rate:.4f}")
+        else:
+            lines.append(f"Action Switch Rate: N/A")
+
+        if hold_streak >= 0:
+            lines.append(f"Longest HOLD:       {hold_streak} ticks")
+        else:
+            lines.append(f"Longest HOLD:       N/A")
+
+        if non_hold_streak >= 0:
+            lines.append(f"Longest non-HOLD:   {non_hold_streak} ticks")
+        else:
+            lines.append(f"Longest non-HOLD:   N/A")
+    else:
+        lines.append("Decision Stability: N/A (action_label column missing)")
 
     lines.append("")
 
@@ -182,6 +415,53 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
 
     lines.append("")
 
+    # PR11A: Regime-Based Exposure
+    lines.append("-" * 70)
+    lines.append("Regime-Based Exposure")
+    lines.append("-" * 70)
+
+    if "regime" in df.columns:
+        regimes = df["regime"].fillna("unknown").unique()
+        for regime in sorted(regimes):
+            regime_df = df[df["regime"].fillna("unknown") == regime]
+
+            lines.append(f"\n{regime}:")
+
+            # Exposure Ratio
+            if "target_weight" in regime_df.columns:
+                regime_exposure = calculate_exposure_ratio(regime_df["target_weight"])
+                if regime_exposure >= 0:
+                    lines.append(f"  Exposure Ratio: {regime_exposure:.4f}")
+                else:
+                    lines.append(f"  Exposure Ratio: N/A")
+            else:
+                lines.append(f"  Exposure Ratio: N/A")
+
+            # Avg |Weight|
+            if "target_weight" in regime_df.columns:
+                regime_weights = regime_df["target_weight"].dropna()
+                if len(regime_weights) > 0:
+                    regime_avg_weight = regime_weights.abs().mean()
+                    lines.append(f"  Avg |Weight|:   {regime_avg_weight:.4f}")
+                else:
+                    lines.append(f"  Avg |Weight|:   N/A")
+            else:
+                lines.append(f"  Avg |Weight|:   N/A")
+
+            # HOLD Ratio
+            if "action_label" in regime_df.columns:
+                regime_actions = regime_df["action_label"].fillna("unknown")
+                regime_hold_count = (regime_actions == "HOLD").sum()
+                regime_total = len(regime_df)
+                regime_hold_ratio = (regime_hold_count / regime_total * 100.0) if regime_total > 0 else 0.0
+                lines.append(f"  HOLD Ratio:     {regime_hold_ratio:.1f}%")
+            else:
+                lines.append(f"  HOLD Ratio:     N/A")
+    else:
+        lines.append("Regime-Based Exposure: N/A (regime column missing)")
+
+    lines.append("")
+
     # (5) Health Gate Reference
     lines.append("-" * 70)
     lines.append("Data Quality Gate Reference")
@@ -195,6 +475,8 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
     lines.append("  3. Review this PR9A performance report")
     lines.append("")
     lines.append("PR8A/PR8B ensure data integrity before performance calculation.")
+    lines.append("")
+    lines.append("Note: Tick-based durations are reported in ticks, not time.")
     lines.append("")
 
     lines.append("=" * 70)
@@ -259,6 +541,8 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
             end_equity = equity.iloc[-1]
             total_return_pct = ((end_equity / start_equity) - 1.0) * 100.0 if start_equity != 0 else 0.0
             max_dd_pct = calculate_max_drawdown(equity)
+            tuw_ticks = calculate_time_under_water(equity)
+            max_dd_duration = calculate_max_drawdown_duration(equity)
 
             lines.append("| Metric | Value |")
             lines.append("|--------|-------|")
@@ -266,6 +550,17 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
             lines.append(f"| End Equity | {end_equity:.6f} |")
             lines.append(f"| Total Return | {total_return_pct:+.2f}% |")
             lines.append(f"| Max Drawdown | {max_dd_pct:.2f}% |")
+
+            # PR11A: Drawdown supplementary metrics
+            if tuw_ticks >= 0:
+                lines.append(f"| Time Under Water | {tuw_ticks} ticks |")
+            else:
+                lines.append(f"| Time Under Water | N/A |")
+
+            if max_dd_duration >= 0:
+                lines.append(f"| Max DD Duration | {max_dd_duration} ticks |")
+            else:
+                lines.append(f"| Max DD Duration | N/A |")
         else:
             lines.append("**Performance Section:** N/A (equity column has no valid values)")
     else:
@@ -284,11 +579,24 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
         if len(weights) > 0:
             avg_abs_weight = weights.abs().mean()
             max_abs_weight = weights.abs().max()
+            exposure_ratio = calculate_exposure_ratio(df["target_weight"])
+            turnover_proxy = calculate_turnover_proxy(df["target_weight"])
 
             lines.append("| Metric | Value |")
             lines.append("|--------|-------|")
             lines.append(f"| Avg \\|Weight\\| | {avg_abs_weight:.4f} |")
             lines.append(f"| Max \\|Weight\\| | {max_abs_weight:.4f} |")
+
+            # PR11A: Exposure metrics
+            if exposure_ratio >= 0:
+                lines.append(f"| Exposure Ratio | {exposure_ratio:.4f} |")
+            else:
+                lines.append(f"| Exposure Ratio | N/A |")
+
+            if turnover_proxy >= 0:
+                lines.append(f"| Turnover Proxy | {turnover_proxy:.6f} |")
+            else:
+                lines.append(f"| Turnover Proxy | N/A |")
         else:
             lines.append("**Weight Metrics:** N/A")
     else:
@@ -317,6 +625,38 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
         lines.append(f"**HOLD Ratio:** {hold_ratio:.1f}%")
     else:
         lines.append("**Action Counts:** N/A (column missing)")
+
+    lines.append("")
+
+    # PR11A: Decision Stability
+    lines.append("## Decision Stability")
+    lines.append("")
+
+    if "action_label" in df.columns:
+        actions = df["action_label"]
+        switch_rate = calculate_action_switch_rate(actions)
+        hold_streak = calculate_longest_streak(actions, "HOLD")
+        non_hold_streak = calculate_longest_non_hold_streak(actions)
+
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
+
+        if switch_rate >= 0:
+            lines.append(f"| Action Switch Rate | {switch_rate:.4f} |")
+        else:
+            lines.append(f"| Action Switch Rate | N/A |")
+
+        if hold_streak >= 0:
+            lines.append(f"| Longest HOLD Streak | {hold_streak} ticks |")
+        else:
+            lines.append(f"| Longest HOLD Streak | N/A |")
+
+        if non_hold_streak >= 0:
+            lines.append(f"| Longest non-HOLD Streak | {non_hold_streak} ticks |")
+        else:
+            lines.append(f"| Longest non-HOLD Streak | N/A |")
+    else:
+        lines.append("**Decision Stability:** N/A (action_label column missing)")
 
     lines.append("")
 
@@ -362,6 +702,56 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
 
     lines.append("")
 
+    # PR11A: Regime-Based Exposure
+    lines.append("## Regime-Based Exposure")
+    lines.append("")
+
+    if "regime" in df.columns:
+        regimes = df["regime"].fillna("unknown").unique()
+        for regime in sorted(regimes):
+            regime_df = df[df["regime"].fillna("unknown") == regime]
+
+            lines.append(f"### {regime}")
+            lines.append("")
+            lines.append("| Metric | Value |")
+            lines.append("|--------|-------|")
+
+            # Exposure Ratio
+            if "target_weight" in regime_df.columns:
+                regime_exposure = calculate_exposure_ratio(regime_df["target_weight"])
+                if regime_exposure >= 0:
+                    lines.append(f"| Exposure Ratio | {regime_exposure:.4f} |")
+                else:
+                    lines.append(f"| Exposure Ratio | N/A |")
+            else:
+                lines.append(f"| Exposure Ratio | N/A |")
+
+            # Avg |Weight|
+            if "target_weight" in regime_df.columns:
+                regime_weights = regime_df["target_weight"].dropna()
+                if len(regime_weights) > 0:
+                    regime_avg_weight = regime_weights.abs().mean()
+                    lines.append(f"| Avg \\|Weight\\| | {regime_avg_weight:.4f} |")
+                else:
+                    lines.append(f"| Avg \\|Weight\\| | N/A |")
+            else:
+                lines.append(f"| Avg \\|Weight\\| | N/A |")
+
+            # HOLD Ratio
+            if "action_label" in regime_df.columns:
+                regime_actions = regime_df["action_label"].fillna("unknown")
+                regime_hold_count = (regime_actions == "HOLD").sum()
+                regime_total = len(regime_df)
+                regime_hold_ratio = (regime_hold_count / regime_total * 100.0) if regime_total > 0 else 0.0
+                lines.append(f"| HOLD Ratio | {regime_hold_ratio:.1f}% |")
+            else:
+                lines.append(f"| HOLD Ratio | N/A |")
+
+            lines.append("")
+    else:
+        lines.append("**Regime-Based Exposure:** N/A (regime column missing)")
+        lines.append("")
+
     # Health Gate Reference
     lines.append("## Data Quality Gate Reference")
     lines.append("")
@@ -374,6 +764,8 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
     lines.append("3. Review this PR9A performance report")
     lines.append("")
     lines.append("PR8A/PR8B ensure data integrity before performance calculation.")
+    lines.append("")
+    lines.append("**Note:** Tick-based durations are reported in ticks, not time.")
     lines.append("")
 
     lines.append("---")
