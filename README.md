@@ -219,6 +219,29 @@ If the integrity gate passes, the following files will be generated in the `arti
 
 ---
 
+## Production Workflow (PR10)
+
+**Standard operating procedure for real log processing:**
+
+1. **Put logs in `logs/`** — Place execution logs in the `logs/` directory
+2. **Run canonical command** — Use `pr10_run_pipeline.py` for timestamped isolation
+3. **Artifacts are time-stamped** — All outputs go to `artifacts/_<timestamp>/`
+
+```bash
+cd ~/Meridian && source .venv/bin/activate && \
+python3 python/tools/pr10_run_pipeline.py \
+  --log logs/meridian_log_latest.csv \
+  --prefix meridian
+```
+
+This pipeline:
+- Copies the input log to `artifacts/_<timestamp>/input_log.csv` (fixed copy)
+- Runs PR8B integrity gate on the fixed copy
+- Isolates all outputs in the timestamped directory
+- Prevents log mixing, overwrite, and collision
+
+---
+
 ## Status
 
 Meridian is under active development.

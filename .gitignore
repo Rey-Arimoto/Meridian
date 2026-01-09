@@ -8,6 +8,7 @@ venv/
 # Logs / data
 logs/
 *.csv
+artifacts/
 
 # Node / TS Gateway
 node_modules/
