@@ -171,11 +171,49 @@ def generate_pr7a_investor_report(csv_path: str, out_dir: Path, prefix: str, lim
         return None
 
 
+def generate_pr9a_performance_report(csv_path: str, out_dir: Path, prefix: str,
+                                     from_ts: str, to_ts: str) -> str:
+    """Generate PR9A performance and risk summary report."""
+    print("\n" + "=" * 70)
+    print("Step 5: Generating PR9A Performance Report")
+    print("=" * 70)
+
+    script_path = "python/reporting/pr9a_performance_report.py"
+    out_file = out_dir / f"{prefix}_performance.md"
+
+    cmd = [sys.executable, script_path, csv_path, "--out", str(out_file)]
+
+    if from_ts:
+        cmd.extend(["--from", from_ts])
+    if to_ts:
+        cmd.extend(["--to", to_ts])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode == 0:
+            print(f"✓ Performance report generated: {out_file}")
+            return str(out_file)
+        else:
+            print(f"⚠ Warning: Performance report generation failed")
+            print(result.stderr)
+            return None
+
+    except Exception as e:
+        print(f"⚠ Warning: Performance report error: {e}")
+        return None
+
+
 def generate_pr7b_visualizations(csv_path: str, out_dir: Path, prefix: str,
                                  limit: int, from_ts: str, to_ts: str) -> list:
     """Generate PR7B PNG visualizations."""
     print("\n" + "=" * 70)
-    print("Step 5: Generating PR7B Visualizations (PNG)")
+    print("Step 6: Generating PR7B Visualizations (PNG)")
     print("=" * 70)
 
     generated = []
@@ -334,6 +372,11 @@ def main():
     if investor_report:
         artifacts.append(investor_report)
 
+    performance_report = generate_pr9a_performance_report(args.csv_path, out_dir, args.prefix,
+                                                          args.from_ts, args.to_ts)
+    if performance_report:
+        artifacts.append(performance_report)
+
     viz_files = generate_pr7b_visualizations(args.csv_path, out_dir, args.prefix,
                                             args.limit, args.from_ts, args.to_ts)
     artifacts.extend(viz_files)
@@ -361,8 +404,9 @@ def main():
     print("=" * 70)
     print("\nNext steps:")
     print(f"  1. Review health report: {args.prefix}_health.md")
-    print(f"  2. Open dashboard: {args.prefix}_dashboard.html")
-    print(f"  3. Share with investors: {args.prefix}_investor_report.md")
+    print(f"  2. Review performance report: {args.prefix}_performance.md")
+    print(f"  3. Open dashboard: {args.prefix}_dashboard.html")
+    print(f"  4. Share with investors: {args.prefix}_investor_report.md")
 
     return 0
 

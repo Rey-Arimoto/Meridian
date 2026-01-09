@@ -262,6 +262,7 @@ def test_good_csv(temp_dir: str) -> bool:
             "test_health.md",
             "test_dashboard.html",
             "test_investor_report.md",
+            "test_performance.md",
             "test_timeline.png",
             "test_overlay_hist.png",
             "test_regime_dist.png",
@@ -278,7 +279,7 @@ def test_good_csv(temp_dir: str) -> bool:
 
     except Exception as e:
         print(f"✗ FAIL: Exception: {e}")
-        checks_total += 9  # Account for all checks
+        checks_total += 9  # 2 (returncode + PR8A message) + 7 (artifacts)
 
     passed = (checks_passed == checks_total)
     status = "PASS" if passed else "FAIL"
