@@ -48,15 +48,29 @@ def create_full_log_csv(csv_path: str) -> None:
             weight = 0.0
             regime = "emerging_trend"
 
-        # Simulate equity with drawdown
-        if i < 10:
-            equity = 1.0 + i * 0.001
+        # Simulate equity with clear peak-trough-recovery pattern
+        # This tests the scope-aligned definition:
+        # index 0: 100 (initial)
+        # index 1: 110 (peak)
+        # index 2: 90  (trough, max DD)
+        # index 3: 110 (recovery)
+        # Expected Max DD Duration = 2 ticks (from peak to recovery: 3 - 1 = 2)
+        if i == 0:
+            equity = 1.00
+        elif i == 1:
+            equity = 1.10  # peak
+        elif i == 2:
+            equity = 0.90  # trough (max DD ~18%)
+        elif i == 3:
+            equity = 1.10  # recovery
+        elif i < 10:
+            equity = 1.10 + (i - 3) * 0.001
         elif i < 15:
-            # Drawdown period
-            equity = 1.01 - (i - 10) * 0.002
+            # Second smaller drawdown
+            equity = 1.11 - (i - 10) * 0.001
         else:
             # Recovery
-            equity = 1.0 + (i - 15) * 0.0005
+            equity = 1.10 + (i - 15) * 0.0005
 
         rows.append({
             "timestamp_utc": f"2025-01-09T10:{i:02d}:00.000000",
@@ -217,9 +231,22 @@ def test_full_log(temp_dir: str) -> bool:
         else:
             print(f"✗ FAIL: Tick-based duration note missing")
 
+        # Scope-aligned definition verification: Max DD Duration should be 2 ticks
+        # (peak at index 1 → recovery at index 3 = 2 ticks duration)
+        checks_total += 1
+        if "Max DD Duration" in output and "2 ticks" in output:
+            print(f"✓ Max DD Duration = 2 ticks (scope-aligned definition verified)")
+            checks_passed += 1
+        else:
+            print(f"✗ FAIL: Max DD Duration should be 2 ticks (peak-to-recovery)")
+            # Debug: show what we got
+            for line in output.split("\n"):
+                if "Max DD Duration" in line:
+                    print(f"  Found: {line.strip()}")
+
     except Exception as e:
         print(f"✗ FAIL: Exception: {e}")
-        checks_total += 11
+        checks_total += 12
 
     passed = (checks_passed == checks_total)
     status = "PASS" if passed else "FAIL"

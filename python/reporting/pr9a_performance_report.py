@@ -82,45 +82,61 @@ def calculate_time_under_water(equity_series: pd.Series) -> int:
 
 def calculate_max_drawdown_duration(equity_series: pd.Series) -> int:
     """
-    Calculate maximum drawdown duration in ticks.
+    Calculate Max Drawdown Duration in ticks (peak-to-recovery length)
+    for the drawdown episode that produced the maximum drawdown.
 
-    Duration = length of the longest continuous drawdown period.
+    Scope-aligned definition:
+    - Identify the maximum drawdown depth.
+    - Find the first trough where this max drawdown is reached.
+    - Find the most recent peak before that trough.
+    - Find the first recovery after the trough where equity >= that peak.
+    - Duration (ticks) = recovery_index - peak_index
+      (If no recovery occurs, use last_index - peak_index)
 
-    Returns -1 if equity is N/A or empty.
+    Returns:
+    - -1 if equity is N/A or empty
+    - 0 if no drawdown exists
     """
     if equity_series.empty or equity_series.isna().all():
         return -1
 
     equity = equity_series.reset_index(drop=True)
+
     running_max = equity.expanding().max()
     drawdown = (running_max - equity) / running_max
 
-    # Find the maximum drawdown value
-    max_dd_value = drawdown.max()
-
-    if np.isnan(max_dd_value) or max_dd_value == 0:
+    max_dd = drawdown.max()
+    if pd.isna(max_dd) or max_dd <= 0:
         return 0
 
-    # Find all periods where drawdown equals max drawdown
-    # Allow small tolerance for floating point comparison
-    tolerance = 1e-9
-    max_duration = 0
-    current_duration = 0
-    in_max_dd = False
+    # trough: first index where max drawdown is reached
+    tolerance = 1e-12
+    trough_indices = [i for i, v in enumerate(drawdown) if abs(v - max_dd) <= tolerance]
+    if trough_indices:
+        trough_idx = trough_indices[0]
+    else:
+        trough_idx = int(drawdown.idxmax())
 
-    for i in range(len(drawdown)):
-        if abs(drawdown.iloc[i] - max_dd_value) < tolerance:
-            if not in_max_dd:
-                in_max_dd = True
-                current_duration = 1
-            else:
-                current_duration += 1
-            max_duration = max(max_duration, current_duration)
-        else:
-            in_max_dd = False
-            current_duration = 0
+    # peak: most recent index before trough where equity is at running max
+    peak_idx = 0
+    for i in range(trough_idx, -1, -1):
+        if equity.iloc[i] >= running_max.iloc[i] - 1e-15:
+            peak_idx = i
+            break
 
-    return max_duration
+    peak_value = equity.iloc[peak_idx]
+
+    # recovery: first index after trough where equity >= peak value
+    recovery_idx = None
+    for j in range(trough_idx + 1, len(equity)):
+        if equity.iloc[j] >= peak_value:
+            recovery_idx = j
+            break
+
+    if recovery_idx is None:
+        return max(0, (len(equity) - 1) - peak_idx)
+
+    return max(0, recovery_idx - peak_idx)
 
 
 def calculate_exposure_ratio(weights: pd.Series) -> float:
