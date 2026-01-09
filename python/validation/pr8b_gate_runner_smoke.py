@@ -236,7 +236,7 @@ def test_good_csv(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
+            [sys.executable, script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -302,7 +302,7 @@ def test_bad_csv_timestamp(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
+            [sys.executable, script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -372,7 +372,7 @@ def test_bad_csv_nan_weight(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
+            [sys.executable, script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -418,7 +418,7 @@ def test_bad_csv_out_of_bounds(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
+            [sys.executable, script_path, csv_path, "--out-dir", out_dir, "--prefix", "test"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -450,6 +450,10 @@ def test_bad_csv_out_of_bounds(temp_dir: str) -> bool:
 
 def main():
     """Run all PR8B gate runner smoke tests."""
+    # Diagnostic: Show which Python is being used (venv enforcement)
+    print(f"Python executable: {sys.executable}")
+    print("")
+
     print("=" * 60)
     print("PR8B: Gate Runner Smoke Test")
     print("=" * 60)

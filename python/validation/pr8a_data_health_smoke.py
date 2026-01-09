@@ -237,7 +237,7 @@ def test_good_csv(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path],
+            [sys.executable, script_path, csv_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -283,7 +283,7 @@ def test_bad_csv_timestamp(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path],
+            [sys.executable, script_path, csv_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -328,7 +328,7 @@ def test_bad_csv_nan_weight(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path],
+            [sys.executable, script_path, csv_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -373,7 +373,7 @@ def test_bad_csv_out_of_bounds(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path],
+            [sys.executable, script_path, csv_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -419,7 +419,7 @@ def test_report_script(temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_path],
+            [sys.executable, script_path, csv_path, "--out", out_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -458,6 +458,10 @@ def test_report_script(temp_dir: str) -> bool:
 
 def main():
     """Run all PR8A data health smoke tests."""
+    # Diagnostic: Show which Python is being used (venv enforcement)
+    print(f"Python executable: {sys.executable}")
+    print("")
+
     print("=" * 60)
     print("PR8A: Data Health Smoke Test")
     print("=" * 60)

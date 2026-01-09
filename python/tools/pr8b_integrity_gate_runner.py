@@ -31,7 +31,7 @@ def run_pr8a_validation(csv_path: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path],
+            [sys.executable, script_path, csv_path],
             capture_output=True,
             text=True,
             timeout=60,
@@ -70,7 +70,7 @@ def generate_pr8a_health_report(csv_path: str, out_dir: Path, prefix: str) -> st
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", str(out_file)],
+            [sys.executable, script_path, csv_path, "--out", str(out_file)],
             capture_output=True,
             text=True,
             timeout=60,
@@ -99,7 +99,7 @@ def generate_pr7c_dashboard(csv_path: str, out_dir: Path, prefix: str, limit: in
     script_path = "python/dashboard/pr7c_build_dashboard.py"
     out_file = out_dir / f"{prefix}_dashboard.html"
 
-    cmd = ["python3", script_path, csv_path, "--out", str(out_file), "--limit", str(limit)]
+    cmd = [sys.executable, script_path, csv_path, "--out", str(out_file), "--limit", str(limit)]
 
     if from_ts:
         cmd.extend(["--from", from_ts])
@@ -145,7 +145,7 @@ def generate_pr7a_investor_report(csv_path: str, out_dir: Path, prefix: str, lim
     script_path = "python/reporting/pr7a_investor_report.py"
     out_file = out_dir / f"{prefix}_investor_report.md"
 
-    cmd = ["python3", script_path, csv_path, "--out", str(out_file)]
+    cmd = [sys.executable, script_path, csv_path, "--out", str(out_file)]
 
     # Note: PR7A investor_report doesn't have --limit or timestamp filters in current implementation
     # We pass CSV as-is
@@ -182,7 +182,7 @@ def generate_pr7b_visualizations(csv_path: str, out_dir: Path, prefix: str,
 
     # Timeline plot
     timeline_file = out_dir / f"{prefix}_timeline.png"
-    cmd = ["python3", "python/viz/pr7b_timeline_plot.py", csv_path, "--out", str(timeline_file)]
+    cmd = [sys.executable, "python/viz/pr7b_timeline_plot.py", csv_path, "--out", str(timeline_file)]
     if limit:
         cmd.extend(["--limit", str(limit)])
     if from_ts:
@@ -200,7 +200,7 @@ def generate_pr7b_visualizations(csv_path: str, out_dir: Path, prefix: str,
 
     # Overlay histogram
     overlay_file = out_dir / f"{prefix}_overlay_hist.png"
-    cmd = ["python3", "python/viz/pr7b_overlay_histogram.py", csv_path, "--out", str(overlay_file)]
+    cmd = [sys.executable, "python/viz/pr7b_overlay_histogram.py", csv_path, "--out", str(overlay_file)]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -212,7 +212,7 @@ def generate_pr7b_visualizations(csv_path: str, out_dir: Path, prefix: str,
 
     # Regime distribution
     regime_file = out_dir / f"{prefix}_regime_dist.png"
-    cmd = ["python3", "python/viz/pr7b_regime_distribution.py", csv_path, "--out", str(regime_file)]
+    cmd = [sys.executable, "python/viz/pr7b_regime_distribution.py", csv_path, "--out", str(regime_file)]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -266,6 +266,10 @@ def main():
     parser.add_argument("--assets-dir", help="Assets directory for PR7C (optional, enables relative PNG refs)")
 
     args = parser.parse_args()
+
+    # Diagnostic: Show which Python is being used (venv enforcement)
+    print(f"Python executable: {sys.executable}")
+    print("")
 
     print("=" * 70)
     print("PR8B: Integrity Gate Runner (Enforcement)")

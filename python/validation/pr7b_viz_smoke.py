@@ -207,7 +207,7 @@ def test_timeline_plot(csv_path: str, temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_file, "--limit", "20"],
+            [sys.executable, script_path, csv_path, "--out", out_file, "--limit", "20"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -258,7 +258,7 @@ def test_overlay_histogram(csv_path: str, temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_file],
+            [sys.executable, script_path, csv_path, "--out", out_file],
             capture_output=True,
             text=True,
             timeout=30,
@@ -317,7 +317,7 @@ def test_regime_distribution(csv_path: str, temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_file],
+            [sys.executable, script_path, csv_path, "--out", out_file],
             capture_output=True,
             text=True,
             timeout=30,
@@ -365,6 +365,10 @@ def test_regime_distribution(csv_path: str, temp_dir: str) -> bool:
 
 def main():
     """Run all PR7B visualization smoke tests"""
+    # Diagnostic: Show which Python is being used (venv enforcement)
+    print(f"Python executable: {sys.executable}")
+    print("")
+
     print("=" * 60)
     print("PR7B: Visualization Smoke Test")
     print("=" * 60)

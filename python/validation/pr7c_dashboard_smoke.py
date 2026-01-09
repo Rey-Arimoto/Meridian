@@ -196,7 +196,7 @@ def test_dashboard_builder(csv_path: str, temp_dir: str) -> bool:
     # Test 1: Execute with default settings (base64 embed)
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_file, "--limit", "10"],
+            [sys.executable, script_path, csv_path, "--out", out_file, "--limit", "10"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -268,7 +268,7 @@ def test_dashboard_builder(csv_path: str, temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_file2, "--limit", "5", "--assets-dir", assets_dir],
+            [sys.executable, script_path, csv_path, "--out", out_file2, "--limit", "5", "--assets-dir", assets_dir],
             capture_output=True,
             text=True,
             timeout=60,
@@ -308,6 +308,10 @@ def test_dashboard_builder(csv_path: str, temp_dir: str) -> bool:
 
 def main():
     """Run PR7C dashboard smoke test"""
+    # Diagnostic: Show which Python is being used (venv enforcement)
+    print(f"Python executable: {sys.executable}")
+    print("")
+
     print("=" * 60)
     print("PR7C: Dashboard Smoke Test")
     print("=" * 60)

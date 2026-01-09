@@ -195,7 +195,7 @@ def test_decision_explainer(csv_path: str, temp_dir: str) -> bool:
     # Test 1: Run with --limit 3
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--limit", "3"],
+            [sys.executable, script_path, csv_path, "--limit", "3"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -233,7 +233,7 @@ def test_decision_explainer(csv_path: str, temp_dir: str) -> bool:
     out_file = os.path.join(temp_dir, "explainer_out.txt")
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--limit", "2", "--out", out_file],
+            [sys.executable, script_path, csv_path, "--limit", "2", "--out", out_file],
             capture_output=True,
             text=True,
             timeout=10,
@@ -268,7 +268,7 @@ def test_safety_summary(csv_path: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path],
+            [sys.executable, script_path, csv_path],
             capture_output=True,
             text=True,
             timeout=10,
@@ -335,7 +335,7 @@ def test_investor_report(csv_path: str, temp_dir: str) -> bool:
 
     try:
         result = subprocess.run(
-            ["python3", script_path, csv_path, "--out", out_file],
+            [sys.executable, script_path, csv_path, "--out", out_file],
             capture_output=True,
             text=True,
             timeout=10,
@@ -403,6 +403,10 @@ def test_investor_report(csv_path: str, temp_dir: str) -> bool:
 
 def main():
     """Run all PR7A reporting smoke tests"""
+    # Diagnostic: Show which Python is being used (venv enforcement)
+    print(f"Python executable: {sys.executable}")
+    print("")
+
     print("=" * 60)
     print("PR7A: Reporting Smoke Test")
     print("=" * 60)
