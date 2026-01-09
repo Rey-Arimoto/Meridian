@@ -237,8 +237,14 @@ python3 python/tools/pr10_run_pipeline.py \
 This pipeline:
 - Copies the input log to `artifacts/_<timestamp>/input_log.csv` (fixed copy)
 - Runs PR8B integrity gate on the fixed copy
+- Generates all reports and visualizations
+- Creates `index.md` as entry point for all artifacts
 - Isolates all outputs in the timestamped directory
 - Prevents log mixing, overwrite, and collision
+
+**Reading artifacts:**
+- Artifacts include `index.md` (entry point).
+- Open `index.md` first for recommended reading order.
 
 ---
 

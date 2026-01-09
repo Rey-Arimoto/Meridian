@@ -110,8 +110,44 @@ def main():
 
         exit_code = result.returncode
 
-        # Step 6: Report results
+        # Step 6: Generate artifacts index (PR12A)
         print("")
+        print("=" * 70)
+        print("Generating Artifacts Index (PR12A)")
+        print("=" * 70)
+
+        pr12a_script = "python/reporting/pr12a_artifacts_index.py"
+        pr12a_cmd = [
+            sys.executable,
+            pr12a_script,
+            "--out-dir", str(out_dir),
+            "--prefix", args.prefix,
+            "--log", str(fixed_log_path),
+        ]
+
+        if exit_code != 0:
+            pr12a_cmd.append("--blocked")
+
+        try:
+            pr12a_result = subprocess.run(
+                pr12a_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if pr12a_result.returncode == 0:
+                print(pr12a_result.stdout.strip())
+            else:
+                print(f"⚠ Warning: Index generation failed (non-critical)")
+                if pr12a_result.stderr:
+                    print(f"  {pr12a_result.stderr.strip()}")
+        except Exception as e:
+            print(f"⚠ Warning: Index generation failed (non-critical): {e}")
+
+        print("")
+
+        # Step 7: Report results
         print("=" * 70)
         print("PR10: Pipeline Complete")
         print("=" * 70)
@@ -140,16 +176,18 @@ def main():
 
             print("")
             print("Next steps:")
-            print(f"  1. Review reports in: {out_dir.absolute()}")
-            print(f"  2. Open dashboard: {out_dir / f'{args.prefix}_dashboard.html'}")
-            print(f"  3. Share performance report: {out_dir / f'{args.prefix}_performance.md'}")
+            print(f"  1. Open index: {out_dir / 'index.md'} (entry point)")
+            print(f"  2. Review reports in: {out_dir.absolute()}")
+            print(f"  3. Open dashboard: {out_dir / f'{args.prefix}_dashboard.html'}")
+            print(f"  4. Share performance report: {out_dir / f'{args.prefix}_performance.md'}")
         else:
             print("")
             print("✗ PIPELINE FAILED")
             print(f"  PR8B exited with code: {exit_code}")
             print("")
             print(f"Output directory: {out_dir.absolute()}")
-            print(f"Check health report for diagnostics: {out_dir / f'{args.prefix}_health.md'}")
+            print(f"Check index for diagnostics: {out_dir / 'index.md'}")
+            print(f"Check health report: {out_dir / f'{args.prefix}_health.md'}")
 
         print("")
         print("=" * 70)
