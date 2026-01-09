@@ -365,9 +365,10 @@ def test_regime_distribution(csv_path: str, temp_dir: str) -> bool:
 
 def main():
     """Run all PR7B visualization smoke tests"""
-    # Diagnostic: Show which Python is being used (venv enforcement)
-    print(f"Python executable: {sys.executable}")
-    print("")
+    # Diagnostic: Show which Python is being used (only if MERIDIAN_DEBUG=1)
+    if os.environ.get("MERIDIAN_DEBUG"):
+        print(f"Python executable: {sys.executable}")
+        print("")
 
     print("=" * 60)
     print("PR7B: Visualization Smoke Test")

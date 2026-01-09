@@ -264,12 +264,14 @@ def main():
     parser.add_argument("--from", dest="from_ts", help="Filter from timestamp (ISO format)")
     parser.add_argument("--to", dest="to_ts", help="Filter to timestamp (ISO format)")
     parser.add_argument("--assets-dir", help="Assets directory for PR7C (optional, enables relative PNG refs)")
+    parser.add_argument("--debug", action="store_true", help="Show diagnostic information (Python executable path)")
 
     args = parser.parse_args()
 
-    # Diagnostic: Show which Python is being used (venv enforcement)
-    print(f"Python executable: {sys.executable}")
-    print("")
+    # Diagnostic: Show which Python is being used (only if --debug or MERIDIAN_DEBUG=1)
+    if args.debug or os.environ.get("MERIDIAN_DEBUG"):
+        print(f"Python executable: {sys.executable}")
+        print("")
 
     print("=" * 70)
     print("PR8B: Integrity Gate Runner (Enforcement)")

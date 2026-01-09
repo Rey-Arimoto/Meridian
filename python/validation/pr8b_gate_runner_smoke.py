@@ -450,9 +450,10 @@ def test_bad_csv_out_of_bounds(temp_dir: str) -> bool:
 
 def main():
     """Run all PR8B gate runner smoke tests."""
-    # Diagnostic: Show which Python is being used (venv enforcement)
-    print(f"Python executable: {sys.executable}")
-    print("")
+    # Diagnostic: Show which Python is being used (only if MERIDIAN_DEBUG=1)
+    if os.environ.get("MERIDIAN_DEBUG"):
+        print(f"Python executable: {sys.executable}")
+        print("")
 
     print("=" * 60)
     print("PR8B: Gate Runner Smoke Test")

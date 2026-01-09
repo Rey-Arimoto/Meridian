@@ -458,9 +458,10 @@ def test_report_script(temp_dir: str) -> bool:
 
 def main():
     """Run all PR8A data health smoke tests."""
-    # Diagnostic: Show which Python is being used (venv enforcement)
-    print(f"Python executable: {sys.executable}")
-    print("")
+    # Diagnostic: Show which Python is being used (only if MERIDIAN_DEBUG=1)
+    if os.environ.get("MERIDIAN_DEBUG"):
+        print(f"Python executable: {sys.executable}")
+        print("")
 
     print("=" * 60)
     print("PR8A: Data Health Smoke Test")

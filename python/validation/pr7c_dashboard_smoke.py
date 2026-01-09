@@ -308,9 +308,10 @@ def test_dashboard_builder(csv_path: str, temp_dir: str) -> bool:
 
 def main():
     """Run PR7C dashboard smoke test"""
-    # Diagnostic: Show which Python is being used (venv enforcement)
-    print(f"Python executable: {sys.executable}")
-    print("")
+    # Diagnostic: Show which Python is being used (only if MERIDIAN_DEBUG=1)
+    if os.environ.get("MERIDIAN_DEBUG"):
+        print(f"Python executable: {sys.executable}")
+        print("")
 
     print("=" * 60)
     print("PR7C: Dashboard Smoke Test")
