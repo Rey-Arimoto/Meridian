@@ -1,25 +1,22 @@
 # python/confidence/confidence_reason_builder.py
 """
 PR28: Confidence Reason Generation Stub (READ-ONLY)
+PR29: Confidence Reason Population (Minimal, READ-ONLY)
 
 Purpose: Generate confidence_reason following PR27 structure.
 
-This is a minimal stub implementation that produces structurally compliant
-reason text without semantic content. Actual reason generation logic will
-be implemented in future PRs.
+PR29 Implementation:
+- Populates PR27 structure based on observation key presence
+- Content is formulaic and non-evaluative
+- Based purely on observation structure, not values
+- No semantic meaning yet
 
 Requirements (PR27 Reason Structure Charter):
 - Format: Source:<text>; Stability:<text>; Consistency:<text>; Completeness:<text>
 - Human-readable
-- Deterministic
-- Non-numeric
+- Repeatable (same input → same output)
+- Non-numeric (in evaluative sense)
 - Optional (empty string always valid per PR21)
-
-PR28 Implementation:
-- Returns empty string (undefined) or minimal structured stub
-- No semantic content
-- No evaluation logic
-- READ-ONLY stub
 """
 
 
@@ -34,12 +31,32 @@ def build_confidence_reason(observation):
         str: Structured confidence_reason following PR27 format,
              or empty string (undefined per PR21)
 
-    Never raises exceptions - returns empty string or structured stub.
+    Never raises exceptions - returns empty string or structured reason.
 
-    PR28: Minimal stub - returns empty string (undefined).
-    Future PRs will implement actual reason generation logic.
+    PR29: Minimal population based on observation key presence.
+    Future PRs will add semantic content.
     """
-    # PR28: Minimal stub - return undefined (empty string)
-    # This satisfies PR21 absence semantics and PR27 structure requirement
-    # Future PRs will generate semantic content within PR27 structure
-    return ""
+    # PR21: Allow empty string for undefined confidence
+    if not observation:
+        return ""
+
+    # PR27 Structure: Source:<text>; Stability:<text>; Consistency:<text>; Completeness:<text>
+
+    # Source: Which observation keys are present
+    source_keys = sorted(observation.keys())
+    source_text = ", ".join(source_keys) if source_keys else "empty"
+
+    # Stability: Temporal context availability
+    has_recent = any(k.startswith("recent_") for k in observation.keys())
+    stability_text = "temporal indicators present" if has_recent else "temporal indicators absent"
+
+    # Consistency: Core signal coverage
+    core_keys = {"intent_primary", "regime", "base_action", "overlay_rule"}
+    present_core = core_keys & set(observation.keys())
+    consistency_text = f"{len(present_core)}/4 core signals"
+
+    # Completeness: Observation count
+    key_count = len(observation)
+    completeness_text = f"{key_count} fields"
+
+    return f"Source:{source_text}; Stability:{stability_text}; Consistency:{consistency_text}; Completeness:{completeness_text}"
