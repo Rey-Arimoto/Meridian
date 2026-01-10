@@ -203,12 +203,15 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Import ban detection (v0.4 builders/validators)
 - Featurization ban detection (confidence_reason operations)
 - Read-only consumption validation
+- Decision Record immutability (no regeneration or post-hoc rationalization)
+- v0.4 Confidence boundary protection (no erosion)
 
 Run validations:
 ```bash
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr37_intelligence_input_contract_guard_smoke.py
+python3 python/validation/pr39_intelligence_decision_record_compliance_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
