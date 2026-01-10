@@ -201,6 +201,10 @@ class RealTimeMeridianAgent:
                 # PR15A: v0.3 Intent fields (Layer A - first-class citizen)
                 "intent_primary": intent_primary,
                 "intent_reason": intent_reason,
+
+                # PR19: v0.4 Confidence fields (seats reserved, values undefined)
+                "confidence_value": "",
+                "confidence_reason": "",
             }
 
             # PR13B: Validate row before writing (fail-fast at source)
