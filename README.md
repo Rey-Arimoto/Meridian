@@ -213,6 +213,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Decision Engine shadow diff logging (machine-readable comparison, non-evaluative)
 - Decision diff semantics tagging (non-evaluative classification of divergence types)
 - Shadow diff analytics export (daily summary aggregation for comparison analysis)
+- Shadow diff report generator (human-readable Markdown/HTML reports, non-evaluative)
 
 Run validations:
 ```bash
@@ -229,9 +230,35 @@ python3 python/validation/pr44_decision_engine_shadow_mode_smoke.py
 python3 python/validation/pr45_decision_engine_shadow_diff_smoke.py
 python3 python/validation/pr46_decision_diff_semantics_smoke.py
 python3 python/validation/pr47_shadow_diff_analytics_export_smoke.py
+python3 python/validation/pr48a_shadow_diff_report_generator_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
+
+**Analytics Tools:**
+
+Generate human-readable reports from PR47 analytics:
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+
+# Generate Markdown/HTML reports from PR47 outputs
+python3 python/analytics/pr48a_shadow_diff_report_generator.py \
+  --in_dir analytics_out \
+  --out_dir reports
+
+# Format options: md, html, or both (default: both)
+python3 python/analytics/pr48a_shadow_diff_report_generator.py \
+  --in_dir analytics_out \
+  --out_dir reports \
+  --format md
+
+# Filter by specific day
+python3 python/analytics/pr48a_shadow_diff_report_generator.py \
+  --in_dir analytics_out \
+  --out_dir reports \
+  --day 2026-01-10
+```
 
 ---
 
