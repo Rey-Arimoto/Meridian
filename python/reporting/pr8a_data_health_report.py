@@ -16,6 +16,14 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 
+# PR16A: Import Intent integrity check
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from validation.pr16a_intent_integrity_check import check_intent_integrity, format_warnings_text, format_warnings_markdown
+    INTENT_CHECK_AVAILABLE = True
+except ImportError:
+    INTENT_CHECK_AVAILABLE = False
+
 
 def extract_overlay_rule(decision_reason: str) -> str:
     """Extract overlay rule from decision_reason field."""
@@ -210,6 +218,22 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
         lines.append("  Review anomalies before trusting explainability outputs.")
 
     lines.append("")
+
+    # PR16A: Intent Integrity (Warning-only)
+    lines.append("-" * 70)
+    lines.append("Intent Integrity (Warning)")
+    lines.append("-" * 70)
+
+    if INTENT_CHECK_AVAILABLE:
+        try:
+            intent_warnings = check_intent_integrity(df)
+            lines.append(format_warnings_text(intent_warnings))
+        except Exception as e:
+            lines.append(f"Intent integrity check unavailable: {e}")
+    else:
+        lines.append("Intent integrity check not available (PR16A module not found)")
+
+    lines.append("")
     lines.append("=" * 70)
 
     return "\n".join(lines)
@@ -326,6 +350,21 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
         lines.append(f"- {weight_issues} weight issues")
         lines.append("")
         lines.append("Review anomalies before trusting explainability outputs.")
+
+    lines.append("")
+
+    # PR16A: Intent Integrity (Warning-only)
+    lines.append("## Intent Integrity (Warning)")
+    lines.append("")
+
+    if INTENT_CHECK_AVAILABLE:
+        try:
+            intent_warnings = check_intent_integrity(df)
+            lines.append(format_warnings_markdown(intent_warnings))
+        except Exception as e:
+            lines.append(f"**Intent integrity check unavailable:** {e}")
+    else:
+        lines.append("**Intent integrity check not available** (PR16A module not found)")
 
     lines.append("")
     lines.append("---")
