@@ -217,6 +217,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Shadow diff report indexer (archive organization and TOC generation, non-evaluative)
 - Daily shadow diff pipeline (orchestrates PR47→PR48A→PR48B in sequence, non-evaluative)
 - Daily shadow diff pipeline scheduler (GitHub Actions + launchd templates for automated execution)
+- Weekly shadow diff digest (7-day summary, observational only, READ-ONLY)
 
 Run validations:
 ```bash
@@ -237,6 +238,7 @@ python3 python/validation/pr48a_shadow_diff_report_generator_smoke.py
 python3 python/validation/pr48b_shadow_diff_report_indexer_smoke.py
 python3 python/validation/pr49_daily_shadow_diff_pipeline_smoke.py
 python3 python/validation/pr50_scheduler_assets_smoke.py
+python3 python/validation/pr51_weekly_shadow_diff_digest_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
@@ -286,6 +288,20 @@ python3 python/analytics/pr49_daily_shadow_diff_pipeline.py \
   --day 2026-01-10 \
   --analytics_out_dir analytics_out \
   --reports_dir reports \
+  --format both
+
+# Generate weekly digest (auto end_day from latest available report)
+python3 python/analytics/pr51_weekly_shadow_diff_digest.py \
+  --reports_dir reports \
+  --out_dir reports/weekly \
+  --format both
+
+# Generate weekly digest ending on specific day
+python3 python/analytics/pr51_weekly_shadow_diff_digest.py \
+  --reports_dir reports \
+  --end_day 2026-01-11 \
+  --days 7 \
+  --out_dir reports/weekly \
   --format both
 ```
 
