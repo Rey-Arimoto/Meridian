@@ -215,6 +215,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Shadow diff analytics export (daily summary aggregation for comparison analysis)
 - Shadow diff report generator (human-readable Markdown/HTML reports, non-evaluative)
 - Shadow diff report indexer (archive organization and TOC generation, non-evaluative)
+- Daily shadow diff pipeline (orchestrates PR47→PR48A→PR48B in sequence, non-evaluative)
 
 Run validations:
 ```bash
@@ -233,6 +234,7 @@ python3 python/validation/pr46_decision_diff_semantics_smoke.py
 python3 python/validation/pr47_shadow_diff_analytics_export_smoke.py
 python3 python/validation/pr48a_shadow_diff_report_generator_smoke.py
 python3 python/validation/pr48b_shadow_diff_report_indexer_smoke.py
+python3 python/validation/pr49_daily_shadow_diff_pipeline_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
@@ -269,6 +271,20 @@ python3 python/analytics/pr48b_shadow_diff_report_indexer.py \
 python3 python/analytics/pr48b_shadow_diff_report_indexer.py \
   --reports_dir reports \
   --day 2026-01-10
+
+# Complete pipeline (PR47→PR48A→PR48B)
+python3 python/analytics/pr49_daily_shadow_diff_pipeline.py \
+  --log_path logs/meridian_log.csv \
+  --analytics_out_dir analytics_out \
+  --reports_dir reports
+
+# Rebuild specific day
+python3 python/analytics/pr49_daily_shadow_diff_pipeline.py \
+  --log_path logs/meridian_log.csv \
+  --day 2026-01-10 \
+  --analytics_out_dir analytics_out \
+  --reports_dir reports \
+  --format both
 ```
 
 **Archive Structure:**
