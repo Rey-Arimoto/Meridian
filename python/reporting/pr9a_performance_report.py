@@ -17,6 +17,13 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 
+# PR16B: Import Intent derivation (Layer B)
+try:
+    from reporting.pr15b_intent_derivation import derive_intent_primary
+    INTENT_AVAILABLE = True
+except ImportError:
+    INTENT_AVAILABLE = False
+
 
 def extract_overlay_rule(decision_reason: str) -> str:
     """Extract overlay rule from decision_reason field."""
@@ -478,6 +485,73 @@ def generate_report(df: pd.DataFrame, csv_path: str) -> str:
 
     lines.append("")
 
+    # PR16B: Intent Summary
+    lines.append("-" * 70)
+    lines.append("Intent Summary")
+    lines.append("-" * 70)
+
+    if INTENT_AVAILABLE:
+        try:
+            intent_series = derive_intent_primary(df)
+            intent_counts = intent_series.value_counts()
+
+            if len(intent_counts) > 0:
+                lines.append("Intent Distribution:")
+                for intent, count in intent_counts.items():
+                    pct = (count / total_rows * 100.0) if total_rows > 0 else 0.0
+                    lines.append(f"  {intent:12s}: {count:6d} ({pct:5.1f}%)")
+            else:
+                lines.append("Intent Distribution: N/A (no Intent data)")
+        except Exception as e:
+            lines.append(f"Intent Distribution: N/A (derivation failed: {e})")
+    else:
+        lines.append("Intent Distribution: N/A (PR15B not available)")
+
+    lines.append("")
+
+    # PR16B: Regime × Intent Cross-Tabulation
+    lines.append("-" * 70)
+    lines.append("Regime × Intent")
+    lines.append("-" * 70)
+
+    if INTENT_AVAILABLE and "regime" in df.columns:
+        try:
+            intent_series = derive_intent_primary(df)
+            df_temp = df.copy()
+            df_temp["intent_primary"] = intent_series
+
+            regime_intent_cross = pd.crosstab(
+                df_temp["regime"].fillna("unknown"),
+                df_temp["intent_primary"].fillna("N/A")
+            )
+
+            if not regime_intent_cross.empty:
+                # Print header
+                intents = regime_intent_cross.columns.tolist()
+                header = "  Regime".ljust(28) + " | " + " | ".join([f"{intent:12s}" for intent in intents])
+                lines.append(header)
+                lines.append("  " + "-" * (len(header) - 2))
+
+                # Print each regime row
+                for regime in regime_intent_cross.index:
+                    row_parts = [f"{regime}".ljust(26)]
+                    for intent in intents:
+                        count = regime_intent_cross.loc[regime, intent]
+                        row_parts.append(f"{count:12d}")
+                    lines.append("  " + " | ".join(row_parts))
+            else:
+                lines.append("Regime × Intent: N/A (no data)")
+        except Exception as e:
+            lines.append(f"Regime × Intent: N/A (derivation failed: {e})")
+    elif not INTENT_AVAILABLE:
+        lines.append("Regime × Intent: N/A (PR15B not available)")
+    elif "regime" not in df.columns:
+        lines.append("Regime × Intent: N/A (regime column missing)")
+    else:
+        lines.append("Regime × Intent: N/A")
+
+    lines.append("")
+
     # (5) Health Gate Reference
     lines.append("-" * 70)
     lines.append("Data Quality Gate Reference")
@@ -767,6 +841,75 @@ def generate_markdown(df: pd.DataFrame, csv_path: str) -> str:
     else:
         lines.append("**Regime-Based Exposure:** N/A (regime column missing)")
         lines.append("")
+
+    # PR16B: Intent Summary
+    lines.append("## Intent Summary")
+    lines.append("")
+
+    if INTENT_AVAILABLE:
+        try:
+            intent_series = derive_intent_primary(df)
+            intent_counts = intent_series.value_counts()
+
+            if len(intent_counts) > 0:
+                lines.append("| Intent | Count | Percentage |")
+                lines.append("|--------|-------|------------|")
+
+                for intent, count in intent_counts.items():
+                    pct = (count / total_rows * 100.0) if total_rows > 0 else 0.0
+                    lines.append(f"| {intent} | {count:,} | {pct:.1f}% |")
+            else:
+                lines.append("**Intent Distribution:** N/A (no Intent data)")
+        except Exception as e:
+            lines.append(f"**Intent Distribution:** N/A (derivation failed)")
+    else:
+        lines.append("**Intent Distribution:** N/A (PR15B not available)")
+
+    lines.append("")
+
+    # PR16B: Regime × Intent Cross-Tabulation
+    lines.append("## Regime × Intent")
+    lines.append("")
+
+    if INTENT_AVAILABLE and "regime" in df.columns:
+        try:
+            intent_series = derive_intent_primary(df)
+            df_temp = df.copy()
+            df_temp["intent_primary"] = intent_series
+
+            regime_intent_cross = pd.crosstab(
+                df_temp["regime"].fillna("unknown"),
+                df_temp["intent_primary"].fillna("N/A")
+            )
+
+            if not regime_intent_cross.empty:
+                # Build markdown table
+                intents = regime_intent_cross.columns.tolist()
+
+                # Header row
+                header_row = "| Regime | " + " | ".join(intents) + " |"
+                separator = "|" + "|".join(["--------"] * (len(intents) + 1)) + "|"
+
+                lines.append(header_row)
+                lines.append(separator)
+
+                # Data rows
+                for regime in regime_intent_cross.index:
+                    counts = [str(regime_intent_cross.loc[regime, intent]) for intent in intents]
+                    data_row = f"| {regime} | " + " | ".join(counts) + " |"
+                    lines.append(data_row)
+            else:
+                lines.append("**Regime × Intent:** N/A (no data)")
+        except Exception as e:
+            lines.append(f"**Regime × Intent:** N/A (derivation failed)")
+    elif not INTENT_AVAILABLE:
+        lines.append("**Regime × Intent:** N/A (PR15B not available)")
+    elif "regime" not in df.columns:
+        lines.append("**Regime × Intent:** N/A (regime column missing)")
+    else:
+        lines.append("**Regime × Intent:** N/A")
+
+    lines.append("")
 
     # Health Gate Reference
     lines.append("## Data Quality Gate Reference")
