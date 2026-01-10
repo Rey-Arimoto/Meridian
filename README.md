@@ -219,6 +219,24 @@ If the integrity gate passes, the following files will be generated in the `arti
 
 ---
 
+## v0.2 Log Requirements (PR13B)
+
+**IMPORTANT:** Meridian v0.2 requires all execution logs to include the following columns:
+
+- `regime` — Constitutional regime classification (e.g., `stable_range`, `emerging_trend`, `volatile_noise`, `REGIME_TRANSITION`)
+- `base_action` — Base policy decision before overlay (e.g., `HOLD`, `SHIFT`, `PAUSE`)
+- `decision_reason` — Human-readable decision explanation
+
+**What happens if these columns are missing:**
+
+1. **At agent startup** — The agent will detect pre-v0.2 logs and refuse to start. You must delete or rename the old log file.
+2. **At runtime** — If the agent tries to write a row without these columns (code bug), it will exit immediately with a fatal error.
+3. **At pipeline time** — PR8B integrity gate will reject logs missing these columns with a fail-closed error.
+
+These guards ensure that v0.2 constitutional decision logs are **auditable, complete, and pipeline-compatible by design**.
+
+---
+
 ## Production Workflow (PR10)
 
 **Standard operating procedure for real log processing:**

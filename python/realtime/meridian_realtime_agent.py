@@ -1,6 +1,7 @@
 # python/realtime/meridian_realtime_agent.py
 from datetime import datetime
 import time
+import sys
 import pandas as pd
 
 from config import (
@@ -15,6 +16,7 @@ from config import (
     COOLDOWN_SECONDS,
     MAX_DW_PER_STEP,
     MIN_DW_IGNORE,
+    V0_2_REQUIRED_COLUMNS,
 )
 
 from entropy import CompositeEntropy
@@ -24,6 +26,24 @@ from core.risk_guard import RiskGuard
 from core.meridian_policy_core import MeridianPolicyCore
 from core.safety_overlay import SafetyOverlay
 from brokers.paper_broker import PaperBroker
+
+
+def validate_log_row_v0_2(row_dict):
+    """
+    PR13B: Validate that log row contains all v0.2 required columns.
+
+    Args:
+        row_dict: dict to be written to log
+
+    Returns:
+        (ok: bool, missing: list) - ok=True if all required columns present,
+                                     missing=list of missing column names
+
+    This is a fail-fast guard to prevent generating incomplete logs
+    that would be rejected by PR8B integrity gate.
+    """
+    missing = [col for col in V0_2_REQUIRED_COLUMNS if col not in row_dict]
+    return (len(missing) == 0, missing)
 
 
 def should_freeze(entropy_bp: int, threshold_bp: int) -> bool:
@@ -138,7 +158,8 @@ class RealTimeMeridianAgent:
                 f"Act={action} w*={final_w:.2f} Eq={eq:.4f} Guard={self.guard.state.last_guard_type}"
             )
 
-            append_log_row({
+            # PR13B: Build row dict and validate before logging
+            row_dict = {
                 "timestamp_utc": now.isoformat(),
                 "symbol": SYMBOL,
                 "env": ENV_NAME,
@@ -167,6 +188,23 @@ class RealTimeMeridianAgent:
                 "regime": regime_str,
                 "base_action": base_action_str,
                 "decision_reason": decision_reason,  # Includes overlay rule
-            })
+            }
+
+            # PR13B: Validate row before writing (fail-fast at source)
+            ok, missing = validate_log_row_v0_2(row_dict)
+            if not ok:
+                print("=" * 70)
+                print("FATAL ERROR: Log row missing v0.2 required columns")
+                print("=" * 70)
+                print(f"Missing columns: {', '.join(missing)}")
+                print("")
+                print("This is a code bug. The agent must always generate")
+                print("v0.2-compliant log rows with regime, base_action, decision_reason.")
+                print("")
+                print("Stopping agent to prevent generating invalid logs.")
+                print("=" * 70)
+                sys.exit(1)
+
+            append_log_row(row_dict)
 
             time.sleep(INTERVAL_SECONDS)

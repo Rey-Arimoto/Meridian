@@ -36,3 +36,7 @@ OVERLAY_ENABLED = True
 COOLDOWN_SECONDS = 600          # 10 minutes between weight changes
 MAX_DW_PER_STEP = 0.05          # Maximum 5% weight change per step
 MIN_DW_IGNORE = 0.02            # Ignore changes below 2%
+
+# v0.2 Required Log Columns (PR13B)
+# These columns are mandatory for v0.2 pipeline (PR8B gate will reject logs without them)
+V0_2_REQUIRED_COLUMNS = ["regime", "base_action", "decision_reason"]
