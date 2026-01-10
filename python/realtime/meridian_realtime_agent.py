@@ -21,6 +21,7 @@ from config import (
     DECISION_ENGINE_VERSION,  # PR43: Engine selector
     DECISION_ENGINE_SHADOW_MODE,  # PR44: Shadow mode
     DECISION_ENGINE_DIFF_LOGGING,  # PR45: Diff logging
+    DECISION_ENGINE_DIFF_SEMANTICS,  # PR46: Semantics tagging
 )
 
 from entropy import CompositeEntropy
@@ -423,6 +424,111 @@ class RealTimeMeridianAgent:
                 row_dict["v5_decision_diff_status"] = "UNAVAILABLE"
                 row_dict["v5_decision_diff_pair"] = "UNKNOWN"
                 row_dict["v5_decision_diff_summary"] = "diff failed safely."
+
+            # PR46: v0.5 Decision Diff Semantics Tagging (READ-ONLY, non-evaluative classification)
+            try:
+                semantics_enabled = DECISION_ENGINE_DIFF_SEMANTICS
+
+                if not semantics_enabled:
+                    # PR46: Semantics tagging disabled
+                    row_dict["v5_decision_diff_semantics_mode"] = "OFF"
+                    row_dict["v5_decision_diff_semantics_status"] = "UNAVAILABLE"
+                    row_dict["v5_decision_diff_semantics_tag"] = "NO_SHADOW"
+                    row_dict["v5_decision_diff_semantics_context"] = "context_missing"
+                    row_dict["v5_decision_diff_semantics_summary"] = "semantics tagging disabled."
+
+                elif not diff_logging_enabled or not shadow_mode:
+                    # PR46: Semantics enabled but no shadow/diff available
+                    row_dict["v5_decision_diff_semantics_mode"] = "ON"
+                    row_dict["v5_decision_diff_semantics_status"] = "UNAVAILABLE"
+                    row_dict["v5_decision_diff_semantics_tag"] = "NO_SHADOW"
+                    row_dict["v5_decision_diff_semantics_context"] = "context_missing"
+                    row_dict["v5_decision_diff_semantics_summary"] = "shadow record not present."
+
+                else:
+                    # PR46: Semantics enabled and diff available
+                    row_dict["v5_decision_diff_semantics_mode"] = "ON"
+
+                    # Get diff status from PR45
+                    diff_status = row_dict.get("v5_decision_diff_status", "UNAVAILABLE")
+                    primary_action = row_dict.get("v5_decision_action", "")
+                    shadow_action = row_dict.get("v5_shadow_decision_action", "")
+
+                    # PR46: Determine semantics tag (non-evaluative classification)
+                    if diff_status == "UNAVAILABLE" or not primary_action or not shadow_action or \
+                       primary_action == "UNKNOWN" or shadow_action == "UNKNOWN":
+                        # Missing actions
+                        semantics_tag = "MISSING_ACTIONS"
+                        semantics_status = "UNAVAILABLE"
+                        semantics_summary = "actions missing or unavailable."
+
+                    elif diff_status == "ALIGNED":
+                        # Actions match
+                        semantics_tag = "ALIGNED"
+                        semantics_status = "AVAILABLE"
+                        semantics_summary = "actions aligned."
+
+                    elif diff_status == "DIVERGED":
+                        # Actions differ - classify divergence type (READ-ONLY, no evaluation)
+                        semantics_status = "AVAILABLE"
+
+                        # PR46: Detect overlay pattern (cautious or halted)
+                        # Cautious: SHIFT/BUY/SELL → HOLD
+                        # Halted: anything → PAUSE
+                        aggressive_actions = {"SHIFT", "BUY", "SELL"}
+                        conservative_action = "HOLD"
+                        halted_action = "PAUSE"
+
+                        # Check if one is HOLD and the other is aggressive
+                        cautious_pattern = (
+                            (primary_action == conservative_action and shadow_action in aggressive_actions) or
+                            (shadow_action == conservative_action and primary_action in aggressive_actions)
+                        )
+
+                        # Check if one is PAUSE (halted override)
+                        halted_pattern = (primary_action == halted_action or shadow_action == halted_action)
+
+                        if cautious_pattern or halted_pattern:
+                            semantics_tag = "DIVERGED_RULE_OVERLAY"
+                            semantics_summary = "divergence tagged as rule overlay."
+                        else:
+                            semantics_tag = "DIVERGED_UNKNOWN"
+                            semantics_summary = "divergence type unknown."
+
+                    else:
+                        # Unexpected diff status
+                        semantics_tag = "DIVERGED_UNKNOWN"
+                        semantics_status = "UNAVAILABLE"
+                        semantics_summary = "unexpected diff status."
+
+                    row_dict["v5_decision_diff_semantics_tag"] = semantics_tag
+                    row_dict["v5_decision_diff_semantics_status"] = semantics_status
+                    row_dict["v5_decision_diff_semantics_summary"] = semantics_summary
+
+                    # PR46: Determine context tag (presence only, no causation)
+                    regime_present = bool(row_dict.get("regime"))
+                    intent_present = bool(row_dict.get("intent_primary"))
+
+                    if regime_present and intent_present:
+                        context_tag = "regime_and_intent_present"
+                    elif regime_present:
+                        context_tag = "regime_present"
+                    elif intent_present:
+                        context_tag = "intent_present"
+                    else:
+                        context_tag = "context_missing"
+
+                    row_dict["v5_decision_diff_semantics_context"] = context_tag
+
+            except Exception as semantics_e:
+                # PR46: Semantics generation failure must not stop execution (warning-only)
+                print(f"[WARNING][PR46][semantics] Failed to compute semantics: {semantics_e} ts={now.isoformat()}")
+                # PR46: Safe defaults (non-numeric, non-evaluative)
+                row_dict["v5_decision_diff_semantics_mode"] = "ON"
+                row_dict["v5_decision_diff_semantics_status"] = "UNAVAILABLE"
+                row_dict["v5_decision_diff_semantics_tag"] = "MISSING_ACTIONS"
+                row_dict["v5_decision_diff_semantics_context"] = "context_missing"
+                row_dict["v5_decision_diff_semantics_summary"] = "semantics failed safely."
 
             # PR13B: Validate row before writing (fail-fast at source)
             ok, missing = validate_log_row_v0_2(row_dict)

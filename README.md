@@ -211,6 +211,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Decision Engine selector (v1/v2 switch, auditable)
 - Decision Engine shadow mode (dual record logging for comparison)
 - Decision Engine shadow diff logging (machine-readable comparison, non-evaluative)
+- Decision diff semantics tagging (non-evaluative classification of divergence types)
 
 Run validations:
 ```bash
@@ -225,6 +226,7 @@ python3 python/validation/pr42_intelligence_decision_engine_v2_smoke.py
 python3 python/validation/pr43_decision_engine_selector_wiring_smoke.py
 python3 python/validation/pr44_decision_engine_shadow_mode_smoke.py
 python3 python/validation/pr45_decision_engine_shadow_diff_smoke.py
+python3 python/validation/pr46_decision_diff_semantics_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

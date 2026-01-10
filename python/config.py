@@ -61,3 +61,11 @@ DECISION_ENGINE_SHADOW_MODE = False
 # Requires SHADOW_MODE=True to generate meaningful diffs
 # Diff logging is READ-ONLY, non-evaluative, and never changes behavior
 DECISION_ENGINE_DIFF_LOGGING = False
+
+# v0.5 Decision Diff Semantics Tagging (PR46)
+# Controls whether to add semantic classification to diff logging
+# False (default): PR45 behavior (diff status/summary only)
+# True: Add v5_decision_diff_semantics_* fields for classification
+# Requires DIFF_LOGGING=True to generate semantics
+# Semantics tagging is READ-ONLY, non-evaluative classification only (no judgment)
+DECISION_ENGINE_DIFF_SEMANTICS = False
