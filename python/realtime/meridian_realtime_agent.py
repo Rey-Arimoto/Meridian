@@ -27,6 +27,7 @@ from core.meridian_policy_core import MeridianPolicyCore
 from core.safety_overlay import SafetyOverlay
 from brokers.paper_broker import PaperBroker
 from core.intent import classify_intent_from_fields  # PR15A: Intent classification
+from confidence.confidence_evaluator import evaluate_confidence  # PR24: Confidence evaluation hook
 
 
 def validate_log_row_v0_2(row_dict):
@@ -167,6 +168,18 @@ class RealTimeMeridianAgent:
                 action_label=action
             )
 
+            # PR24: Evaluate Confidence (Layer A - decision time)
+            # Context includes observable state for Confidence assessment
+            confidence_context = {
+                "entropy_bp": entropy_bp,
+                "regime": regime_str,
+                "base_action": base_action_str,
+                "intent_primary": intent_primary,
+                "current_weight": current_w,
+                "overlay_rule": overlay_rule,
+            }
+            confidence_value, confidence_reason = evaluate_confidence(confidence_context)
+
             # PR13B: Build row dict and validate before logging
             row_dict = {
                 "timestamp_utc": now.isoformat(),
@@ -202,9 +215,9 @@ class RealTimeMeridianAgent:
                 "intent_primary": intent_primary,
                 "intent_reason": intent_reason,
 
-                # PR19: v0.4 Confidence fields (seats reserved, values undefined)
-                "confidence_value": "",
-                "confidence_reason": "",
+                # PR24: v0.4 Confidence fields (evaluated via hook)
+                "confidence_value": confidence_value,
+                "confidence_reason": confidence_reason,
             }
 
             # PR13B: Validate row before writing (fail-fast at source)
