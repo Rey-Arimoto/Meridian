@@ -28,8 +28,8 @@ import pandas as pd
 def create_v04_log_with_confidence_seats(csv_path: str) -> None:
     """Create v0.4 log with Confidence seat columns (empty values)."""
     columns = [
-        "timestamp_utc", "regime", "base_action", "decision_reason", "action_label",
-        "target_weight", "intent_primary", "intent_reason",
+        "timestamp_utc",
+        "intent_primary", "intent_reason",
         "confidence_value", "confidence_reason"  # PR19: Confidence seats
     ]
 
@@ -37,11 +37,6 @@ def create_v04_log_with_confidence_seats(csv_path: str) -> None:
     for i in range(5):
         rows.append({
             "timestamp_utc": f"2025-01-10T10:{i:02d}:00.000000",
-            "regime": "stable_range",
-            "base_action": "act",
-            "decision_reason": "STABLE_RANGE: Act",
-            "action_label": "BUY",
-            "target_weight": 0.2,
             "intent_primary": "SEEK",
             "intent_reason": "Active opportunity search",
             "confidence_value": "",  # PR19: Seat reserved, value undefined
@@ -57,19 +52,14 @@ def create_v04_log_with_confidence_seats(csv_path: str) -> None:
 def create_v03_log_without_confidence(csv_path: str) -> None:
     """Create v0.3 log without Confidence columns (backward compatibility)."""
     columns = [
-        "timestamp_utc", "regime", "base_action", "decision_reason", "action_label",
-        "target_weight", "intent_primary", "intent_reason"
+        "timestamp_utc",
+        "intent_primary", "intent_reason"
     ]
 
     rows = []
     for i in range(5):
         rows.append({
             "timestamp_utc": f"2025-01-10T10:{i:02d}:00.000000",
-            "regime": "stable_range",
-            "base_action": "act",
-            "decision_reason": "STABLE_RANGE: Act",
-            "action_label": "BUY",
-            "target_weight": 0.2,
             "intent_primary": "SEEK",
             "intent_reason": "Active opportunity search",
         })
