@@ -30,7 +30,7 @@ if PY_ROOT not in sys.path:
 import pandas as pd
 
 
-def create_v03_log_without_confidence(csv_path: str) -> None:
+def create_v03_log_without_confidence(csv_path: str):
     """Create v0.3 log without Confidence columns (backward compatibility)."""
     columns = [
         "timestamp_utc",
@@ -77,7 +77,7 @@ def create_v03_log_without_confidence(csv_path: str) -> None:
             "action_label": "HOLD",
             "target_weight": 0.5,
             "equity": 1.0,
-            "guard_type": "none",
+            "guard_type": "",
             "guard_reason": "",
             "regime": "stable_range",
             "base_action": "HOLD",
@@ -92,7 +92,7 @@ def create_v03_log_without_confidence(csv_path: str) -> None:
         writer.writerows(rows)
 
 
-def create_v04_log_with_confidence_undefined(csv_path: str) -> None:
+def create_v04_log_with_confidence_undefined(csv_path: str):
     """Create v0.4 log with Confidence columns present but undefined."""
     columns = [
         "timestamp_utc",
@@ -141,7 +141,7 @@ def create_v04_log_with_confidence_undefined(csv_path: str) -> None:
             "action_label": "HOLD",
             "target_weight": 0.5,
             "equity": 1.0,
-            "guard_type": "none",
+            "guard_type": "",
             "guard_reason": "",
             "regime": "stable_range",
             "base_action": "HOLD",
