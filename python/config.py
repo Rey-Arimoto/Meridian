@@ -46,3 +46,10 @@ V0_2_REQUIRED_COLUMNS = ["regime", "base_action", "decision_reason"]
 # Options: "v1" (mirror base_action), "v2" (rule overlay / regime-aware)
 # Default: "v1" (safe, minimal)
 DECISION_ENGINE_VERSION = "v1"
+
+# v0.5 Decision Engine Shadow Mode (PR44)
+# Controls whether to generate both v1 and v2 decision records simultaneously
+# False (default): Only primary engine generates record (PR43 behavior)
+# True: Both v1 and v2 generate records (primary + shadow for comparison)
+# Shadow mode enables future comparison without changing behavior
+DECISION_ENGINE_SHADOW_MODE = False

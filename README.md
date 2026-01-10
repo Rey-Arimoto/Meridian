@@ -206,7 +206,10 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Decision Record immutability (no regeneration or post-hoc rationalization)
 - v0.4 Confidence boundary protection (no erosion)
 - Decision Engine v1 (mirror base-action, non-numeric, non-evaluative)
+- Decision Engine v2 (rule overlay, regime-aware, non-numeric, non-evaluative)
 - Decision Record wiring (v5_decision_* fields logged correctly)
+- Decision Engine selector (v1/v2 switch, auditable)
+- Decision Engine shadow mode (dual record logging for comparison)
 
 Run validations:
 ```bash
@@ -217,6 +220,9 @@ python3 python/validation/pr39_intelligence_decision_record_compliance_smoke.py
 python3 python/validation/pr40_intelligence_decision_engine_v1_smoke.py
 python3 python/validation/pr41_decision_record_wiring_smoke.py
 python3 python/validation/pr41a_decision_record_wiring_consistency_smoke.py
+python3 python/validation/pr42_intelligence_decision_engine_v2_smoke.py
+python3 python/validation/pr43_decision_engine_selector_wiring_smoke.py
+python3 python/validation/pr44_decision_engine_shadow_mode_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

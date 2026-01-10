@@ -19,6 +19,7 @@ from config import (
     MIN_DW_IGNORE,
     V0_2_REQUIRED_COLUMNS,
     DECISION_ENGINE_VERSION,  # PR43: Engine selector
+    DECISION_ENGINE_SHADOW_MODE,  # PR44: Shadow mode
 )
 
 from entropy import CompositeEntropy
@@ -238,74 +239,122 @@ class RealTimeMeridianAgent:
                 "confidence_reason_generated_at": now.isoformat(),
             }
 
-            # PR43: v0.5 Decision Engine Selector (v1/v2 switch, READ-ONLY)
+            # PR44: v0.5 Decision Engine Shadow Mode (Dual Record Logging, READ-ONLY)
             try:
-                # PR43: Select decision engine based on config
-                engine_version = DECISION_ENGINE_VERSION
+                # PR43/PR44: Select decision engine based on config
+                primary_engine = DECISION_ENGINE_VERSION
+                shadow_mode = DECISION_ENGINE_SHADOW_MODE
 
-                # PR43: Generate decision record using selected engine
-                if engine_version == "v2":
-                    decision_record = generate_decision_record_v2(row_dict)
-                    engine_used = "v2"
-                elif engine_version == "v1":
-                    decision_record = generate_decision_record_v1(row_dict)
-                    engine_used = "v1"
+                # PR44: Determine shadow engine (opposite of primary)
+                if primary_engine == "v1":
+                    shadow_engine = "v2"
+                elif primary_engine == "v2":
+                    shadow_engine = "v1"
                 else:
-                    # PR43: Fallback to v1 for invalid engine version
-                    print(f"[WARNING][PR43] Invalid DECISION_ENGINE_VERSION '{engine_version}', falling back to v1")
-                    decision_record = generate_decision_record_v1(row_dict)
-                    engine_used = "v1"
+                    # Invalid primary engine: fallback to v1 primary, v2 shadow
+                    print(f"[WARNING][PR44] Invalid DECISION_ENGINE_VERSION '{primary_engine}', falling back to v1")
+                    primary_engine = "v1"
+                    shadow_engine = "v2"
 
-                # PR43: Record which engine was used
-                row_dict["v5_decision_engine"] = engine_used
+                # PR44: Generate PRIMARY decision record (PR43 logic)
+                if primary_engine == "v2":
+                    primary_record = generate_decision_record_v2(row_dict)
+                    primary_engine_used = "v2"
+                else:  # v1
+                    primary_record = generate_decision_record_v1(row_dict)
+                    primary_engine_used = "v1"
 
-                # Add v0.5 decision fields to row_dict (use v5_ prefix to avoid collision with v0.2's decision_reason)
-                row_dict["v5_decision_action"] = decision_record.get("decision_action", "UNKNOWN")
-                row_dict["v5_decision_reason"] = decision_record.get("decision_reason", "")
+                # PR44: Record primary engine and fields
+                row_dict["v5_decision_engine"] = primary_engine_used
+                row_dict["v5_decision_action"] = primary_record.get("decision_action", "UNKNOWN")
+                row_dict["v5_decision_reason"] = primary_record.get("decision_reason", "")
 
-                # PR41A: decision_inputs in both formats (PR38 logical spec = list, CSV for backward compat)
-                decision_inputs_list = decision_record.get("decision_inputs", [])
-                row_dict["v5_decision_inputs"] = ",".join(decision_inputs_list) if decision_inputs_list else ""  # CSV (backward compat)
-                row_dict["v5_decision_inputs_json"] = json.dumps(decision_inputs_list)  # JSON list (PR38 spec)
+                # PR41A: decision_inputs in both formats
+                primary_inputs_list = primary_record.get("decision_inputs", [])
+                row_dict["v5_decision_inputs"] = ",".join(primary_inputs_list) if primary_inputs_list else ""
+                row_dict["v5_decision_inputs_json"] = json.dumps(primary_inputs_list)
 
-                # PR41A: decision_version always "v0.5" (PR38 spec, immutable)
+                # PR41A: decision_version always "v0.5"
                 row_dict["v5_decision_version"] = "v0.5"
-                row_dict["v5_decision_generated_at"] = decision_record.get("decision_generated_at", "")
+                row_dict["v5_decision_generated_at"] = primary_record.get("decision_generated_at", "")
 
-                # PR41A: Always validate decision record (PR39 compliance guard, warning-only, no conditions)
-                compliance_warnings = validate_decision_record_full(decision_record, "meridian_realtime_agent")
-                if compliance_warnings:
+                # PR41A/PR44: Always validate primary decision record (PR39 compliance guard)
+                primary_compliance_warnings = validate_decision_record_full(primary_record, "meridian_realtime_agent")
+                if primary_compliance_warnings:
                     ts_str = now.isoformat()
-                    print(f"[WARNING][PR39][decision_record] violations={' | '.join(compliance_warnings)} ts={ts_str}")
+                    print(f"[WARNING][PR39][decision_record][primary] violations={' | '.join(primary_compliance_warnings)} ts={ts_str}")
+
+                # PR44: Generate SHADOW decision record (only if shadow mode enabled)
+                if shadow_mode:
+                    try:
+                        # PR44: Generate shadow record using opposite engine
+                        if shadow_engine == "v2":
+                            shadow_record = generate_decision_record_v2(row_dict)
+                            shadow_engine_used = "v2"
+                        else:  # v1
+                            shadow_record = generate_decision_record_v1(row_dict)
+                            shadow_engine_used = "v1"
+
+                        # PR44: Record shadow engine and fields
+                        row_dict["v5_shadow_decision_engine"] = shadow_engine_used
+                        row_dict["v5_shadow_decision_action"] = shadow_record.get("decision_action", "UNKNOWN")
+                        row_dict["v5_shadow_decision_reason"] = shadow_record.get("decision_reason", "")
+
+                        # PR41A/PR44: shadow decision_inputs in both formats
+                        shadow_inputs_list = shadow_record.get("decision_inputs", [])
+                        row_dict["v5_shadow_decision_inputs"] = ",".join(shadow_inputs_list) if shadow_inputs_list else ""
+                        row_dict["v5_shadow_decision_inputs_json"] = json.dumps(shadow_inputs_list)
+
+                        # PR41A/PR44: shadow decision_version always "v0.5"
+                        row_dict["v5_shadow_decision_version"] = "v0.5"
+                        row_dict["v5_shadow_decision_generated_at"] = shadow_record.get("decision_generated_at", "")
+
+                        # PR41A/PR44: Always validate shadow decision record (PR39 compliance guard)
+                        shadow_compliance_warnings = validate_decision_record_full(shadow_record, "meridian_realtime_agent")
+                        if shadow_compliance_warnings:
+                            ts_str = now.isoformat()
+                            print(f"[WARNING][PR39][decision_record][shadow] violations={' | '.join(shadow_compliance_warnings)} ts={ts_str}")
+
+                    except Exception as shadow_e:
+                        # PR44: Shadow failure must not stop execution (warning-only)
+                        print(f"[WARNING][PR44][shadow_record] Failed to generate shadow record: {shadow_e}")
+                        # PR44: Shadow safe defaults
+                        row_dict["v5_shadow_decision_engine"] = "UNKNOWN"
+                        row_dict["v5_shadow_decision_action"] = "UNKNOWN"
+                        row_dict["v5_shadow_decision_reason"] = ""
+                        row_dict["v5_shadow_decision_inputs"] = ""
+                        row_dict["v5_shadow_decision_inputs_json"] = "[]"
+                        row_dict["v5_shadow_decision_version"] = "v0.5"
+                        row_dict["v5_shadow_decision_generated_at"] = now.isoformat()
 
             except Exception as e:
-                # PR43: Decision record generation must never stop execution (warning-only)
-                print(f"[WARNING][PR43][decision_record_wiring] Failed to generate decision record: {e}")
-                # PR43: Try fallback to v1 if v2 failed
+                # PR44: Primary decision record generation must never stop execution (warning-only)
+                print(f"[WARNING][PR44][decision_record_wiring] Failed to generate primary decision record: {e}")
+                # PR44: Try fallback to v1 if primary v2 failed
                 try:
-                    if engine_version == "v2":
-                        print(f"[WARNING][PR43] Attempting fallback to v1 after v2 failure")
-                        decision_record = generate_decision_record_v1(row_dict)
-                        engine_used = "v1"
-                        row_dict["v5_decision_engine"] = engine_used
-                        row_dict["v5_decision_action"] = decision_record.get("decision_action", "UNKNOWN")
-                        row_dict["v5_decision_reason"] = decision_record.get("decision_reason", "")
-                        decision_inputs_list = decision_record.get("decision_inputs", [])
-                        row_dict["v5_decision_inputs"] = ",".join(decision_inputs_list) if decision_inputs_list else ""
-                        row_dict["v5_decision_inputs_json"] = json.dumps(decision_inputs_list)
+                    if primary_engine == "v2":
+                        print(f"[WARNING][PR44] Attempting fallback to v1 after primary v2 failure")
+                        primary_record = generate_decision_record_v1(row_dict)
+                        primary_engine_used = "v1"
+                        row_dict["v5_decision_engine"] = primary_engine_used
+                        row_dict["v5_decision_action"] = primary_record.get("decision_action", "UNKNOWN")
+                        row_dict["v5_decision_reason"] = primary_record.get("decision_reason", "")
+                        primary_inputs_list = primary_record.get("decision_inputs", [])
+                        row_dict["v5_decision_inputs"] = ",".join(primary_inputs_list) if primary_inputs_list else ""
+                        row_dict["v5_decision_inputs_json"] = json.dumps(primary_inputs_list)
                         row_dict["v5_decision_version"] = "v0.5"
-                        row_dict["v5_decision_generated_at"] = decision_record.get("decision_generated_at", "")
+                        row_dict["v5_decision_generated_at"] = primary_record.get("decision_generated_at", "")
                     else:
                         raise  # Re-raise if v1 itself failed
                 except Exception as fallback_e:
-                    # PR43: Even fallback failed, use safe defaults
-                    print(f"[WARNING][PR43] Fallback also failed: {fallback_e}")
+                    # PR44: Even fallback failed, use safe defaults
+                    print(f"[WARNING][PR44] Primary fallback also failed: {fallback_e}")
                     row_dict["v5_decision_engine"] = "UNKNOWN"
                     row_dict["v5_decision_action"] = "UNKNOWN"
                     row_dict["v5_decision_reason"] = ""
-                    row_dict["v5_decision_inputs"] = ""  # CSV (backward compat)
-                    row_dict["v5_decision_inputs_json"] = "[]"  # JSON empty list (PR38 spec)
-                    row_dict["v5_decision_version"] = "v0.5"  # PR41A: always "v0.5"
+                    row_dict["v5_decision_inputs"] = ""
+                    row_dict["v5_decision_inputs_json"] = "[]"
+                    row_dict["v5_decision_version"] = "v0.5"
                     row_dict["v5_decision_generated_at"] = now.isoformat()
 
             # PR13B: Validate row before writing (fail-fast at source)
