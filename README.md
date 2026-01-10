@@ -216,6 +216,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Shadow diff report generator (human-readable Markdown/HTML reports, non-evaluative)
 - Shadow diff report indexer (archive organization and TOC generation, non-evaluative)
 - Daily shadow diff pipeline (orchestrates PR47→PR48A→PR48B in sequence, non-evaluative)
+- Daily shadow diff pipeline scheduler (GitHub Actions + launchd templates for automated execution)
 
 Run validations:
 ```bash
@@ -235,6 +236,7 @@ python3 python/validation/pr47_shadow_diff_analytics_export_smoke.py
 python3 python/validation/pr48a_shadow_diff_report_generator_smoke.py
 python3 python/validation/pr48b_shadow_diff_report_indexer_smoke.py
 python3 python/validation/pr49_daily_shadow_diff_pipeline_smoke.py
+python3 python/validation/pr50_scheduler_assets_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
@@ -302,6 +304,74 @@ reports/
     2026-01-11/
       ...
 ```
+
+---
+
+## Daily Pipeline Scheduling (PR50)
+
+Meridian v0.5 provides two options for scheduling the daily shadow diff pipeline (PR49):
+
+### Option 1: GitHub Actions (Recommended for CI/CD)
+
+A GitHub Actions workflow is provided for daily automated execution:
+
+**Location:** `.github/workflows/pr50_daily_shadow_diff_pipeline.yml`
+
+**Schedule:** Daily at 00:30 UTC (09:30 JST)
+
+**Features:**
+- Scheduled execution via cron
+- Manual execution via workflow_dispatch (optional day parameter)
+- Artifact upload (analytics_out, reports) with 90-day retention
+- Warning-only (never fails workflow)
+- Constitutional constraints enforced
+
+**Manual Trigger:**
+- Go to Actions tab in GitHub
+- Select "PR50 Daily Shadow Diff Pipeline"
+- Click "Run workflow"
+- Optional: Specify day (YYYY-MM-DD) and log path
+
+### Option 2: Local Scheduling (macOS launchd)
+
+Templates for local scheduling on macOS are provided:
+
+**Location:** `scripts/com.meridian.pr49.daily.plist` (template)
+
+**Installation:**
+```bash
+cd ~/Meridian
+
+# Option A: Use helper script (recommended)
+bash scripts/pr50_launchd_install.sh
+
+# Option B: Manual installation
+# 1. Customize the plist template (replace /path/to/meridian with actual path)
+# 2. Copy to ~/Library/LaunchAgents/
+# 3. Load with launchctl
+cp scripts/com.meridian.pr49.daily.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.meridian.pr49.daily.plist
+```
+
+**Schedule:** Daily at 00:30 local time
+
+**Management:**
+```bash
+# Start manually
+launchctl start com.meridian.pr49.daily
+
+# Unload
+launchctl unload ~/Library/LaunchAgents/com.meridian.pr49.daily.plist
+
+# Remove
+rm ~/Library/LaunchAgents/com.meridian.pr49.daily.plist
+```
+
+**Logs:**
+- stdout: `logs/pr49_daily_stdout.log`
+- stderr: `logs/pr49_daily_stderr.log`
+
+**Note:** Customize paths in the plist template before installation. The helper script does this automatically.
 
 ---
 

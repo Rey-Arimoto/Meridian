@@ -1,0 +1,115 @@
+name: PR50 Daily Shadow Diff Pipeline
+
+# Constitutional Constraints:
+# - READ-ONLY: No execution logic, order, or weight changes
+# - Warning-only: Pipeline continues on errors, never fails workflow
+# - Non-evaluative: Observation only, no judgments
+# - Non-scoric: No numeric assessments
+# - v0.4 boundary protection: No confidence_reason analysis
+
+on:
+  # Daily execution at 00:30 UTC (09:30 JST)
+  schedule:
+    - cron: '30 0 * * *'
+
+  # Manual execution with optional day parameter
+  workflow_dispatch:
+    inputs:
+      day:
+        description: 'Optional: YYYY-MM-DD to process specific day'
+        required: false
+        type: string
+      log_path:
+        description: 'Path to execution log CSV'
+        required: false
+        default: 'logs/meridian_log.csv'
+        type: string
+
+jobs:
+  daily-shadow-diff-pipeline:
+    name: Run PR49 Daily Shadow Diff Pipeline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyyaml
+
+      - name: Run PR49 Daily Shadow Diff Pipeline
+        id: run-pipeline
+        continue-on-error: true
+        run: |
+          # Build command
+          CMD="python3 python/analytics/pr49_daily_shadow_diff_pipeline.py"
+          CMD="$CMD --log_path ${{ github.event.inputs.log_path || 'logs/meridian_log.csv' }}"
+          CMD="$CMD --analytics_out_dir analytics_out"
+          CMD="$CMD --reports_dir reports"
+
+          # Add day if specified
+          if [ -n "${{ github.event.inputs.day }}" ]; then
+            CMD="$CMD --day ${{ github.event.inputs.day }}"
+          fi
+
+          # Execute pipeline
+          echo "Executing: $CMD"
+          eval $CMD
+
+          # Pipeline is warning-only (always exits 0)
+          # Store exit code for reporting
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          # Never fail workflow (observation continues)
+          exit 0
+
+      - name: Upload analytics outputs as artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analytics-outputs-${{ github.run_id }}
+          path: |
+            analytics_out/
+            !analytics_out/**/*.tmp
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload reports as artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-${{ github.run_id }}
+          path: |
+            reports/
+            !reports/**/*.tmp
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Pipeline execution summary
+        if: always()
+        run: |
+          echo "## PR50 Daily Shadow Diff Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Execution:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "**Pipeline exit code:** ${{ steps.run-pipeline.outputs.exit_code }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Constitutional constraints maintained:**" >> $GITHUB_STEP_SUMMARY
+          echo "- READ-ONLY: No execution logic changes" >> $GITHUB_STEP_SUMMARY
+          echo "- Warning-only: Pipeline continues on errors" >> $GITHUB_STEP_SUMMARY
+          echo "- Non-evaluative: Observation only" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Analytics outputs uploaded" >> $GITHUB_STEP_SUMMARY
+          echo "- Reports uploaded" >> $GITHUB_STEP_SUMMARY
+
+# Note: This workflow uses Mode 1 (artifact upload, recommended)
+# To use Mode 2 (Git commit), add a commit step after artifact upload
+# and ensure appropriate Git configuration and permissions

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Label: Unique identifier for this launchd job -->
+    <key>Label</key>
+    <string>com.meridian.pr49.daily</string>
+
+    <!-- Program: Full path to Python executable in virtualenv -->
+    <!-- CUSTOMIZE: Replace /path/to/meridian with your actual Meridian directory -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/meridian/.venv/bin/python3</string>
+        <string>/path/to/meridian/python/analytics/pr49_daily_shadow_diff_pipeline.py</string>
+        <string>--log_path</string>
+        <string>/path/to/meridian/logs/meridian_log.csv</string>
+        <string>--analytics_out_dir</string>
+        <string>/path/to/meridian/analytics_out</string>
+        <string>--reports_dir</string>
+        <string>/path/to/meridian/reports</string>
+    </array>
+
+    <!-- Working Directory: Set to Meridian root -->
+    <!-- CUSTOMIZE: Replace /path/to/meridian with your actual Meridian directory -->
+    <key>WorkingDirectory</key>
+    <string>/path/to/meridian</string>
+
+    <!-- Schedule: Run daily at 00:30 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>0</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- Standard Output/Error Logs -->
+    <!-- CUSTOMIZE: Replace /path/to/meridian with your actual Meridian directory -->
+    <key>StandardOutPath</key>
+    <string>/path/to/meridian/logs/pr49_daily_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/meridian/logs/pr49_daily_stderr.log</string>
+
+    <!-- Run on load (optional): Set to true if you want immediate execution on load -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Keep Alive: Do not restart automatically -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment Variables (optional) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
