@@ -109,7 +109,6 @@ def test_evaluator_no_crash():
             "regime": "stable_range",
             "base_action": "HOLD",
             "intent_primary": "IDLE",
-            "current_weight": 0.5,
             "overlay_rule": "ALLOW",
         })
         assert isinstance(result, tuple) and len(result) == 2

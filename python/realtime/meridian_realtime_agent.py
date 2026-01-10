@@ -175,7 +175,6 @@ class RealTimeMeridianAgent:
                 "regime": regime_str,
                 "base_action": base_action_str,
                 "intent_primary": intent_primary,
-                "current_weight": current_w,
                 "overlay_rule": overlay_rule,
             }
             confidence_value, confidence_reason = evaluate_confidence(confidence_context)
