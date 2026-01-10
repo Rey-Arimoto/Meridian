@@ -28,16 +28,9 @@ However, Intent does not capture:
 
 **How strongly should we execute this Intent?**
 
-Consider these scenarios:
+Examples are intentionally omitted to prevent implementation leakage.
 
-| Scenario | Intent | Missing Dimension |
-|----------|--------|-------------------|
-| Stable regime, clear signal, 50+ ticks of consistency | SEEK | High structural confidence → Full conviction |
-| Stable regime, weak signal, 3 ticks since regime entry | SEEK | Low structural confidence → Tentative positioning |
-| Volatile regime, capital at risk, entropy near threshold | DEFEND | Low structural confidence → Defensive posture fragile |
-| Volatile regime, capital at risk, entropy stable for 20 ticks | DEFEND | High structural confidence → Defense well-founded |
-
-**Same Intent. Different execution conviction.**
+**Same Intent can require different execution conviction based on structural context.**
 
 Intent tells us **what** to do. Confidence tells us **how hard** to do it.
 
@@ -69,8 +62,8 @@ Confidence is derived from **observable system state**, not subjective feelings.
 - Volatility: Market price fluctuation
 - Confidence: Judgment robustness
 
-Low volatility can have low confidence (regime just entered, signal weak).
-High volatility can have high confidence (regime stable for 50 ticks, signal strong).
+Low volatility can have low confidence (regime recently changed, signal weak).
+High volatility can have high confidence (regime persistent, signal strong).
 
 ---
 
@@ -81,13 +74,13 @@ High volatility can have high confidence (regime stable for 50 ticks, signal str
 ### Structural Robustness Means:
 - **Regime stability:** How long has the current regime persisted?
 - **Signal consistency:** How stable are entropy, MA, and other indicators?
-- **Threshold distance:** How far are we from regime boundaries?
-- **Recent transition count:** How many regime changes in recent history?
-- **Overlay suppression history:** How often has SafetyOverlay blocked actions recently?
+- **Regime boundary proximity:** How close are we to regime transitions?
+- **Recent transition frequency:** How many regime changes in recent history?
+- **Overlay suppression frequency:** How often has SafetyOverlay blocked actions recently?
 
 ### Core Principle:
 
-> Confidence measures how likely the current assessment is to remain valid over the next few ticks.
+> Confidence measures how likely the current assessment is to remain valid in the near term.
 
 **Not**: "Will this action succeed?"
 **But**: "Is this judgment built on stable foundations?"
@@ -156,9 +149,9 @@ Confidence is as fundamental to execution as Intent is to direction. Both must b
 
 **v0.4 Charter does NOT define:**
 - ❌ Confidence calculation formula
-- ❌ Confidence scale (0–1? discrete levels? other?)
+- ❌ Confidence scale or representation
 - ❌ Confidence input weights
-- ❌ Confidence thresholds
+- ❌ Confidence boundary values
 - ❌ Confidence aggregation logic
 
 **Why defer?**
@@ -199,9 +192,9 @@ v0.4 establishes Confidence as a **design primitive**. Computation details will 
 
 ### Not in v0.4:
 - ❌ Confidence-based learning or optimization
-- ❌ Dynamic confidence threshold adjustment
+- ❌ Dynamic confidence boundary adjustment
 - ❌ Confidence → Intent feedback (Confidence cannot change Intent)
-- ❌ Multi-tick confidence smoothing or prediction
+- ❌ Temporal confidence smoothing or prediction
 - ❌ Confidence-based portfolio rebalancing (beyond action sizing)
 
 **Rationale:** v0.4 focuses on **architectural foundation**. Advanced Confidence mechanics deferred to v0.5+.
@@ -275,7 +268,7 @@ Confidence directly addresses two failure modes:
 ### 1. Overconfident Execution in Fragile Regimes
 **Without Confidence:**
 - SEEK triggered by weak signal → Full capital commitment
-- Regime flips 2 ticks later → Large loss
+- Regime flips shortly after → Large loss
 
 **With Confidence:**
 - SEEK triggered by weak signal → Low Confidence detected
@@ -285,12 +278,12 @@ Confidence directly addresses two failure modes:
 ### 2. Under-Execution in Stable Opportunities
 **Without Confidence:**
 - SEEK triggered by strong signal → Conservative action (fear of reversal)
-- Regime stable for 50 ticks → Missed alpha
+- Regime remains stable → Missed alpha
 
 **With Confidence:**
 - SEEK triggered by strong signal → High Confidence detected
 - Action sized aggressively → Full conviction position
-- Regime stable → Alpha captured
+- Regime remains stable → Alpha captured
 
 **Confidence prevents both overcommitment to fragile judgments and undercommitment to robust ones.**
 
