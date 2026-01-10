@@ -2,6 +2,7 @@
 from datetime import datetime
 import time
 import sys
+import json
 import pandas as pd
 
 from config import (
@@ -235,34 +236,38 @@ class RealTimeMeridianAgent:
                 "confidence_reason_generated_at": now.isoformat(),
             }
 
-            # PR41: Generate v0.5 decision record (mirror-base-action, READ-ONLY)
+            # PR41 / PR41A: Generate v0.5 decision record (mirror-base-action, READ-ONLY)
             try:
                 decision_record = generate_decision_record_v1(row_dict)
 
                 # Add v0.5 decision fields to row_dict (use v5_ prefix to avoid collision with v0.2's decision_reason)
                 row_dict["v5_decision_action"] = decision_record.get("decision_action", "UNKNOWN")
                 row_dict["v5_decision_reason"] = decision_record.get("decision_reason", "")
-                # decision_inputs is a list, convert to comma-separated string for CSV
+
+                # PR41A: decision_inputs in both formats (PR38 logical spec = list, CSV for backward compat)
                 decision_inputs_list = decision_record.get("decision_inputs", [])
-                row_dict["v5_decision_inputs"] = ",".join(decision_inputs_list) if decision_inputs_list else ""
-                row_dict["v5_decision_version"] = decision_record.get("decision_version", "v0.5")
+                row_dict["v5_decision_inputs"] = ",".join(decision_inputs_list) if decision_inputs_list else ""  # CSV (backward compat)
+                row_dict["v5_decision_inputs_json"] = json.dumps(decision_inputs_list)  # JSON list (PR38 spec)
+
+                # PR41A: decision_version always "v0.5" (PR38 spec, immutable)
+                row_dict["v5_decision_version"] = "v0.5"
                 row_dict["v5_decision_generated_at"] = decision_record.get("decision_generated_at", "")
 
-                # PR41: Optionally validate decision record (PR39 compliance guard, warning-only)
-                if "_warnings" not in decision_record:  # Only validate if no generation warnings
-                    compliance_warnings = validate_decision_record_full(decision_record, "meridian_realtime_agent")
-                    if compliance_warnings:
-                        ts_str = now.isoformat()
-                        print(f"[WARNING][PR39][decision_record] violations={' | '.join(compliance_warnings)} ts={ts_str}")
+                # PR41A: Always validate decision record (PR39 compliance guard, warning-only, no conditions)
+                compliance_warnings = validate_decision_record_full(decision_record, "meridian_realtime_agent")
+                if compliance_warnings:
+                    ts_str = now.isoformat()
+                    print(f"[WARNING][PR39][decision_record] violations={' | '.join(compliance_warnings)} ts={ts_str}")
 
             except Exception as e:
-                # PR41: Decision record generation must never stop execution (warning-only)
+                # PR41 / PR41A: Decision record generation must never stop execution (warning-only)
                 print(f"[WARNING][PR41][decision_record_wiring] Failed to generate decision record: {e}")
-                # Add safe default values
+                # Add safe default values (PR41A: always "v0.5", empty JSON list)
                 row_dict["v5_decision_action"] = "UNKNOWN"
                 row_dict["v5_decision_reason"] = ""
-                row_dict["v5_decision_inputs"] = ""
-                row_dict["v5_decision_version"] = "v0.5"
+                row_dict["v5_decision_inputs"] = ""  # CSV (backward compat)
+                row_dict["v5_decision_inputs_json"] = "[]"  # JSON empty list (PR38 spec)
+                row_dict["v5_decision_version"] = "v0.5"  # PR41A: always "v0.5"
                 row_dict["v5_decision_generated_at"] = now.isoformat()
 
             # PR13B: Validate row before writing (fail-fast at source)
