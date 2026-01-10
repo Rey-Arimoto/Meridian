@@ -30,6 +30,8 @@ from core.intent import classify_intent_from_fields  # PR15A: Intent classificat
 from confidence.confidence_evaluator import evaluate_confidence  # PR24: Confidence evaluation hook
 from confidence.confidence_observation import build_confidence_observation  # PR26: Observation wiring
 from confidence.confidence_reason_compliance import validate_confidence_reason  # PR32: Compliance guard wiring
+from intelligence.intelligence_decision_engine_v1 import generate_decision_record_v1  # PR41: Decision record generation
+from intelligence.intelligence_decision_record_compliance import validate_decision_record_full  # PR41: Decision record compliance guard
 
 
 def validate_log_row_v0_2(row_dict):
@@ -232,6 +234,36 @@ class RealTimeMeridianAgent:
                 "confidence_reason_version": "v0.4",
                 "confidence_reason_generated_at": now.isoformat(),
             }
+
+            # PR41: Generate v0.5 decision record (mirror-base-action, READ-ONLY)
+            try:
+                decision_record = generate_decision_record_v1(row_dict)
+
+                # Add v0.5 decision fields to row_dict (use v5_ prefix to avoid collision with v0.2's decision_reason)
+                row_dict["v5_decision_action"] = decision_record.get("decision_action", "UNKNOWN")
+                row_dict["v5_decision_reason"] = decision_record.get("decision_reason", "")
+                # decision_inputs is a list, convert to comma-separated string for CSV
+                decision_inputs_list = decision_record.get("decision_inputs", [])
+                row_dict["v5_decision_inputs"] = ",".join(decision_inputs_list) if decision_inputs_list else ""
+                row_dict["v5_decision_version"] = decision_record.get("decision_version", "v0.5")
+                row_dict["v5_decision_generated_at"] = decision_record.get("decision_generated_at", "")
+
+                # PR41: Optionally validate decision record (PR39 compliance guard, warning-only)
+                if "_warnings" not in decision_record:  # Only validate if no generation warnings
+                    compliance_warnings = validate_decision_record_full(decision_record, "meridian_realtime_agent")
+                    if compliance_warnings:
+                        ts_str = now.isoformat()
+                        print(f"[WARNING][PR39][decision_record] violations={' | '.join(compliance_warnings)} ts={ts_str}")
+
+            except Exception as e:
+                # PR41: Decision record generation must never stop execution (warning-only)
+                print(f"[WARNING][PR41][decision_record_wiring] Failed to generate decision record: {e}")
+                # Add safe default values
+                row_dict["v5_decision_action"] = "UNKNOWN"
+                row_dict["v5_decision_reason"] = ""
+                row_dict["v5_decision_inputs"] = ""
+                row_dict["v5_decision_version"] = "v0.5"
+                row_dict["v5_decision_generated_at"] = now.isoformat()
 
             # PR13B: Validate row before writing (fail-fast at source)
             ok, missing = validate_log_row_v0_2(row_dict)
