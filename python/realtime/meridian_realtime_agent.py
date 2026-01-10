@@ -227,6 +227,10 @@ class RealTimeMeridianAgent:
                 # PR24: v0.4 Confidence fields (evaluated via hook)
                 "confidence_value": confidence_value,
                 "confidence_reason": confidence_reason,
+
+                # PR33: Confidence Reason Snapshot Logging (READ-ONLY)
+                "confidence_reason_version": "v0.4",
+                "confidence_reason_generated_at": now.isoformat(),
             }
 
             # PR13B: Validate row before writing (fail-fast at source)
