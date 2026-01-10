@@ -135,6 +135,7 @@ These rules are non-negotiable.
 - Entropy specification: [docs/entropy_spec.md](docs/entropy_spec.md)
 - Design decisions (ADR): [docs/decisions.md](docs/decisions.md)
 - Vision: [docs/vision.md](docs/vision.md)
+- v0.3 Intent Charter: [docs/intent_charter_v0.3.md](docs/intent_charter_v0.3.md)
 
 ---
 
