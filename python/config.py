@@ -40,3 +40,9 @@ MIN_DW_IGNORE = 0.02            # Ignore changes below 2%
 # v0.2 Required Log Columns (PR13B)
 # These columns are mandatory for v0.2 pipeline (PR8B gate will reject logs without them)
 V0_2_REQUIRED_COLUMNS = ["regime", "base_action", "decision_reason"]
+
+# v0.5 Decision Engine Selector (PR43)
+# Controls which decision engine generates v0.5 decision records
+# Options: "v1" (mirror base_action), "v2" (rule overlay / regime-aware)
+# Default: "v1" (safe, minimal)
+DECISION_ENGINE_VERSION = "v1"
