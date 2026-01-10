@@ -473,10 +473,59 @@ This pipeline:
 
 ---
 
+## Validation (v0.6)
+
+Meridian v0.6 introduces the **Interpretation Layer**: mapping observations to structural meaning types without evaluation or judgment.
+
+### v0.6 Philosophy: Observation → Interpretation
+
+v0.5 completed observation (what happened).
+v0.6 maps observation to meaning type (what structure this represents).
+That is not judgment, but structural language.
+
+### Interpretation ≠ Evaluation
+
+- **Interpretation** = Structural Mapping (what structure)
+- **Interpretation** ≠ Evaluation (good/bad judgment)
+- **Interpretation** ≠ Recommendation (what should be done)
+
+### v0.6 Schema (PR60)
+
+Interpretation records use `v6_` prefix:
+
+- `v6_meaning_mode`: ON | OFF
+- `v6_meaning_status`: AVAILABLE | UNAVAILABLE
+- `v6_meaning_tag`: Structural meaning type (non-evaluative)
+- `v6_meaning_summary`: Non-evaluative explanation
+- `v6_meaning_basis`: Array of observation field names used
+
+### Constitutional Constraints (v0.6)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **Observation-bound**: Only uses observation fields as basis
+- **v0.4 boundary protection**: No confidence_reason analysis
+
+### Run Validations (v0.6)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr60_interpretation_schema_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
 v0.2 implements constitutional regime-first decision making with full compliance validation.
+v0.5 completes observation infrastructure (shadow diff, analytics, reporting).
+v0.6 introduces interpretation (structural meaning without judgment).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
