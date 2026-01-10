@@ -48,22 +48,16 @@ This symmetry ensures:
 Meridian v0.4 extends the log schema with **two new columns**:
 
 #### `confidence_value`
-- **Type:** Implementation-defined (string, float, int, enum, etc.)
 - **Purpose:** Primary Confidence assessment
 - **Written by:** Agent (Layer A)
 - **Read by:** Reporting, Validation
-- **v0.4 Placeholder:** `None`, `"TBD"`, or any valid placeholder
-- **Nullability:** Must be present (not null), but value can be placeholder
-- **Example (v0.4):** `None`, `"TBD"`, `0.0`, `"PENDING"`
+- **v0.4 Status:** In v0.4, this field may be left intentionally undefined
 
 #### `confidence_reason`
-- **Type:** `str`
 - **Purpose:** Human-readable explanation for `confidence_value`
 - **Written by:** Agent (Layer A)
 - **Read by:** Reporting, Validation
-- **v0.4 Placeholder:** `"Confidence computation deferred to future PR"` or similar
-- **Nullability:** Must be present (not null), must be string
-- **Example (v0.4):** `"Confidence not yet implemented"`
+- **v0.4 Status:** In v0.4, this field may be left intentionally undefined
 
 ### Column Placement
 
@@ -85,37 +79,14 @@ Confidence columns appear **after** Intent columns to maintain v0.3 schema compa
 
 The Agent **owns** `confidence_value` and `confidence_reason`.
 
-**Constitutional Obligation:**
-- Agent **MUST** write both columns on every tick
-- Agent **MUST NOT** write null values
-- Agent **MAY** write placeholder values in v0.4
+**Architectural Role:**
+- Agent writes both fields to the log
+- When Confidence implementation exists, Agent writes derived values
+- When Confidence implementation does not yet exist, Agent may leave fields undefined
 
-**v0.4 Placeholder Behavior (Permitted):**
-
-Until Confidence computation is implemented, the Agent may write:
-
-```python
-confidence_value = None  # or "TBD", or 0.0, or other placeholder
-confidence_reason = "Confidence computation deferred to future PR"
-```
-
-This is **constitutionally valid** in v0.4 because:
-- The seat is reserved (columns exist)
-- The obligation is fulfilled (columns written)
-- The value is honest (explicitly placeholder)
-
-**Future Evolution (v0.4+):**
-
-When Confidence computation is implemented:
-1. Agent computes `confidence_value` from system state
-2. Agent derives `confidence_reason` explaining the value
-3. Agent writes both to log (no placeholders)
-
-**Agent must never:**
-- Skip writing these columns
-- Write null/NaN
-- Write values without reasons
-- Compute Confidence outside Agent layer
+**Seat Ownership:**
+- Only Agent writes these fields
+- Other layers read but never write Confidence values
 
 ---
 
@@ -125,33 +96,15 @@ When Confidence computation is implemented:
 
 Reporting **reads** `confidence_value` and `confidence_reason`.
 
-**Constitutional Obligation:**
-- Reporting **MUST** handle missing columns gracefully (v0.3 compatibility)
-- Reporting **MUST** handle placeholder values gracefully (v0.4 transition)
-- Reporting **MAY** skip Confidence analysis if values are placeholders
+**Architectural Role:**
+- When present, Reporting reads these fields for analysis
+- When absent, Reporting continues without Confidence analysis
+- When undefined, Reporting treats fields as optional
 
-**v0.4 Placeholder Behavior (Permitted):**
-
-When Confidence columns contain placeholders:
-
-```python
-if confidence_value is None or confidence_value == "TBD":
-    # Skip Confidence distribution analysis
-    # Or display: "Confidence: Not yet implemented"
-    pass
-```
-
-**Expected Reporting Outputs (when implemented):**
-- Confidence distribution histogram
-- Confidence × Intent cross-tabulation
-- Confidence × Regime cross-tabulation
-- Confidence timeline visualization
-
-**Reporting must never:**
-- Fail if Confidence columns missing (v0.3 logs)
-- Fail if Confidence values are placeholders
-- Compute or infer Confidence values
-- Modify Confidence values
+**Seat Access:**
+- Reporting reads but never writes Confidence values
+- Reporting never derives or infers Confidence values
+- Missing fields should not break report generation
 
 ---
 
@@ -161,39 +114,15 @@ if confidence_value is None or confidence_value == "TBD":
 
 Validation **checks** `confidence_value` and `confidence_reason` integrity.
 
-**Constitutional Obligation:**
-- Validation **MUST** verify columns exist (v0.4+ logs)
-- Validation **MUST** verify columns are non-null
-- Validation **MUST** verify `confidence_reason` is string
-- Validation **MAY** allow placeholder values in v0.4
+**Architectural Role:**
+- When present, Validation checks field integrity
+- When absent, Validation continues without Confidence checks
+- When undefined, Validation treats fields as optional
 
-**v0.4 Placeholder Behavior (Permitted):**
-
-Validation accepts placeholders as valid:
-
-```python
-# Valid in v0.4
-confidence_value = None  # OK
-confidence_value = "TBD"  # OK
-confidence_value = 0.0  # OK
-
-# Invalid (always)
-confidence_value = <null/NaN>  # FAIL
-confidence_reason = None  # FAIL
-confidence_reason = 123  # FAIL (not string)
-```
-
-**Expected Validation Checks (when implemented):**
-- `confidence_value` type check (once type is defined)
-- `confidence_value` range check (once range is defined)
-- `confidence_reason` non-empty check
-- Confidence × Intent consistency check (heuristic warnings)
-
-**Validation must never:**
-- Block pipeline on placeholder values (v0.4)
-- Fail on missing columns for v0.3 logs
-- Compute or infer Confidence values
-- Override Agent-written Confidence values
+**Seat Access:**
+- Validation reads but never writes Confidence values
+- Validation never derives or infers Confidence values
+- Missing fields should not break validation pipeline
 
 ---
 
@@ -201,19 +130,19 @@ confidence_reason = 123  # FAIL (not string)
 
 ### Phase 1: Reserve the Seat (PR18)
 - Add `confidence_value` and `confidence_reason` columns to schema
-- Agent writes placeholders (`None`, `"Not yet implemented"`)
-- Reporting skips Confidence analysis
-- Validation accepts placeholders
+- Agent may leave fields undefined in v0.4
+- Reporting continues without Confidence analysis when fields undefined
+- Validation continues without Confidence checks when fields undefined
 
 **Goal:** Establish architectural presence without implementation burden
 
-### Phase 2: Implement Computation (PR19+)
-- Agent computes real `confidence_value` from system state
-- Agent derives real `confidence_reason` explaining computation
+### Phase 2: Implement Values (PR19+)
+- Agent writes derived `confidence_value` from system state
+- Agent writes derived `confidence_reason` explaining value
 - Reporting analyzes Confidence distribution
 - Validation checks Confidence integrity
 
-**Goal:** Replace placeholders with real Confidence assessment
+**Goal:** Fill architectural seats with real Confidence values
 
 ---
 
@@ -221,21 +150,21 @@ confidence_reason = 123  # FAIL (not string)
 
 ### v0.3 Logs (No Confidence Columns)
 - Reporting: Skip Confidence analysis
-- Validation: Accept missing columns
+- Validation: Skip Confidence checks
 - Pipeline: Continue processing
 
-### v0.4 Logs (Confidence Placeholders)
-- Reporting: Skip Confidence analysis (detect placeholders)
-- Validation: Accept placeholder values
+### v0.4 Logs (Confidence Undefined)
+- Reporting: Skip Confidence analysis when fields undefined
+- Validation: Skip Confidence checks when fields undefined
 - Pipeline: Continue processing
 
-### v0.4+ Logs (Real Confidence Values)
+### v0.4+ Logs (Confidence Defined)
 - Reporting: Analyze Confidence distribution
 - Validation: Check Confidence integrity
 - Pipeline: Full Confidence-aware operation
 
 **Backward Compatibility Guarantee:**
-v0.4 pipeline must process v0.3 logs without Confidence columns.
+v0.4 pipeline processes v0.3 logs without Confidence columns.
 
 ---
 
@@ -243,46 +172,35 @@ v0.4 pipeline must process v0.3 logs without Confidence columns.
 
 **This charter does NOT define:**
 
-### ❌ Confidence Computation
-- Calculation formula
-- Input features
-- Aggregation logic
-- Confidence scale or type
-
-### ❌ Confidence Usage
-- How to modulate action size
-- How to influence decisions
-- How to set boundaries
-
-### ❌ Confidence Thresholds
-- High/low Confidence definitions
-- Boundary values
-- Confidence-based rules
+- How Confidence values are derived
+- What Confidence values represent
+- How Confidence values are used
+- Any boundaries, rules, or constraints on Confidence values
 
 **Why defer?**
 
 PR18 establishes **architectural seats**, not implementation.
 
-Computation, usage, and boundaries will be defined in future PRs (PR19+) after careful design.
+Value derivation, representation, and usage will be defined in future PRs (PR19+).
 
 ---
 
 ## Constitutional Constraints
 
 ### Determinism (Preserved)
-- Confidence computation (when implemented) must be deterministic
+- Confidence derivation (when implemented) remains deterministic
 - Same system state → same Confidence value
 - No randomness, no network calls, no hidden state
 
 ### Auditability (Preserved)
-- Every Confidence value must have a reason
-- Confidence derivation must be logged
-- Confidence must be reproducible from logs
+- Confidence values accompanied by reasons when present
+- Confidence derivation logged when present
+- Confidence reproducible from logs when present
 
 ### Fail-Closed (Preserved)
-- Missing Confidence → safe default (placeholder or skip)
-- Invalid Confidence → validation failure (when implemented)
-- Confidence never silently ignored
+- Missing Confidence → continue processing
+- Undefined Confidence → continue processing
+- Confidence never required for pipeline execution
 
 ### Intent Supremacy (New)
 - Confidence modulates execution, never overrides Intent
@@ -297,10 +215,10 @@ PR18 Confidence Logging Charter is complete when:
 
 1. **Columns Defined:** `confidence_value` and `confidence_reason` specified
 2. **Seats Assigned:** Agent writes, Reporting reads, Validation checks
-3. **Placeholder Strategy:** v0.4 placeholder behavior documented
+3. **Transition Strategy:** v0.4 undefined behavior documented
 4. **Compatibility Strategy:** v0.3/v0.4/v0.4+ compatibility defined
 5. **Symmetry with Intent:** Confidence follows Intent architectural pattern
-6. **Non-Goals Explicit:** Computation/usage/thresholds deferred to future PRs
+6. **Non-Goals Explicit:** Derivation/usage/representation deferred to future PRs
 
 **This charter does NOT require implementation.**
 
