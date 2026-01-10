@@ -216,6 +216,7 @@ python3 python/validation/pr37_intelligence_input_contract_guard_smoke.py
 python3 python/validation/pr39_intelligence_decision_record_compliance_smoke.py
 python3 python/validation/pr40_intelligence_decision_engine_v1_smoke.py
 python3 python/validation/pr41_decision_record_wiring_smoke.py
+python3 python/validation/pr41a_decision_record_wiring_consistency_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
