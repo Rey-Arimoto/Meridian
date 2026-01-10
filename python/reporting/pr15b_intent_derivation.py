@@ -19,9 +19,14 @@ Intent Types (6):
 
 Priority Order (fixed):
 PAUSE > STABILIZE > DEFEND > HARVEST > SEEK > IDLE > N/A
+
+PR15A Update:
+- Uses shared classify_intent_from_fields() from core.intent
+- Ensures agent (Layer A) and reporting (Layer B) produce identical results
 """
 
 import pandas as pd
+from core.intent import classify_intent_from_fields
 
 
 def derive_intent_primary(df: pd.DataFrame) -> pd.Series:
@@ -45,106 +50,32 @@ def derive_intent_primary(df: pd.DataFrame) -> pd.Series:
 
     Notes:
     - Does NOT modify df in-place
-    - Case-insensitive string matching
-    - Strips whitespace before comparison
+    - Uses shared classify_intent_from_fields() from core.intent
     - Returns "N/A" for missing/invalid data (never crashes)
     """
-    # Check required columns
-    required_cols = ["regime", "base_action", "decision_reason", "action_label"]
+    # Extract columns (safe even if missing)
+    regime_col = df.get("regime", pd.Series([None] * len(df), index=df.index))
+    base_action_col = df.get("base_action", pd.Series([None] * len(df), index=df.index))
+    decision_reason_col = df.get("decision_reason", pd.Series([None] * len(df), index=df.index))
+    action_label_col = df.get("action_label", pd.Series([None] * len(df), index=df.index))
 
-    # Initialize result series with N/A
-    result = pd.Series(["N/A"] * len(df), index=df.index, dtype=str)
+    # Apply shared classification logic row by row
+    intents = []
+    for i in range(len(df)):
+        regime = regime_col.iloc[i] if i < len(regime_col) else None
+        base_action = base_action_col.iloc[i] if i < len(base_action_col) else None
+        decision_reason = decision_reason_col.iloc[i] if i < len(decision_reason_col) else None
+        action_label = action_label_col.iloc[i] if i < len(action_label_col) else None
 
-    # Helper: safe string normalization
-    def normalize(series: pd.Series) -> pd.Series:
-        """Normalize string series: strip + lowercase, fillna("")."""
-        return series.fillna("").astype(str).str.strip().str.lower()
-
-    # Extract and normalize columns (safe even if missing)
-    regime = normalize(df.get("regime", pd.Series([""] * len(df))))
-    base_action = normalize(df.get("base_action", pd.Series([""] * len(df))))
-    decision_reason = normalize(df.get("decision_reason", pd.Series([""] * len(df))))
-    action_label = normalize(df.get("action_label", pd.Series([""] * len(df))))
-
-    # Apply priority rules (top to bottom, first match wins)
-
-    # 1. PAUSE: Constitutional freeze
-    pause_mask = (
-        (base_action == "pause") |
-        decision_reason.str.contains("emergency_freeze", na=False, case=False) |
-        decision_reason.str.contains("pause", na=False, case=False)
-    )
-    result[pause_mask] = "PAUSE"
-
-    # 2. STABILIZE: Regime transition
-    stabilize_mask = (
-        ~pause_mask &
-        (
-            (regime == "regime_transition") |
-            regime.str.contains("transition", na=False, case=False)
+        intent_primary, _ = classify_intent_from_fields(
+            regime=regime,
+            base_action=base_action,
+            decision_reason=decision_reason,
+            action_label=action_label
         )
-    )
-    result[stabilize_mask] = "STABILIZE"
+        intents.append(intent_primary)
 
-    # 3. DEFEND: High entropy/volatility
-    defend_mask = (
-        ~pause_mask &
-        ~stabilize_mask &
-        (
-            regime.str.contains("volatile", na=False, case=False) |
-            regime.str.contains("high", na=False, case=False) |
-            regime.str.contains("critical", na=False, case=False)
-        )
-    )
-    result[defend_mask] = "DEFEND"
-
-    # 4. HARVEST: Mean reversion / value extraction
-    harvest_mask = (
-        ~pause_mask &
-        ~stabilize_mask &
-        ~defend_mask &
-        (
-            decision_reason.str.contains("mean_reversion", na=False, case=False) |
-            decision_reason.str.contains("distortion", na=False, case=False) |
-            decision_reason.str.contains("harvest", na=False, case=False)
-        )
-    )
-    result[harvest_mask] = "HARVEST"
-
-    # 5. SEEK: Actively searching (BUY/SELL actions)
-    seek_mask = (
-        ~pause_mask &
-        ~stabilize_mask &
-        ~defend_mask &
-        ~harvest_mask &
-        (
-            (base_action == "buy") |
-            (base_action == "sell") |
-            (base_action == "act") |  # v0.2 uses "act" for active mode
-            (action_label == "buy") |
-            (action_label == "sell")
-        )
-    )
-    result[seek_mask] = "SEEK"
-
-    # 6. IDLE: Holding current state
-    idle_mask = (
-        ~pause_mask &
-        ~stabilize_mask &
-        ~defend_mask &
-        ~harvest_mask &
-        ~seek_mask &
-        (
-            (base_action == "hold") |
-            (action_label == "hold")
-        )
-    )
-    result[idle_mask] = "IDLE"
-
-    # 7. N/A: Already initialized, no change needed
-    # Rows that didn't match any rule remain "N/A"
-
-    return result
+    return pd.Series(intents, index=df.index, dtype=str)
 
 
 def derive_intent_with_reason(df: pd.DataFrame) -> pd.DataFrame:
@@ -161,22 +92,34 @@ def derive_intent_with_reason(df: pd.DataFrame) -> pd.DataFrame:
 
     Notes:
     - Does NOT modify input df
+    - Uses shared classify_intent_from_fields() from core.intent
     - Useful for debugging and reporting
     """
-    intent = derive_intent_primary(df)
+    # Extract columns (safe even if missing)
+    regime_col = df.get("regime", pd.Series([None] * len(df), index=df.index))
+    base_action_col = df.get("base_action", pd.Series([None] * len(df), index=df.index))
+    decision_reason_col = df.get("decision_reason", pd.Series([None] * len(df), index=df.index))
+    action_label_col = df.get("action_label", pd.Series([None] * len(df), index=df.index))
 
-    # Generate reason based on Intent
-    reason = pd.Series([""] * len(df), index=df.index, dtype=str)
+    # Apply shared classification logic row by row
+    intents = []
+    reasons = []
+    for i in range(len(df)):
+        regime = regime_col.iloc[i] if i < len(regime_col) else None
+        base_action = base_action_col.iloc[i] if i < len(base_action_col) else None
+        decision_reason = decision_reason_col.iloc[i] if i < len(decision_reason_col) else None
+        action_label = action_label_col.iloc[i] if i < len(action_label_col) else None
 
-    reason[intent == "PAUSE"] = "Constitutional freeze or emergency"
-    reason[intent == "STABILIZE"] = "Regime transition detected"
-    reason[intent == "DEFEND"] = "High entropy/volatility regime"
-    reason[intent == "HARVEST"] = "Value extraction opportunity"
-    reason[intent == "SEEK"] = "Active opportunity search"
-    reason[intent == "IDLE"] = "Holding current state"
-    reason[intent == "N/A"] = "Insufficient data to determine Intent"
+        intent_primary, intent_reason = classify_intent_from_fields(
+            regime=regime,
+            base_action=base_action,
+            decision_reason=decision_reason,
+            action_label=action_label
+        )
+        intents.append(intent_primary)
+        reasons.append(intent_reason)
 
     return pd.DataFrame({
-        "intent_primary": intent,
-        "intent_reason": reason
+        "intent_primary": pd.Series(intents, index=df.index, dtype=str),
+        "intent_reason": pd.Series(reasons, index=df.index, dtype=str)
     }, index=df.index)

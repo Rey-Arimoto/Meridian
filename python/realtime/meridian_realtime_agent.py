@@ -26,6 +26,7 @@ from core.risk_guard import RiskGuard
 from core.meridian_policy_core import MeridianPolicyCore
 from core.safety_overlay import SafetyOverlay
 from brokers.paper_broker import PaperBroker
+from core.intent import classify_intent_from_fields  # PR15A: Intent classification
 
 
 def validate_log_row_v0_2(row_dict):
@@ -158,6 +159,14 @@ class RealTimeMeridianAgent:
                 f"Act={action} w*={final_w:.2f} Eq={eq:.4f} Guard={self.guard.state.last_guard_type}"
             )
 
+            # PR15A: Classify Intent (Layer A - decision time)
+            intent_primary, intent_reason = classify_intent_from_fields(
+                regime=regime_str,
+                base_action=base_action_str,
+                decision_reason=decision_reason,
+                action_label=action
+            )
+
             # PR13B: Build row dict and validate before logging
             row_dict = {
                 "timestamp_utc": now.isoformat(),
@@ -188,6 +197,10 @@ class RealTimeMeridianAgent:
                 "regime": regime_str,
                 "base_action": base_action_str,
                 "decision_reason": decision_reason,  # Includes overlay rule
+
+                # PR15A: v0.3 Intent fields (Layer A - first-class citizen)
+                "intent_primary": intent_primary,
+                "intent_reason": intent_reason,
             }
 
             # PR13B: Validate row before writing (fail-fast at source)
