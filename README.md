@@ -214,6 +214,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Decision diff semantics tagging (non-evaluative classification of divergence types)
 - Shadow diff analytics export (daily summary aggregation for comparison analysis)
 - Shadow diff report generator (human-readable Markdown/HTML reports, non-evaluative)
+- Shadow diff report indexer (archive organization and TOC generation, non-evaluative)
 
 Run validations:
 ```bash
@@ -231,6 +232,7 @@ python3 python/validation/pr45_decision_engine_shadow_diff_smoke.py
 python3 python/validation/pr46_decision_diff_semantics_smoke.py
 python3 python/validation/pr47_shadow_diff_analytics_export_smoke.py
 python3 python/validation/pr48a_shadow_diff_report_generator_smoke.py
+python3 python/validation/pr48b_shadow_diff_report_indexer_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
@@ -258,6 +260,31 @@ python3 python/analytics/pr48a_shadow_diff_report_generator.py \
   --in_dir analytics_out \
   --out_dir reports \
   --day 2026-01-10
+
+# Archive reports and generate index
+python3 python/analytics/pr48b_shadow_diff_report_indexer.py \
+  --reports_dir reports
+
+# Archive specific day only
+python3 python/analytics/pr48b_shadow_diff_report_indexer.py \
+  --reports_dir reports \
+  --day 2026-01-10
+```
+
+**Archive Structure:**
+
+After running the indexer, reports are organized as:
+```
+reports/
+  index.md          # Human-readable table of contents
+  index.json        # Machine-readable registry
+  _archive/
+    2026-01-10/
+      shadow_diff_report.md
+      shadow_diff_report.html
+      meta.json
+    2026-01-11/
+      ...
 ```
 
 ---
