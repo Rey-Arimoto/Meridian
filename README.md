@@ -195,6 +195,25 @@ All scripts exit 0 on PASS, 1 on FAIL.
 
 ---
 
+## Validation (v0.5)
+
+Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
+- Input contract compliance (allowlist enforcement)
+- Import ban detection (v0.4 builders/validators)
+- Featurization ban detection (confidence_reason operations)
+- Read-only consumption validation
+
+Run validations:
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr37_intelligence_input_contract_guard_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Canonical Report Generation (PR8B + PR9A)
 
 The following command is the **canonical and supported way** to generate all Meridian reports from an execution log.
