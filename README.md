@@ -205,6 +205,7 @@ Meridian v0.5 includes Intelligence Layer compliance validation that verifies:
 - Read-only consumption validation
 - Decision Record immutability (no regeneration or post-hoc rationalization)
 - v0.4 Confidence boundary protection (no erosion)
+- Decision Engine v1 (mirror base-action, non-numeric, non-evaluative)
 
 Run validations:
 ```bash
@@ -212,6 +213,7 @@ cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr37_intelligence_input_contract_guard_smoke.py
 python3 python/validation/pr39_intelligence_decision_record_compliance_smoke.py
+python3 python/validation/pr40_intelligence_decision_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
