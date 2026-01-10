@@ -20,6 +20,7 @@ from config import (
     V0_2_REQUIRED_COLUMNS,
     DECISION_ENGINE_VERSION,  # PR43: Engine selector
     DECISION_ENGINE_SHADOW_MODE,  # PR44: Shadow mode
+    DECISION_ENGINE_DIFF_LOGGING,  # PR45: Diff logging
 )
 
 from entropy import CompositeEntropy
@@ -356,6 +357,72 @@ class RealTimeMeridianAgent:
                     row_dict["v5_decision_inputs_json"] = "[]"
                     row_dict["v5_decision_version"] = "v0.5"
                     row_dict["v5_decision_generated_at"] = now.isoformat()
+
+            # PR45: v0.5 Decision Engine Shadow Diff Logging (READ-ONLY, non-evaluative)
+            try:
+                diff_logging_enabled = DECISION_ENGINE_DIFF_LOGGING
+
+                if not diff_logging_enabled:
+                    # PR45: Diff logging disabled
+                    row_dict["v5_decision_diff_mode"] = "OFF"
+                    row_dict["v5_decision_diff_status"] = "UNAVAILABLE"
+                    row_dict["v5_decision_diff_pair"] = "UNKNOWN"
+                    row_dict["v5_decision_diff_summary"] = "diff logging disabled."
+
+                elif not shadow_mode:
+                    # PR45: Diff logging enabled but shadow mode disabled
+                    row_dict["v5_decision_diff_mode"] = "ON"
+                    row_dict["v5_decision_diff_status"] = "UNAVAILABLE"
+                    row_dict["v5_decision_diff_pair"] = "UNKNOWN"
+                    row_dict["v5_decision_diff_summary"] = "shadow record not present."
+
+                else:
+                    # PR45: Diff logging enabled and shadow mode enabled
+                    row_dict["v5_decision_diff_mode"] = "ON"
+
+                    # PR45: Determine diff pair (which engines are being compared)
+                    primary_engine_val = row_dict.get("v5_decision_engine", "UNKNOWN")
+                    shadow_engine_val = row_dict.get("v5_shadow_decision_engine", "UNKNOWN")
+
+                    if primary_engine_val == "v1" and shadow_engine_val == "v2":
+                        diff_pair = "v1_vs_v2"
+                    elif primary_engine_val == "v2" and shadow_engine_val == "v1":
+                        diff_pair = "v2_vs_v1"
+                    else:
+                        diff_pair = "UNKNOWN"
+
+                    row_dict["v5_decision_diff_pair"] = diff_pair
+
+                    # PR45: Determine diff status (aligned/diverged/unavailable)
+                    primary_action = row_dict.get("v5_decision_action", "")
+                    shadow_action = row_dict.get("v5_shadow_decision_action", "")
+
+                    # PR45: Check if both actions are valid (non-empty, non-UNKNOWN)
+                    primary_valid = primary_action and primary_action != "UNKNOWN"
+                    shadow_valid = shadow_action and shadow_action != "UNKNOWN"
+
+                    if primary_valid and shadow_valid:
+                        if primary_action == shadow_action:
+                            diff_status = "ALIGNED"
+                            diff_summary = "primary and shadow actions aligned."
+                        else:
+                            diff_status = "DIVERGED"
+                            diff_summary = "primary and shadow actions diverged."
+                    else:
+                        diff_status = "UNAVAILABLE"
+                        diff_summary = "diff unavailable due to missing actions."
+
+                    row_dict["v5_decision_diff_status"] = diff_status
+                    row_dict["v5_decision_diff_summary"] = diff_summary
+
+            except Exception as diff_e:
+                # PR45: Diff generation failure must not stop execution (warning-only)
+                print(f"[WARNING][PR45][diff] Failed to compute decision diff: {diff_e} ts={now.isoformat()}")
+                # PR45: Safe defaults (non-numeric, non-evaluative)
+                row_dict["v5_decision_diff_mode"] = "ON"
+                row_dict["v5_decision_diff_status"] = "UNAVAILABLE"
+                row_dict["v5_decision_diff_pair"] = "UNKNOWN"
+                row_dict["v5_decision_diff_summary"] = "diff failed safely."
 
             # PR13B: Validate row before writing (fail-fast at source)
             ok, missing = validate_log_row_v0_2(row_dict)

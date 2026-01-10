@@ -53,3 +53,11 @@ DECISION_ENGINE_VERSION = "v1"
 # True: Both v1 and v2 generate records (primary + shadow for comparison)
 # Shadow mode enables future comparison without changing behavior
 DECISION_ENGINE_SHADOW_MODE = False
+
+# v0.5 Decision Engine Shadow Diff Logging (PR45)
+# Controls whether to log comparison (diff) between primary and shadow decisions
+# False (default): No diff fields (PR44 behavior)
+# True: Add v5_decision_diff_* fields to log primary/shadow comparison
+# Requires SHADOW_MODE=True to generate meaningful diffs
+# Diff logging is READ-ONLY, non-evaluative, and never changes behavior
+DECISION_ENGINE_DIFF_LOGGING = False
