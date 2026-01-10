@@ -13,8 +13,8 @@ This charter defines **where Confidence exists** as a first-class citizen in Mer
 It establishes the **seats** for Confidence across Agent, Reporting, and Validation layers.
 
 **This charter does NOT define:**
-- How to compute Confidence
-- What scale or representation to use
+- How Confidence is defined
+- What representation to use
 - How to use Confidence values
 
 **This charter ONLY defines:**
@@ -230,7 +230,7 @@ Implementation will occur in PR19+ following this architectural blueprint.
 
 ### Without Logging Charter:
 - Confidence computation and logging mixed together
-- No clear boundary between "where it exists" and "how it's computed"
+- No clear boundary between "where it exists" and "how it is defined"
 - Implementation PRs forced to decide architecture + computation simultaneously
 - Risk of architectural inconsistency
 
