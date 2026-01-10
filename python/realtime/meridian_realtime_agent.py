@@ -28,6 +28,7 @@ from core.safety_overlay import SafetyOverlay
 from brokers.paper_broker import PaperBroker
 from core.intent import classify_intent_from_fields  # PR15A: Intent classification
 from confidence.confidence_evaluator import evaluate_confidence  # PR24: Confidence evaluation hook
+from confidence.confidence_observation import build_confidence_observation  # PR26: Observation wiring
 
 
 def validate_log_row_v0_2(row_dict):
@@ -168,16 +169,16 @@ class RealTimeMeridianAgent:
                 action_label=action
             )
 
-            # PR24: Evaluate Confidence (Layer A - decision time)
-            # Context includes observable state for Confidence assessment
-            confidence_context = {
-                "entropy_bp": entropy_bp,
-                "regime": regime_str,
-                "base_action": base_action_str,
-                "intent_primary": intent_primary,
-                "overlay_rule": overlay_rule,
-            }
-            confidence_value, confidence_reason = evaluate_confidence(confidence_context)
+            # PR26: Build observation context for Confidence evaluation
+            # Observation wiring enforces PR25 source category boundaries
+            confidence_observation = build_confidence_observation(
+                intent_primary=intent_primary,
+                regime=regime_str,
+                base_action=base_action_str,
+                overlay_rule=overlay_rule,
+                entropy_bp=entropy_bp,
+            )
+            confidence_value, confidence_reason = evaluate_confidence(confidence_observation)
 
             # PR13B: Build row dict and validate before logging
             row_dict = {
