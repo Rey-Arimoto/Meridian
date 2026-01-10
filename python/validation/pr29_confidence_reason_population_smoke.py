@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 PR29: Confidence Reason Population Smoke Test
+PR29B: Confidence Reason Vocabulary & Numeric Sanitization
 
 Purpose: Verify reason builder generates structured confidence_reason.
 
@@ -9,6 +10,7 @@ Requirements:
 - Handles empty observation gracefully
 - Same input produces same output (repeatability)
 - Never raises exceptions
+- No numeric digits (0-9) in confidence_reason (PR29B)
 - Exit code always 0 (warning-only)
 
 PR27 Structure:
@@ -152,6 +154,47 @@ def test_no_exceptions():
     return True
 
 
+def test_no_numeric_digits():
+    """Test confidence_reason contains no numeric digits (PR29B)."""
+    print("\nTest 6: No Numeric Digits (PR29B)")
+    print("-" * 60)
+
+    digit_pattern = re.compile(r'[0-9]')
+
+    test_cases = [
+        {},
+        {"intent_primary": "IDLE"},
+        {
+            "intent_primary": "SEEK",
+            "regime": "emerging_trend",
+            "base_action": "SHIFT",
+            "overlay_rule": "ALLOW",
+            "entropy_bp": 3200,
+        },
+        {
+            "intent_primary": "SEEK",
+            "regime": "emerging_trend",
+            "base_action": "SHIFT",
+            "overlay_rule": "ALLOW",
+            "entropy_bp": 3200,
+            "recent_intent_primary": "IDLE",
+            "recent_regime": "stable_range",
+        },
+    ]
+
+    for i, obs in enumerate(test_cases, 1):
+        reason = build_confidence_reason(obs)
+        match = digit_pattern.search(reason)
+        assert not match, f"Test case {i}: Found digit in reason: {repr(reason)}"
+        if reason:
+            print(f"✓ Test case {i} → no numeric digits")
+        else:
+            print(f"✓ Test case {i} → empty string (PR21 compliant)")
+
+    print("Test 6: PASS")
+    return True
+
+
 def main():
     """Run all PR29 Confidence Reason Population smoke tests."""
     print("=" * 60)
@@ -167,6 +210,7 @@ def main():
         results.append(("Repeatability", test_repeatability()))
         results.append(("Full Observation", test_full_observation()))
         results.append(("No Exceptions", test_no_exceptions()))
+        results.append(("No Numeric Digits", test_no_numeric_digits()))
 
         # Summary
         print("\n" + "=" * 60)
@@ -189,6 +233,7 @@ def main():
             print("  - Same observation produces same reason")
             print("  - Full observation produces structured reason")
             print("  - Builder never raises exceptions")
+            print("  - No numeric digits in reason (PR29B)")
             print("=" * 60)
             print("Exit code: 0 (all tests passed)")
             return 0

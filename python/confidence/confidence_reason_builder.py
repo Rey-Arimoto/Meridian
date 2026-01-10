@@ -34,6 +34,7 @@ def build_confidence_reason(observation):
     Never raises exceptions - returns empty string or structured reason.
 
     PR29: Minimal population based on observation key presence.
+    PR29B: Numeric expressions removed, vocabulary-only.
     Future PRs will add semantic content.
     """
     # PR21: Allow empty string for undefined confidence
@@ -53,10 +54,20 @@ def build_confidence_reason(observation):
     # Consistency: Core signal coverage
     core_keys = {"intent_primary", "regime", "base_action", "overlay_rule"}
     present_core = core_keys & set(observation.keys())
-    consistency_text = f"{len(present_core)}/4 core signals"
+    if len(present_core) == len(core_keys):
+        consistency_text = "all core signals present"
+    elif len(present_core) > 0:
+        consistency_text = "some core signals present"
+    else:
+        consistency_text = "no core signals present"
 
-    # Completeness: Observation count
-    key_count = len(observation)
-    completeness_text = f"{key_count} fields"
+    # Completeness: Observation breadth
+    has_temporal = any(k.startswith("recent_") for k in observation.keys())
+    if not observation:
+        completeness_text = "no observations"
+    elif has_temporal:
+        completeness_text = "temporal and current observations"
+    else:
+        completeness_text = "current observations only"
 
     return f"Source:{source_text}; Stability:{stability_text}; Consistency:{consistency_text}; Completeness:{completeness_text}"
