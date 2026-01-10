@@ -182,11 +182,12 @@ class RealTimeMeridianAgent:
             confidence_value, confidence_reason = evaluate_confidence(confidence_observation)
 
             # PR32: Compliance guard wiring (READ-ONLY, warning-only)
+            # PR32B: Normalized warning format
             compliance_warnings = validate_confidence_reason(confidence_reason)
             if compliance_warnings:
                 # Output warnings (never stops execution, never affects behavior)
                 ts_str = now.isoformat() if 'now' in locals() else ""
-                print(f"[WARNING][PR31] confidence_reason non-compliant: {' | '.join(compliance_warnings)} (ts={ts_str})")
+                print(f"[WARNING][PR31][confidence_reason] violations={' | '.join(compliance_warnings)} ts={ts_str}")
 
             # PR13B: Build row dict and validate before logging
             row_dict = {
