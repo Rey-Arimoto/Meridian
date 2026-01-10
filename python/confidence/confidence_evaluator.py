@@ -1,6 +1,7 @@
 # python/confidence/confidence_evaluator.py
 """
 PR24: Confidence Evaluator (Minimal Hook)
+PR28: Confidence Reason Generation Stub
 
 Purpose: Provide evaluation hook for Confidence assessment.
 
@@ -13,16 +14,20 @@ Requirements (PR20 Representation Charter):
 - Auditable (value + reason explain assessment)
 
 PR24 Implementation:
-- Returns undefined (empty strings)
+- Returns undefined confidence_value (empty string)
 - No decision logic
 - No action influence
 - READ-ONLY hook
+
+PR28 Implementation:
+- confidence_reason generated via builder (PR27 structure)
+- Still minimal stub (no semantic content)
 """
 
-from typing import Tuple, Dict, Any
+from confidence.confidence_reason_builder import build_confidence_reason
 
 
-def evaluate_confidence(context: Dict[str, Any]) -> Tuple[str, str]:
+def evaluate_confidence(context):
     """
     Evaluate Confidence from system state.
 
@@ -32,12 +37,15 @@ def evaluate_confidence(context: Dict[str, Any]) -> Tuple[str, str]:
     Returns:
         Tuple of (confidence_value, confidence_reason)
 
-    PR24: Minimal implementation - returns undefined (empty strings).
+    PR24/PR28: Minimal implementation.
+    - confidence_value: undefined (empty string)
+    - confidence_reason: generated via builder (PR27 structure)
     Future PRs will implement actual Confidence assessment logic.
     """
-    # PR24: Minimal hook - return undefined
-    # This reserves the architectural seat without introducing logic
+    # PR24: confidence_value remains undefined (empty string)
     confidence_value = ""
-    confidence_reason = ""
+
+    # PR28: confidence_reason generated via builder (PR27 structure)
+    confidence_reason = build_confidence_reason(context)
 
     return confidence_value, confidence_reason
