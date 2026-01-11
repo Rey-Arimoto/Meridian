@@ -9,6 +9,8 @@ judgment, or recommendation.
 Modules:
     - v6_interpretation_schema: Schema definition for interpretation records
     - v6_constitutional_guard: Constitutional guards against violations
+    - v6_interpretation_engine_v1: Static structural mapping (point)
+    - v6_interpretation_engine_v2: Compositional structural mapping (surface)
 """
 
 from .v6_interpretation_schema import (
@@ -25,6 +27,22 @@ from .v6_constitutional_guard import (
     FORBIDDEN_VOCABULARY,
 )
 
+from .v6_interpretation_engine_v1 import (
+    interpret_v1,
+    interpret_batch_v1,
+    V1MeaningTags,
+    get_engine_info,
+)
+
+from .v6_interpretation_engine_v2 import (
+    interpret_v2,
+    interpret_batch_v2,
+    V2PrimaryMeaning,
+    V2Factors,
+    V2Signals,
+    get_engine_v2_info,
+)
+
 __all__ = [
     # Schema
     "V6InterpretationSchema",
@@ -37,4 +55,18 @@ __all__ = [
     "check_forbidden_vocabulary",
     "check_confidence_boundary",
     "FORBIDDEN_VOCABULARY",
+
+    # Engine v1
+    "interpret_v1",
+    "interpret_batch_v1",
+    "V1MeaningTags",
+    "get_engine_info",
+
+    # Engine v2
+    "interpret_v2",
+    "interpret_batch_v2",
+    "V2PrimaryMeaning",
+    "V2Factors",
+    "V2Signals",
+    "get_engine_v2_info",
 ]

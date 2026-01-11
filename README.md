@@ -544,6 +544,59 @@ This is not "getting smarter". This is structural language for what we can under
 - Display/presentation layer only
 - Existing v0.5 sections unchanged
 
+### v0.6 Interpretation Engine v2 (PR63)
+
+**Interpretation v2 = Compositional Structural Mapping**
+
+v1 was a point (single label). v2 is a surface (compositional decomposition).
+
+**v2 Philosophy:**
+
+v2 increases interpretation resolution by decomposing observations into multiple structural elements:
+
+1. **Primary Meaning** — Main structural type (same as v1)
+2. **Factors** — Structural elements present (e.g., REGIME_PRESENT, INTENT_PRESENT)
+3. **Signals** — Concrete observational signs (e.g., DIFF_STATUS_ALIGNED, SEMANTICS_RULE_OVERLAY)
+
+**Processing Order (v2):**
+
+```
+Observation → Signals → Factors → Primary Meaning → Summary
+```
+
+First decompose, then compose. This is structural language without loss.
+
+**v2 Extended Output:**
+
+```json
+{
+  "v6_meaning_tag": "OVERLAY_OBSERVED",
+  "v6_meaning_factors": ["REGIME_PRESENT", "INTENT_PRESENT", "SHADOW_PRESENT"],
+  "v6_meaning_signals": ["DIFF_STATUS_DIVERGED", "SEMANTICS_RULE_OVERLAY"],
+  "v6_meaning_summary": "overlay pattern observed in decision divergence, with regime context.",
+  "v6_meaning_basis": ["v5_decision_diff_status", "v5_decision_diff_semantics_tag", "regime"]
+}
+```
+
+**Factors (Structural Elements):**
+- `REGIME_PRESENT` / `REGIME_TRANSITION_PRESENT`
+- `INTENT_PRESENT` / `INTENT_ABSENT`
+- `SEMANTICS_AVAILABLE` / `SEMANTICS_UNAVAILABLE`
+- `SHADOW_PRESENT` / `SHADOW_ABSENT`
+
+**Signals (Observational Signs):**
+- `DIFF_STATUS_ALIGNED` / `DIFF_STATUS_DIVERGED` / `DIFF_STATUS_UNAVAILABLE`
+- `SEMANTICS_RULE_OVERLAY` / `SEMANTICS_ALIGNED` / `SEMANTICS_UNKNOWN`
+- `PAIR_IDENTIFIED` / `PAIR_UNKNOWN`
+
+**Important:**
+- v2 does NOT lose information vs v1
+- v2 does NOT evaluate or judge
+- v2 is decomposition without optimization
+- UNKNOWN/UNCLASSIFIED remain normal outcomes
+
+This is not "getting smarter". This is structure without compression.
+
 ### Constitutional Constraints (v0.6)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -561,6 +614,7 @@ source .venv/bin/activate
 python3 python/validation/pr60_interpretation_schema_smoke.py
 python3 python/validation/pr61_interpretation_engine_v1_smoke.py
 python3 python/validation/pr62_interpretation_report_integration_smoke.py
+python3 python/validation/pr63_interpretation_engine_v2_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
