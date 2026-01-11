@@ -2331,6 +2331,162 @@ if warnings:
 - Invalid inputs → `ERROR` record (never raises)
 - Warning-only (exit code always 0)
 
+### v1.0 Drift → Reflection/Boundary/Execution Binding v1 (PR121)
+
+**Purpose:** Bind drift classification into downstream constitutional layers as structure, not action.
+
+**Binding Philosophy:**
+- Drift does not mean "trade" or "stop"
+- Drift means: structure is moving
+- Binding = Constitutional Gate (not action/recommendation)
+
+PR121 integrates drift detection (PR120) into the explainability chain:
+
+**1. Drift Reflection Attachment v1**
+
+Attaches drift classification to reflection records as structural addenda.
+
+**File:** `python/bridge/v10_drift_to_reflection_attachment_v1.py`
+
+**Behavior:**
+- Adds `pr120_drift_record` to reflection artifacts
+- Adds `v10_drift_level` to reflection basis
+- Appends drift context to reflection summary (non-prescriptive)
+- Never modifies reflection tag
+- Defensive (None → return original or empty)
+
+**Example:**
+```python
+from bridge.v10_drift_to_reflection_attachment_v1 import attach_drift_to_reflection_v1
+
+# Attach drift to reflection
+enhanced = attach_drift_to_reflection_v1(reflection_record, drift_record)
+
+# Result includes drift artifacts and basis
+print(enhanced["v7_reflection_artifacts"])  # ["pr120_drift_record"]
+print(enhanced["v7_reflection_basis"])      # [..., "v10_drift_level"]
+```
+
+**2. Drift Boundary Hinting v1**
+
+Enhances boundary records with drift-based observability stability hints.
+
+**File:** `python/boundary/v10_drift_boundary_hint_engine_v1.py`
+
+**Behavior:**
+- Adds drift hint to boundary description (non-prescriptive)
+- Maps drift levels to observability stability:
+  - `DRIFT_CRITICAL` → "observability unstable under critical drift"
+  - `DRIFT_HIGH` → "observability unstable under high drift"
+  - `DRIFT_MEDIUM` → "observability moderate under drift"
+  - `DRIFT_LOW` → "observability stable under low drift"
+  - `DRIFT_NONE` → "observability stable with no drift"
+- Never modifies boundary type
+- Defensive (None → return original or empty)
+
+**Example:**
+```python
+from boundary.v10_drift_boundary_hint_engine_v1 import hint_boundary_with_drift_v1
+
+# Hint boundary with drift
+enhanced = hint_boundary_with_drift_v1(boundary_record, drift_record)
+
+# Result includes drift-based observability hint
+print(enhanced["v9_boundary_description"])
+# "sampling boundary detected. observability unstable under critical drift."
+```
+
+**3. Drift Execution Policy Binding v1 (Conservative)**
+
+Binds drift classification to execution permission with conservative rules.
+
+**File:** `python/policy/v10_drift_execution_policy_binding_v1.py`
+
+**Static Binding Rules (v1 - Conservative):**
+
+| Drift Level | Permission Override | Constraint Label |
+|-------------|---------------------|------------------|
+| `DRIFT_CRITICAL` | `HOLD` | `drift_critical_observed` |
+| `DRIFT_HIGH` | `DRY_RUN_ONLY` | `drift_high_observed` |
+| `DRIFT_MEDIUM` | No override | `drift_medium_observed` |
+| `DRIFT_LOW` | No override | `drift_low_observed` |
+| `DRIFT_NONE` | No override | `drift_none_observed` |
+| `UNCLASSIFIED` | No override | `drift_unclassified` |
+
+**Permission Override Logic:**
+- **HOLD**: Hard stop (critical drift - structure highly unstable)
+- **DRY_RUN_ONLY**: Simulation only (high drift - structure unstable)
+- **No override**: Defer to upstream execution engine (low/medium/none drift)
+
+**Restrictiveness Order:** `HOLD` > `DRY_RUN_ONLY` > `ALLOW` > `UNKNOWN`
+- Always selects more restrictive permission between current and override
+
+**Example:**
+```python
+from policy.v10_drift_execution_policy_binding_v1 import bind_drift_to_execution_policy_v1
+
+# Bind drift to execution policy
+enhanced = bind_drift_to_execution_policy_v1(execution_record, drift_record)
+
+# DRIFT_CRITICAL overrides permission to HOLD
+print(enhanced["v10_execution_permission"])  # "HOLD"
+print(enhanced["v10_execution_constraints"]) # ["drift_critical_observed"]
+```
+
+**4. Drift Policy Constitutional Guard**
+
+Enforces constitutional constraints on drift policy binding outputs.
+
+**File:** `python/policy/v10_drift_policy_constitutional_guard.py`
+
+**Guards (STRENGTHENED):**
+1. **Numeric Pattern Guard** - No counts, percentages, scores
+2. **Token Literal Guard** - No SUI, USDC, BTC, ETH
+3. **Address Pattern Guard** - No 0x... patterns
+4. **Trading Vocabulary Guard** - No swap, buy, sell, execute
+5. **Execution Operation Guard** - No transaction, broadcast, submit
+6. **Forbidden Vocabulary Guard** - No good/bad, correct/wrong
+7. **Prescriptive Language Guard (NEW)** - No should/must, proceed/stop/pause
+
+**Example:**
+```python
+from policy.v10_drift_policy_constitutional_guard import validate_drift_policy_binding
+
+# Validate binding output
+warnings = validate_drift_policy_binding(enhanced_execution)
+
+# Detects violations
+if warnings:
+    for warning in warnings:
+        print(f"⚠ {warning}")
+```
+
+**Integration into Pipeline:**
+
+```
+Vocabulary (PR119)
+         ↓
+Drift Detection (PR120) ← Detect structural language shifts
+         ↓
+Drift Reflection Attachment (PR121) ← Add to explainability chain
+         ↓
+Drift Boundary Hinting (PR121) ← Enhance observability description
+         ↓
+Drift Execution Binding (PR121) ← Conservative permission gating
+         ↓
+Regime Classification (PR110)
+         ↓
+Policy Binding (PR111)
+         ↓
+Execution Preview (PR112)
+```
+
+**Important:**
+- Drift binding is **classification only** (not action)
+- HOLD/DRY_RUN_ONLY are **permission labels** (not commands)
+- All outputs remain **non-prescriptive** (no "should", "must", "pause")
+- Constraint labels are **structural context only** (not instructions)
+
 ### Constitutional Constraints (v1.0 Infrastructure)
 
 All v1.0 infrastructure components enforce:
@@ -2357,6 +2513,7 @@ python3 python/validation/pr117_golden_regression_harness_smoke.py
 python3 python/validation/pr118_cli_demo_smoke.py
 python3 python/validation/pr119_market_structure_vocabulary_smoke.py
 python3 python/validation/pr120_market_structure_drift_smoke.py
+python3 python/validation/pr121_drift_binding_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
@@ -2374,7 +2531,7 @@ v0.8 introduces blindspot (observing structural absences in interpretation/refle
 v0.9 introduces boundary (classifying structural limits of observability).
 v1.0 introduces execution constitution (boundary → executability without trading).
 v1.1 introduces intelligence native market (onchain regime classification, policy binding, execution preview, human approval).
-v1.0 infrastructure completes end-to-end pipeline (orchestrator, artifact bundling, regression testing, CLI demo, market structure vocabulary, vocabulary drift detection).
+v1.0 infrastructure completes end-to-end pipeline (orchestrator, artifact bundling, regression testing, CLI demo, market structure vocabulary, vocabulary drift detection, drift binding into explainability chain).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
