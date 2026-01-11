@@ -145,25 +145,31 @@ def check_execution_safety(text: str) -> List[str]:
     warnings = []
     text_lower = text.lower()
 
-    # Valid intent type patterns that should not trigger warnings
-    # (e.g., "rebalance intent", "hedge intent", "liquidity intent")
-    intent_exceptions = [
+    # Valid intent/plan type patterns that should not trigger warnings
+    # (e.g., "rebalance intent", "hedge intent", "rebalance plan", "hedge plan")
+    safe_exceptions = [
+        # Intent descriptions
         "rebalance intent",
         "hedge intent",
         "liquidity intent",
         "maintenance intent",
+        # Plan descriptions
+        "rebalance plan",
+        "hedge plan",
+        "liquidity plan",
+        "maintenance plan",
     ]
 
     for word in EXECUTION_ACTION_VOCABULARY:
         if word in text_lower:
-            # Check if this match is part of a valid intent type description
-            is_intent_description = False
-            for exception in intent_exceptions:
+            # Check if this match is part of a safe description
+            is_safe_description = False
+            for exception in safe_exceptions:
                 if word in exception and exception in text_lower:
-                    is_intent_description = True
+                    is_safe_description = True
                     break
 
-            if not is_intent_description:
+            if not is_safe_description:
                 warnings.append(f"Execution action vocabulary detected: '{word}' in text")
 
     return warnings

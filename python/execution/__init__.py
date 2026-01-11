@@ -22,6 +22,8 @@ Modules:
     - v10_execution_schema: Schema definition for execution records
     - v10_constitutional_guard: Constitutional guards against violations
     - v10_execution_permissioning_engine_v1: Execution permissioning engine v1
+    - v10_execution_plan_schema: Schema definition for execution plan records
+    - v10_plan_constitutional_guard: Constitutional guards for plans
 """
 
 from .v10_execution_schema import (
@@ -50,6 +52,18 @@ from .v10_execution_permissioning_engine_v1 import (
     V1PermissionTypes,
 )
 
+from .v10_execution_plan_schema import (
+    V10ExecutionPlanSchema,
+    validate_plan_basis_fields,
+    get_plan_schema_info,
+)
+
+from .v10_plan_constitutional_guard import (
+    validate_plan_record,
+    check_token_literals,
+    check_numeric_patterns,
+)
+
 __all__ = [
     # Schema
     "V10ExecutionSchema",
@@ -69,4 +83,12 @@ __all__ = [
     # Engines
     "classify_execution_permission_v1",
     "V1PermissionTypes",
+    # Plan Schema
+    "V10ExecutionPlanSchema",
+    "validate_plan_basis_fields",
+    "get_plan_schema_info",
+    # Plan Guards
+    "validate_plan_record",
+    "check_token_literals",
+    "check_numeric_patterns",
 ]

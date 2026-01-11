@@ -1338,6 +1338,109 @@ print(execution["v10_execution_basis"])
 - Always returns valid v10 record
 - Exit code always 0
 
+### v1.0 Execution Plan Schema v1 (PR102)
+
+Schema v1 = **Typed Plan Shape (Structural Only)**
+
+Defines execution plan records that describe plan shapes without amounts, token names, or trading actions.
+
+**Plan Philosophy:**
+- Plan = Structural plan shape description
+- No amounts, prices, or quantities
+- No token literals (SUI, USDC, BTC, etc.)
+- No addresses or wallet interactions
+- No trading verbs or commands
+
+**Plan Types (v1):**
+- `NOOP` - No operation plan
+- `MAINTENANCE` - Maintenance plan
+- `REBALANCE` - Rebalance plan shape
+- `HEDGE` - Hedge plan shape
+- `LIQUIDITY` - Liquidity plan shape
+- `UNCLASSIFIED` - Cannot classify with current rules
+
+**Schema Fields (v10_plan_ prefix):**
+- `v10_plan_mode`: ON | OFF
+- `v10_plan_status`: AVAILABLE | UNAVAILABLE
+- `v10_plan_type`: Structural plan type
+- `v10_plan_description`: Non-evaluative plan shape description
+- `v10_plan_constraints`: Structural constraints (time/frequency only)
+- `v10_plan_basis`: Array of execution field names referenced
+- `v10_plan_artifacts`: Array of artifact names (optional)
+
+**Constraint Types (Structural Only):**
+- `time_window` - e.g., "business_hours_only"
+- `frequency_limit` - e.g., "once_per_day"
+- `dry_run_only` - e.g., "no_live_execution"
+- `manual_approval` - e.g., "requires_manual_approval"
+
+**Constitutional Guards:**
+
+**1. Token Literal Guard (NEW in PR102)**
+- Detects token names (SUI, USDC, BTC, ETH, etc.)
+- Prevents concrete token references in plans
+- Maintains abstract plan descriptions
+
+**2. Numeric Pattern Guard (NEW in PR102)**
+- Detects amounts (1000, 0.5, etc.)
+- Detects prices ($100, €50, etc.)
+- Detects addresses (0x...)
+- Plans remain purely structural
+
+**3. Forbidden Vocabulary & Execution Safety**
+- All PR100 guards apply to plan descriptions
+- No evaluative/prescriptive vocabulary
+- No trading action verbs
+
+**Usage:**
+
+```python
+from execution.v10_execution_plan_schema import V10ExecutionPlanSchema
+from execution.v10_plan_constitutional_guard import validate_plan_record
+
+# Create plan record
+plan = V10ExecutionPlanSchema.create_empty_record()
+plan["v10_plan_mode"] = "ON"
+plan["v10_plan_status"] = "AVAILABLE"
+plan["v10_plan_type"] = "REBALANCE"
+plan["v10_plan_description"] = "rebalance plan available based on boundary analysis."
+plan["v10_plan_constraints"] = ["dry_run_only", "time_window_business_hours"]
+plan["v10_plan_basis"] = ["v10_execution_permission"]
+
+# Validate against constitutional guards
+warnings = validate_plan_record(plan)
+
+if warnings:
+    for warning in warnings:
+        print(f"⚠ {warning}")
+```
+
+**Example Plan Record:**
+
+```json
+{
+  "v10_plan_mode": "ON",
+  "v10_plan_status": "AVAILABLE",
+  "v10_plan_type": "REBALANCE",
+  "v10_plan_description": "rebalance plan available based on sampling boundary.",
+  "v10_plan_constraints": ["dry_run_only", "frequency_limit_once_per_day"],
+  "v10_plan_basis": ["v10_execution_permission"],
+  "v10_plan_artifacts": ["pr101_execution_record"]
+}
+```
+
+**Important:**
+- Plans describe structure, not specific trades
+- No amounts, no token names, no addresses
+- Constraints are time/frequency based only
+- All trading vocabulary is forbidden
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Detects violations via constitutional guards
+- Always returns warnings list
+- Exit code always 0
+
 ### Run Validations (v1.0)
 
 ```bash
@@ -1345,6 +1448,7 @@ cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr100_execution_schema_smoke.py
 python3 python/validation/pr101_execution_permissioning_engine_v1_smoke.py
+python3 python/validation/pr102_execution_plan_schema_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
