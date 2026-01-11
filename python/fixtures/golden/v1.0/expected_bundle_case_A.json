@@ -1,0 +1,131 @@
+{
+  "v10_bundle_mode": "ON",
+  "v10_bundle_status": "AVAILABLE",
+  "v10_bundle_layers": [
+    "ANALYTICS",
+    "REGIME",
+    "POLICY_BINDING",
+    "PLAN",
+    "PREVIEW",
+    "APPROVAL_GATE",
+    "APPROVAL_REGISTRY"
+  ],
+  "v10_bundle_artifacts": {
+    "ANALYTICS": {
+      "onchain_analytics_mode": "ON",
+      "onchain_analytics_status": "AVAILABLE",
+      "market_cost_regime_counts": {
+        "LOW": 8,
+        "MEDIUM": 1,
+        "HIGH": 1
+      },
+      "liquidity_regime_presence": {
+        "LOW": true,
+        "MEDIUM": false,
+        "HIGH": false
+      },
+      "event_activity_frequency": {
+        "TRUE": 2,
+        "FALSE": 8
+      },
+      "object_dynamics_distribution": {
+        "DECREASE": 0,
+        "STABLE": 9,
+        "INCREASE": 1
+      },
+      "observation_count": 10,
+      "case_name": "stable_low_activity",
+      "case_summary": "stable market conditions with low activity. minimal variation across dimensions."
+    },
+    "REGIME": {
+      "v11_regime_mode": "ON",
+      "v11_regime_status": "AVAILABLE",
+      "v11_regime_level": "REGIME_MEDIUM",
+      "v11_regime_basis": [
+        "market_cost_regime_counts",
+        "liquidity_regime_presence",
+        "event_activity_frequency",
+        "object_dynamics_distribution"
+      ],
+      "v11_regime_timestamp": 1768173199,
+      "v11_regime_summary": "regime classified as medium. moderate variation observed."
+    },
+    "POLICY_BINDING": {
+      "v11_policy_mode": "ON",
+      "v11_policy_status": "AVAILABLE",
+      "v11_regime_level": "REGIME_MEDIUM",
+      "v11_execution_permission_override": "UNKNOWN",
+      "v11_plan_constraints_append": [
+        "regime_medium_observed"
+      ],
+      "v11_policy_summary": "regime binding applied. no permission override required.",
+      "v11_policy_basis": [
+        "v11_regime_level"
+      ],
+      "v11_policy_artifacts": [
+        "pr110_regime_record"
+      ]
+    },
+    "PLAN": {
+      "v10_plan_mode": "ON",
+      "v10_plan_status": "AVAILABLE",
+      "v10_plan_type": "MAINTENANCE",
+      "v10_plan_description": "mock plan of type MAINTENANCE based on policy permission UNKNOWN.",
+      "v10_plan_constraints": [
+        "dry_run_only"
+      ],
+      "v10_plan_basis": [
+        "v11_execution_permission_override"
+      ]
+    },
+    "PREVIEW": {
+      "v11_preview_mode": "ON",
+      "v11_preview_status": "AVAILABLE",
+      "v11_preview_exposure_change": "NONE",
+      "v11_preview_interaction_type": "NONE",
+      "v11_preview_risk_surface": "MEDIUM",
+      "v11_preview_summary": "maintenance plan with no exposure change and no interaction.",
+      "v11_preview_basis": [
+        "v10_plan_type",
+        "v11_regime_level",
+        "v11_policy_permission"
+      ]
+    },
+    "APPROVAL_GATE": {
+      "v11_approval_mode": "ON",
+      "v11_approval_status": "AVAILABLE",
+      "v11_approval_requirement": "NOT_REQUIRED",
+      "v11_approval_state": "UNREQUESTED",
+      "v11_approval_summary": "approval not required under normal conditions.",
+      "v11_approval_basis": [
+        "v11_preview_status",
+        "v11_regime_level"
+      ],
+      "v11_approval_artifacts": [
+        "pr112_preview_record",
+        "pr110_regime_record"
+      ]
+    },
+    "APPROVAL_REGISTRY": {
+      "v11_registry_mode": "ON",
+      "v11_registry_status": "AVAILABLE",
+      "v11_registry_requirement": "NOT_REQUIRED",
+      "v11_registry_state": "UNREQUESTED",
+      "v11_registry_event": "NONE",
+      "v11_registry_summary": "approval not required. registry remains unrequested.",
+      "v11_registry_basis": [
+        "v11_requirement"
+      ],
+      "v11_registry_artifacts": [
+        "pr113_approval_record"
+      ]
+    }
+  },
+  "v10_bundle_summary": "artifact bundle with 7 layers. pipeline output captured. layers: ANALYTICS, REGIME, POLICY_BINDING, PLAN, PREVIEW, APPROVAL_GATE, APPROVAL_REGISTRY.",
+  "v10_bundle_basis": [
+    "pipeline_artifacts"
+  ],
+  "v10_bundle_warnings": [
+    "Using mock execution plan"
+  ]
+}

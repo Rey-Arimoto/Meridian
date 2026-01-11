@@ -1,0 +1,8 @@
+{
+  "v10_connection_mode": "ON",
+  "v10_connection_status": "AVAILABLE",
+  "v10_connection_type": "READ_ONLY",
+  "v10_connection_summary": "read-only connection established. no execution capability.",
+  "v10_connection_basis": ["provider_config"],
+  "v10_connection_artifacts": ["provider_handle"]
+}

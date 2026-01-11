@@ -1,0 +1,132 @@
+{
+  "v10_bundle_mode": "ON",
+  "v10_bundle_status": "AVAILABLE",
+  "v10_bundle_layers": [
+    "ANALYTICS",
+    "REGIME",
+    "POLICY_BINDING",
+    "PLAN",
+    "PREVIEW",
+    "APPROVAL_GATE",
+    "APPROVAL_REGISTRY"
+  ],
+  "v10_bundle_artifacts": {
+    "ANALYTICS": {
+      "onchain_analytics_mode": "ON",
+      "onchain_analytics_status": "AVAILABLE",
+      "market_cost_regime_counts": {
+        "LOW": 3,
+        "MEDIUM": 4,
+        "HIGH": 3
+      },
+      "liquidity_regime_presence": {
+        "LOW": true,
+        "MEDIUM": true,
+        "HIGH": true
+      },
+      "event_activity_frequency": {
+        "TRUE": 6,
+        "FALSE": 4
+      },
+      "object_dynamics_distribution": {
+        "DECREASE": 3,
+        "STABLE": 4,
+        "INCREASE": 3
+      },
+      "observation_count": 10,
+      "case_name": "high_variation",
+      "case_summary": "high variation market conditions. significant entropy across all dimensions."
+    },
+    "REGIME": {
+      "v11_regime_mode": "ON",
+      "v11_regime_status": "AVAILABLE",
+      "v11_regime_level": "REGIME_CRITICAL",
+      "v11_regime_basis": [
+        "market_cost_regime_counts",
+        "liquidity_regime_presence",
+        "event_activity_frequency",
+        "object_dynamics_distribution"
+      ],
+      "v11_regime_timestamp": 1768173199,
+      "v11_regime_summary": "regime classified as critical. extreme variation or observability breakdown."
+    },
+    "POLICY_BINDING": {
+      "v11_policy_mode": "ON",
+      "v11_policy_status": "AVAILABLE",
+      "v11_regime_level": "REGIME_CRITICAL",
+      "v11_execution_permission_override": "HOLD",
+      "v11_plan_constraints_append": [
+        "regime_critical_observed"
+      ],
+      "v11_policy_summary": "regime binding applied. execution halted under critical regime conditions.",
+      "v11_policy_basis": [
+        "v11_regime_level"
+      ],
+      "v11_policy_artifacts": [
+        "pr110_regime_record"
+      ]
+    },
+    "PLAN": {
+      "v10_plan_mode": "ON",
+      "v10_plan_status": "AVAILABLE",
+      "v10_plan_type": "NOOP",
+      "v10_plan_description": "mock plan of type NOOP based on policy permission HOLD.",
+      "v10_plan_constraints": [
+        "dry_run_only"
+      ],
+      "v10_plan_basis": [
+        "v11_execution_permission_override"
+      ]
+    },
+    "PREVIEW": {
+      "v11_preview_mode": "ON",
+      "v11_preview_status": "BLOCKED",
+      "v11_preview_exposure_change": "NONE",
+      "v11_preview_interaction_type": "NONE",
+      "v11_preview_risk_surface": "HIGH",
+      "v11_preview_block_reason": "regime critical observed. execution halted.",
+      "v11_preview_summary": "preview blocked. regime critical observed. execution halted.",
+      "v11_preview_basis": [
+        "v10_plan_type",
+        "v11_regime_level",
+        "v11_policy_permission"
+      ]
+    },
+    "APPROVAL_GATE": {
+      "v11_approval_mode": "ON",
+      "v11_approval_status": "AVAILABLE",
+      "v11_approval_requirement": "REQUIRED_STRICT",
+      "v11_approval_state": "UNREQUESTED",
+      "v11_approval_summary": "approval required under blocked preview conditions. no approval requested.",
+      "v11_approval_basis": [
+        "v11_preview_status",
+        "v11_regime_level"
+      ],
+      "v11_approval_artifacts": [
+        "pr112_preview_record",
+        "pr110_regime_record"
+      ]
+    },
+    "APPROVAL_REGISTRY": {
+      "v11_registry_mode": "ON",
+      "v11_registry_status": "AVAILABLE",
+      "v11_registry_requirement": "REQUIRED_STRICT",
+      "v11_registry_state": "UNREQUESTED",
+      "v11_registry_event": "NONE",
+      "v11_registry_summary": "registry state unchanged. current state: UNREQUESTED.",
+      "v11_registry_basis": [
+        "v11_requirement"
+      ],
+      "v11_registry_artifacts": [
+        "pr113_approval_record"
+      ]
+    }
+  },
+  "v10_bundle_summary": "artifact bundle with 7 layers. pipeline output captured. layers: ANALYTICS, REGIME, POLICY_BINDING, PLAN, PREVIEW, APPROVAL_GATE, APPROVAL_REGISTRY.",
+  "v10_bundle_basis": [
+    "pipeline_artifacts"
+  ],
+  "v10_bundle_warnings": [
+    "Using mock execution plan"
+  ]
+}

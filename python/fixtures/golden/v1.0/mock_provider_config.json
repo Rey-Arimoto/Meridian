@@ -1,0 +1,6 @@
+{
+  "provider_type": "READ_ONLY",
+  "provider_mode": "MOCK",
+  "provider_summary": "mock read-only provider for golden fixtures. no network access.",
+  "provider_constraints": ["read_only", "no_execution", "no_signing"]
+}

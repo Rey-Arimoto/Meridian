@@ -1,0 +1,26 @@
+{
+  "onchain_analytics_mode": "ON",
+  "onchain_analytics_status": "AVAILABLE",
+  "market_cost_regime_counts": {
+    "LOW": 3,
+    "MEDIUM": 4,
+    "HIGH": 3
+  },
+  "liquidity_regime_presence": {
+    "LOW": true,
+    "MEDIUM": true,
+    "HIGH": true
+  },
+  "event_activity_frequency": {
+    "TRUE": 6,
+    "FALSE": 4
+  },
+  "object_dynamics_distribution": {
+    "DECREASE": 3,
+    "STABLE": 4,
+    "INCREASE": 3
+  },
+  "observation_count": 10,
+  "case_name": "high_variation",
+  "case_summary": "high variation market conditions. significant entropy across all dimensions."
+}

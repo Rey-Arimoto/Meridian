@@ -1,0 +1,26 @@
+{
+  "onchain_analytics_mode": "ON",
+  "onchain_analytics_status": "AVAILABLE",
+  "market_cost_regime_counts": {
+    "LOW": 8,
+    "MEDIUM": 1,
+    "HIGH": 1
+  },
+  "liquidity_regime_presence": {
+    "LOW": true,
+    "MEDIUM": false,
+    "HIGH": false
+  },
+  "event_activity_frequency": {
+    "TRUE": 2,
+    "FALSE": 8
+  },
+  "object_dynamics_distribution": {
+    "DECREASE": 0,
+    "STABLE": 9,
+    "INCREASE": 1
+  },
+  "observation_count": 10,
+  "case_name": "stable_low_activity",
+  "case_summary": "stable market conditions with low activity. minimal variation across dimensions."
+}
