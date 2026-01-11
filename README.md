@@ -957,6 +957,88 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v0.9 — Boundary Constitution (READ-ONLY)
+
+### v0.9 Philosophy: Blindspot → Boundary
+
+v0.6 completed interpretation (observation → meaning).
+v0.7 completed reflection (interpretation → system description).
+v0.8 completed blindspot (structural absences enumeration).
+v0.9 classifies where observability ends — the boundary itself.
+
+Boundary answers a different question than Blindspot:
+- **Blindspot**: What is absent?
+- **Boundary**: At which structural boundary does the absence occur?
+
+Boundary treats absences not as failures, but as topological limits of the system.
+
+**Boundary ≠ Evaluation**
+- **Boundary** = Structural Limit Description
+- **Boundary** ≠ Evaluation (good/bad judgment)
+- **Boundary** ≠ Recommendation (what should be done)
+- **Boundary** ≠ Optimization (improve/fix)
+- **Boundary** ≠ Root-cause analysis
+
+### v0.9 Boundary Schema (PR90)
+
+Boundary records use `v9_` prefix:
+
+- `v9_boundary_mode`: ON | OFF
+- `v9_boundary_status`: AVAILABLE | UNAVAILABLE
+- `v9_boundary_type`: Structural boundary type (non-evaluative)
+- `v9_boundary_description`: Non-evaluative structural limit description
+- `v9_boundary_basis`: Array of blindspot/interpretation/reflection field names used
+- `v9_boundary_artifacts`: Array of analytics artifacts referenced
+
+**Example Boundary Record:**
+
+```json
+{
+  "v9_boundary_mode": "ON",
+  "v9_boundary_status": "AVAILABLE",
+  "v9_boundary_type": "SCHEMA_BOUNDARY",
+  "v9_boundary_description": "observability limit at schema layer. structure cannot be expressed with current schema.",
+  "v9_boundary_basis": ["v8_blindspot_tag", "v7_reflection_tag"],
+  "v9_boundary_artifacts": ["pr81_blindspot_record"]
+}
+```
+
+**Important:**
+- Boundary classifies structural limits of observability
+- No evaluation of whether boundaries are good/bad
+- No recommendations for what should be changed
+- UNKNOWN/UNCLASSIFIED remain normal outcomes
+
+**Boundary Types (Classification in PR91+):**
+- `SCHEMA_BOUNDARY` - Structure cannot be expressed with current schema
+- `DATA_BOUNDARY` - Required data does not exist or is insufficient
+- `ENGINE_BOUNDARY` - Interpretation/reflection rules cannot map structure
+- `SAMPLING_BOUNDARY` - Structure exists in definition space but not observed
+- `TEMPORAL_BOUNDARY` - Structure exists but cannot be observed in time window
+- `UNCLASSIFIED` - Cannot classify with current rules (normal outcome)
+
+### Constitutional Constraints (v0.9)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **Blindspot-bound**: Only uses v8/v7/v6 fields as basis
+- **v0.4 boundary protection**: No confidence_reason analysis
+- **Observation boundary protection**: No direct v5 field access
+
+### Run Validations (v0.9)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr90_boundary_schema_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
@@ -965,6 +1047,7 @@ v0.5 completes observation infrastructure (shadow diff, analytics, reporting).
 v0.6 introduces interpretation (structural meaning without judgment).
 v0.7 introduces reflection (observing interpretation system characteristics).
 v0.8 introduces blindspot (observing structural absences in interpretation/reflection systems).
+v0.9 introduces boundary (classifying structural limits of observability).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
