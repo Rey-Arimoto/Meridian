@@ -522,6 +522,28 @@ Engine v1 maps observations to meaning types using static rules:
 
 This is not "getting smarter". This is structural language for what we can understand.
 
+### v0.6 Interpretation Output Wiring (PR62)
+
+**Purpose:** Wire v6 interpretation data into reports and digest (READ-ONLY, display only).
+
+**Changes (PR62):**
+
+1. **PR48A Daily Reports** — Add "Interpretation (v0.6)" section
+   - Displays `meaning_status_counts` distribution
+   - Displays `meaning_tag_counts` distribution
+   - Supports degraded mode when v6 data absent
+
+2. **PR51 Weekly Digest** — Add meaning aggregation
+   - Aggregates `meaning_status_counts` across 7 days
+   - Aggregates `meaning_tag_counts` across 7 days
+   - Supports degraded mode when v6 data absent
+
+**READ-ONLY Guarantee:**
+- No execution logic changes
+- No decision flow changes
+- Display/presentation layer only
+- Existing v0.5 sections unchanged
+
 ### Constitutional Constraints (v0.6)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -538,6 +560,7 @@ cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr60_interpretation_schema_smoke.py
 python3 python/validation/pr61_interpretation_engine_v1_smoke.py
+python3 python/validation/pr62_interpretation_report_integration_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

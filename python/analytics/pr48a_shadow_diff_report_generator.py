@@ -314,6 +314,41 @@ def generate_markdown_report(
         lines.append("---")
         lines.append("")
 
+    # Interpretation (v0.6)
+    lines.append("## Interpretation (v0.6)")
+    lines.append("")
+
+    if overall and "v6_interpretation" in overall:
+        v6_interp = overall["v6_interpretation"]
+
+        # Meaning status distribution
+        meaning_status = v6_interp.get("meaning_status_counts", {})
+        if meaning_status:
+            lines.append("**Meaning Status Distribution:**")
+            for status, count in sorted(meaning_status.items()):
+                lines.append(f"- {status}: {count}")
+            lines.append("")
+
+        # Meaning tag distribution
+        meaning_tags = v6_interp.get("meaning_tag_counts", {})
+        if meaning_tags:
+            lines.append("**Meaning Tag Distribution:**")
+            for tag, count in sorted(meaning_tags.items()):
+                lines.append(f"- {tag}: {count}")
+            lines.append("")
+
+        # Interpretation note
+        lines.append("Interpretation layer maps observations to structural meaning types.")
+        lines.append("No evaluations or judgments are made.")
+    else:
+        lines.append("v0.6 interpretation data UNAVAILABLE (degraded mode).")
+        lines.append("")
+        lines.append("Interpretation layer provides structural meaning without evaluation.")
+
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
     # Notes (Constitutional constraints)
     lines.append("## Notes")
     lines.append("")
@@ -338,6 +373,8 @@ def generate_markdown_report(
     lines.append("- PR45: Shadow Diff Logging (machine-readable comparison)")
     lines.append("- PR46: Diff Semantics Tagging (divergence classification)")
     lines.append("- PR47: Shadow Diff Analytics Export (daily aggregation)")
+    lines.append("- PR60: v0.6 Interpretation Schema (structural meaning types)")
+    lines.append("- PR61: v0.6 Interpretation Engine v1 (static structural mapping)")
     lines.append("")
 
     if overall is None:

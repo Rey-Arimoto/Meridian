@@ -272,6 +272,8 @@ def aggregate_week(
         "diff_status_counts": defaultdict(int),
         "semantics_tag_counts": defaultdict(int),
         "diff_pair_counts": defaultdict(int),
+        "meaning_status_counts": defaultdict(int),
+        "meaning_tag_counts": defaultdict(int),
     }
 
     # Check each day
@@ -302,6 +304,8 @@ def aggregate_week(
     aggregates["diff_status_counts"] = dict(aggregates["diff_status_counts"])
     aggregates["semantics_tag_counts"] = dict(aggregates["semantics_tag_counts"])
     aggregates["diff_pair_counts"] = dict(aggregates["diff_pair_counts"])
+    aggregates["meaning_status_counts"] = dict(aggregates["meaning_status_counts"])
+    aggregates["meaning_tag_counts"] = dict(aggregates["meaning_tag_counts"])
 
     return {
         "coverage": coverage,
@@ -399,6 +403,41 @@ def generate_md_digest(
         for pair, count in sorted(aggregates["diff_pair_counts"].items()):
             lines.append(f"- **{pair}:** {count}")
         lines.append("")
+
+    # Interpretation (v0.6)
+    lines.append("## Interpretation (v0.6)")
+    lines.append("")
+
+    has_v6_data = (
+        aggregates.get("meaning_status_counts")
+        or aggregates.get("meaning_tag_counts")
+    )
+
+    if has_v6_data:
+        # Meaning status
+        if aggregates.get("meaning_status_counts"):
+            lines.append("### Meaning Status")
+            lines.append("")
+            for status, count in sorted(aggregates["meaning_status_counts"].items()):
+                lines.append(f"- **{status}:** {count}")
+            lines.append("")
+
+        # Meaning tags
+        if aggregates.get("meaning_tag_counts"):
+            lines.append("### Meaning Tags")
+            lines.append("")
+            for tag, count in sorted(aggregates["meaning_tag_counts"].items()):
+                lines.append(f"- **{tag}:** {count}")
+            lines.append("")
+
+        lines.append("Interpretation layer maps observations to structural meaning types.")
+        lines.append("No evaluations or judgments are made.")
+    else:
+        lines.append("v0.6 interpretation data UNAVAILABLE (degraded mode).")
+        lines.append("")
+        lines.append("Interpretation layer provides structural meaning without evaluation.")
+
+    lines.append("")
 
     # Notes
     lines.append("## Notes")
