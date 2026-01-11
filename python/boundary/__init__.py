@@ -23,6 +23,7 @@ Boundary Definition:
 Modules:
     - v9_boundary_schema: Schema definition for boundary records
     - v9_constitutional_guard: Constitutional guards against violations
+    - v9_boundary_classification_engine_v1: Structural limit classification
 """
 
 from .v9_boundary_schema import (
@@ -44,6 +45,13 @@ from .v9_constitutional_guard import (
     FORBIDDEN_VOCABULARY,
 )
 
+from .v9_boundary_classification_engine_v1 import (
+    classify_boundary_v1,
+    classify_boundary_batch_v1,
+    V1BoundaryTypes,
+    get_engine_v1_info,
+)
+
 __all__ = [
     # Schema
     "V9BoundarySchema",
@@ -58,4 +66,9 @@ __all__ = [
     "check_confidence_boundary",
     "check_observation_boundary",
     "FORBIDDEN_VOCABULARY",
+    # Classification Engine v1
+    "classify_boundary_v1",
+    "classify_boundary_batch_v1",
+    "V1BoundaryTypes",
+    "get_engine_v1_info",
 ]

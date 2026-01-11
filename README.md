@@ -1009,13 +1009,76 @@ Boundary records use `v9_` prefix:
 - No recommendations for what should be changed
 - UNKNOWN/UNCLASSIFIED remain normal outcomes
 
-**Boundary Types (Classification in PR91+):**
+**Boundary Types (v1):**
 - `SCHEMA_BOUNDARY` - Structure cannot be expressed with current schema
 - `DATA_BOUNDARY` - Required data does not exist or is insufficient
 - `ENGINE_BOUNDARY` - Interpretation/reflection rules cannot map structure
 - `SAMPLING_BOUNDARY` - Structure exists in definition space but not observed
 - `TEMPORAL_BOUNDARY` - Structure exists but cannot be observed in time window
 - `UNCLASSIFIED` - Cannot classify with current rules (normal outcome)
+
+### v0.9 Boundary Classification Engine v1 (PR91)
+
+Engine v1 = **Structural Limit Mapping**
+
+Classifies blindspots into structural boundary types using static rules.
+
+**Classification Philosophy:**
+- Map blindspot to boundary layer (not evaluation)
+- Static rules (if/elif), no learning, no inference
+- No judgment about whether boundaries are problems
+- No inference about why boundaries exist
+
+**Classification Rules:**
+1. **ABSENCE_INSUFFICIENT_EVIDENCE** → `DATA_BOUNDARY`
+2. **ABSENCE_SCHEMA_CANNOT_EXPRESS** → `SCHEMA_BOUNDARY`
+3. **ABSENCE_TRANSITION_NOT_OBSERVED** →
+   - Observation period < 30 days → `TEMPORAL_BOUNDARY`
+   - Observation period ≥ 30 days → `SAMPLING_BOUNDARY`
+4. **ABSENCE_UNSEEN_SIGNAL/FACTOR/MEANING_TYPES** → `SAMPLING_BOUNDARY`
+5. **All others** → `UNCLASSIFIED`
+
+**Usage:**
+
+```python
+from boundary.v9_boundary_classification_engine_v1 import classify_boundary_v1, V1BoundaryTypes
+from blindspot.v8_blindspot_detection_engine_v1 import detect_blindspot_v1
+
+# Detect blindspot from analytics
+blindspot = detect_blindspot_v1(interpretation_analytics)
+
+# Classify boundary
+boundary = classify_boundary_v1(blindspot)
+
+print(boundary["v9_boundary_type"])
+print(boundary["v9_boundary_description"])
+print(boundary["v9_boundary_basis"])
+```
+
+**Example Output:**
+
+```json
+{
+  "v9_boundary_mode": "ON",
+  "v9_boundary_status": "AVAILABLE",
+  "v9_boundary_type": "SAMPLING_BOUNDARY",
+  "v9_boundary_description": "observability limit at sampling layer. certain structural types exist in definition space but not observed in data.",
+  "v9_boundary_basis": ["v8_blindspot_tag"],
+  "v9_boundary_artifacts": ["pr81_blindspot_record"]
+}
+```
+
+**Classification Logic:**
+1. Extract blindspot tag from v8 record
+2. Apply static mapping rules
+3. Classify into boundary type
+4. No evaluation, no recommendation
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v9 record
+- Exit code always 0
 
 ### Constitutional Constraints (v0.9)
 
@@ -1033,6 +1096,7 @@ Boundary records use `v9_` prefix:
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr90_boundary_schema_smoke.py
+python3 python/validation/pr91_boundary_classification_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
