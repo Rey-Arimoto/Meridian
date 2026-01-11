@@ -727,6 +727,70 @@ Reflection records use `v7_` prefix:
 - No recommendations for what should be changed
 - UNKNOWN/UNCLASSIFIED remain normal outcomes
 
+### v0.7 Reflection Engine v1 (PR71)
+
+Engine v1 = **Static Structural Self-Description**
+
+Generates reflection records by observing interpretation analytics from PR64:
+
+**Reflection Tags (v1 Fixed Set):**
+- `MEANING_COVERAGE_NARROW`: Limited meaning types observed (≤ 2 types)
+- `MEANING_COVERAGE_BROAD`: Diverse meaning types observed (≥ 4 types)
+- `MEANING_DISTRIBUTION_SKEWED`: Concentration on limited subset (≥ 80%)
+- `FACTOR_DOMINANCE_OBSERVED`: Certain factors almost always present (≥ 90%)
+- `UNSEEN_MEANING_COMBINATIONS`: Theoretically possible combinations never observed
+- `SIGNAL_NEVER_OBSERVED`: Certain signals not present in data
+- `REFLECTION_INSUFFICIENT`: Analytics data insufficient
+- `UNCLASSIFIED`: Cannot classify with current rules (normal outcome)
+
+**Detection Logic:**
+- **Coverage**: Count distinct meaning types in distribution
+- **Skew**: Measure concentration of dominant meaning tag
+- **Unseen**: Identify gaps in observed structural patterns
+- **No judgment**: All tags are neutral observations
+
+**Usage:**
+
+```python
+from reflection.v7_reflection_engine_v1 import reflect_v1, V1ReflectionTags
+from analytics.pr64_interpretation_analytics import generate_interpretation_analytics
+
+# Generate analytics from interpretation records
+analytics = generate_interpretation_analytics(interpretation_records)
+
+# Generate reflection
+reflection = reflect_v1(analytics)
+
+print(reflection["v7_reflection_tag"])
+print(reflection["v7_reflection_summary"])
+print(reflection["v7_reflection_basis"])
+```
+
+**Example Output:**
+
+```json
+{
+  "v7_reflection_mode": "ON",
+  "v7_reflection_status": "AVAILABLE",
+  "v7_reflection_tag": "MEANING_DISTRIBUTION_SKEWED",
+  "v7_reflection_summary": "observed interpretation output concentrates on limited subset. 'OVERLAY_OBSERVED' appears in 85% of records.",
+  "v7_reflection_basis": ["meaning_tag_counts", "total_records"],
+  "v7_reflection_artifacts": ["pr64_interpretation_analytics"]
+}
+```
+
+**Rule Priority:**
+1. Coverage narrow/broad (primary structural observation)
+2. Skew detection (concentration patterns)
+3. Factor dominance (v2 compositional patterns)
+4. Signal never observed (gap detection)
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v7 record
+- Exit code always 0
+
 ### Constitutional Constraints (v0.7)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -743,6 +807,7 @@ Reflection records use `v7_` prefix:
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr70_reflection_schema_smoke.py
+python3 python/validation/pr71_reflection_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

@@ -17,6 +17,7 @@ Reflection Definition:
 Modules:
     - v7_reflection_schema: Schema definition for reflection records
     - v7_constitutional_guard: Constitutional guards against violations
+    - v7_reflection_engine_v1: Static structural self-description
 """
 
 from .v7_reflection_schema import (
@@ -37,6 +38,13 @@ from .v7_constitutional_guard import (
     FORBIDDEN_VOCABULARY,
 )
 
+from .v7_reflection_engine_v1 import (
+    reflect_v1,
+    reflect_batch_v1,
+    V1ReflectionTags,
+    get_engine_v1_info,
+)
+
 __all__ = [
     # Schema
     "V7ReflectionSchema",
@@ -51,4 +59,10 @@ __all__ = [
     "check_confidence_boundary",
     "check_observation_boundary",
     "FORBIDDEN_VOCABULARY",
+
+    # Engine v1
+    "reflect_v1",
+    "reflect_batch_v1",
+    "V1ReflectionTags",
+    "get_engine_v1_info",
 ]
