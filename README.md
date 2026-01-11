@@ -814,6 +814,88 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v0.8 — Blindspot Constitution (READ-ONLY)
+
+### v0.8 Philosophy: Reflection → Blindspot
+
+v0.6 completed interpretation (observation → meaning).
+v0.7 completed reflection (interpretation → system description).
+v0.8 observes structural absences — what the system cannot see.
+
+Blindspot observes:
+- Signal types never observed
+- Factor types never observed
+- Meaning types never observed
+- Transitions never observed
+- Structures the schema cannot express
+
+**Blindspot ≠ Evaluation**
+- **Blindspot** = Structural Absence Description
+- **Blindspot** ≠ Evaluation (good/bad judgment)
+- **Blindspot** ≠ Recommendation (what should be done)
+- **Blindspot** ≠ Optimization (improve/fix)
+
+### v0.8 Blindspot Schema (PR80)
+
+Blindspot records use `v8_` prefix:
+
+- `v8_blindspot_mode`: ON | OFF
+- `v8_blindspot_status`: AVAILABLE | UNAVAILABLE
+- `v8_blindspot_tag`: Structural absence type (non-evaluative)
+- `v8_blindspot_summary`: Non-evaluative structural absence description
+- `v8_blindspot_basis`: Array of interpretation/reflection field names used
+- `v8_blindspot_artifacts`: Array of analytics artifacts referenced
+
+**Example Blindspot Record:**
+
+```json
+{
+  "v8_blindspot_mode": "ON",
+  "v8_blindspot_status": "AVAILABLE",
+  "v8_blindspot_tag": "ABSENCE_UNSEEN_SIGNAL_TYPES",
+  "v8_blindspot_summary": "certain signal types not observed in data.",
+  "v8_blindspot_basis": ["v6_signals", "v7_reflection_tag"],
+  "v8_blindspot_artifacts": ["pr64_interpretation_analytics", "pr71_reflection_record"]
+}
+```
+
+**Important:**
+- Blindspot observes structural absences in interpretation/reflection systems
+- No evaluation of whether absences are good/bad
+- No recommendations for what should be changed
+- UNKNOWN/UNCLASSIFIED remain normal outcomes
+
+**Blindspot Tags (v1 Fixed Set - Detection in PR81+):**
+- `ABSENCE_INSUFFICIENT_EVIDENCE` - Analytics data insufficient
+- `ABSENCE_UNSEEN_SIGNAL_TYPES` - Certain signal types not observed
+- `ABSENCE_UNSEEN_FACTOR_TYPES` - Certain factor types not observed
+- `ABSENCE_UNOBSERVED_MEANING_TYPES` - Certain meaning types not observed
+- `ABSENCE_TRANSITION_NOT_OBSERVED` - Certain transitions not observed
+- `ABSENCE_SCHEMA_CANNOT_EXPRESS` - Structure cannot be expressed in current schema
+- `UNCLASSIFIED` - Cannot classify with current rules (normal outcome)
+
+### Constitutional Constraints (v0.8)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **Interpretation/Reflection-bound**: Only uses v6/v7 fields as basis
+- **v0.4 boundary protection**: No confidence_reason analysis
+- **Observation boundary protection**: No direct v5 field access
+
+### Run Validations (v0.8)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr80_blindspot_schema_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
@@ -821,6 +903,7 @@ v0.2 implements constitutional regime-first decision making with full compliance
 v0.5 completes observation infrastructure (shadow diff, analytics, reporting).
 v0.6 introduces interpretation (structural meaning without judgment).
 v0.7 introduces reflection (observing interpretation system characteristics).
+v0.8 introduces blindspot (observing structural absences in interpretation/reflection systems).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
