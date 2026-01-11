@@ -679,12 +679,83 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v0.7 — Reflection Constitution (READ-ONLY)
+
+### v0.7 Philosophy: Interpretation → Reflection
+
+v0.6 completed interpretation (observation → meaning).
+v0.7 observes the interpretation system itself.
+
+Reflection observes:
+- What meanings are frequently/rarely observed
+- What combinations have never appeared
+- What the interpretation engine implicitly assumes
+
+**Reflection ≠ Evaluation**
+- **Reflection** = Interpretive System Description
+- **Reflection** ≠ Evaluation (good/bad judgment)
+- **Reflection** ≠ Recommendation (what should be done)
+- **Reflection** ≠ Optimization (improve/fix)
+
+### v0.7 Reflection Schema (PR70)
+
+Reflection records use `v7_` prefix:
+
+- `v7_reflection_mode`: ON | OFF
+- `v7_reflection_status`: AVAILABLE | UNAVAILABLE
+- `v7_reflection_tag`: Reflection type (non-evaluative)
+- `v7_reflection_summary`: Non-evaluative system description
+- `v7_reflection_basis`: Array of interpretation field names used
+- `v7_reflection_artifacts`: Array of analytics artifacts referenced
+
+**Example Reflection Record:**
+
+```json
+{
+  "v7_reflection_mode": "ON",
+  "v7_reflection_status": "AVAILABLE",
+  "v7_reflection_tag": "COVERAGE_GAP_DETECTED",
+  "v7_reflection_summary": "certain factor combinations not observed in data.",
+  "v7_reflection_basis": ["v6_factors", "pr64_interpretation_analytics"],
+  "v7_reflection_artifacts": ["interpretation_distribution.json"]
+}
+```
+
+**Important:**
+- Reflection observes interpretation system characteristics
+- No evaluation of whether patterns are good/bad
+- No recommendations for what should be changed
+- UNKNOWN/UNCLASSIFIED remain normal outcomes
+
+### Constitutional Constraints (v0.7)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **Interpretation-bound**: Only uses interpretation fields as basis
+- **v0.4 boundary protection**: No confidence_reason analysis
+- **Observation boundary protection**: No direct v5 field access
+
+### Run Validations (v0.7)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr70_reflection_schema_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
 v0.2 implements constitutional regime-first decision making with full compliance validation.
 v0.5 completes observation infrastructure (shadow diff, analytics, reporting).
 v0.6 introduces interpretation (structural meaning without judgment).
+v0.7 introduces reflection (observing interpretation system characteristics).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
