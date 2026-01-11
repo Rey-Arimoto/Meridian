@@ -1264,12 +1264,87 @@ warnings = validate_execution_record(record)
 - **Observation boundary protection**: No direct v5 field access
 - **Execution safety**: No trading action vocabulary
 
+### v1.0 Execution Permissioning Engine v1 (PR101)
+
+Engine v1 = **Structural Boundary-to-Permission Mapping**
+
+Classifies execution permission based on boundary type using static rules.
+
+**Permissioning Philosophy:**
+- Map boundary to permission level (not evaluation)
+- Static rules (if/elif), no learning, no inference
+- No judgment about whether permission is good/bad
+- No recommendation about what should be executed
+
+**Permission Types (v1):**
+- `UNKNOWN` - Insufficient structural clarity
+- `HOLD` - Execution structurally disallowed
+- `DRY_RUN_ONLY` - Observation-only execution allowed
+- `ALLOW` - Execution structurally permitted (rare in v1)
+
+**Classification Rules (v1 - Static):**
+1. **SCHEMA_BOUNDARY** → `HOLD`
+2. **DATA_BOUNDARY** → `HOLD`
+3. **ENGINE_BOUNDARY** → `HOLD`
+4. **TEMPORAL_BOUNDARY** → `DRY_RUN_ONLY`
+5. **SAMPLING_BOUNDARY** → `DRY_RUN_ONLY`
+6. **UNCLASSIFIED** → `UNKNOWN`
+
+**Usage:**
+
+```python
+from execution.v10_execution_permissioning_engine_v1 import classify_execution_permission_v1
+from boundary.v9_boundary_classification_engine_v1 import classify_boundary_v1
+from blindspot.v8_blindspot_detection_engine_v1 import detect_blindspot_v1
+
+# Detect blindspot from analytics
+blindspot = detect_blindspot_v1(interpretation_analytics)
+
+# Classify boundary
+boundary = classify_boundary_v1(blindspot)
+
+# Classify execution permission
+execution = classify_execution_permission_v1(boundary)
+
+print(execution["v10_execution_permission"])
+print(execution["v10_execution_summary"])
+print(execution["v10_execution_basis"])
+```
+
+**Example Output:**
+
+```json
+{
+  "v10_execution_mode": "ON",
+  "v10_execution_status": "AVAILABLE",
+  "v10_execution_intent": "NONE",
+  "v10_execution_permission": "DRY_RUN_ONLY",
+  "v10_execution_summary": "execution permitted only in dry-run mode. sampling boundary detected. structure exists in definition space but not observed.",
+  "v10_execution_basis": ["v9_boundary_type"],
+  "v10_execution_artifacts": [],
+  "v10_execution_constraints": []
+}
+```
+
+**Classification Logic:**
+1. Extract boundary type from v9 record
+2. Apply static mapping rules
+3. Classify into permission level
+4. No evaluation, no recommendation
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v10 record
+- Exit code always 0
+
 ### Run Validations (v1.0)
 
 ```bash
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr100_execution_schema_smoke.py
+python3 python/validation/pr101_execution_permissioning_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

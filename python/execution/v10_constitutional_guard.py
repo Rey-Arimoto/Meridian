@@ -87,11 +87,14 @@ def check_forbidden_vocabulary(text: str) -> List[str]:
     Returns:
         List of warnings (empty if clean)
     """
+    import re
     warnings = []
     text_lower = text.lower()
 
     for word in FORBIDDEN_VOCABULARY:
-        if word in text_lower:
+        # Use word boundaries to avoid false positives (e.g., "win" in "window")
+        pattern = r'\b' + re.escape(word) + r'\b'
+        if re.search(pattern, text_lower):
             warnings.append(f"Forbidden vocabulary detected: '{word}' in text")
 
     return warnings

@@ -21,6 +21,7 @@ Execution Definition:
 Modules:
     - v10_execution_schema: Schema definition for execution records
     - v10_constitutional_guard: Constitutional guards against violations
+    - v10_execution_permissioning_engine_v1: Execution permissioning engine v1
 """
 
 from .v10_execution_schema import (
@@ -44,6 +45,11 @@ from .v10_constitutional_guard import (
     EXECUTION_ACTION_VOCABULARY,
 )
 
+from .v10_execution_permissioning_engine_v1 import (
+    classify_execution_permission_v1,
+    V1PermissionTypes,
+)
+
 __all__ = [
     # Schema
     "V10ExecutionSchema",
@@ -60,4 +66,7 @@ __all__ = [
     "check_observation_boundary",
     "FORBIDDEN_VOCABULARY",
     "EXECUTION_ACTION_VOCABULARY",
+    # Engines
+    "classify_execution_permission_v1",
+    "V1PermissionTypes",
 ]
