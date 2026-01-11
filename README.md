@@ -597,6 +597,63 @@ First decompose, then compose. This is structural language without loss.
 
 This is not "getting smarter". This is structure without compression.
 
+### v0.6 Interpretation Analytics (PR64)
+
+**Purpose:** Observe meaning as landscape (distribution, transition).
+
+PR61/PR63 create and decompose meaning (point, structure).
+PR64 observes meaning distribution and transitions over time.
+
+**Philosophy:**
+
+This is analysis, not optimization.
+This is insight, not recommendation.
+
+**Questions PR64 Answers:**
+- Which meaning tags exist, how many?
+- Which factors/signals appear, in what structure?
+- How do meanings transition day-to-day?
+
+**Questions PR64 Does NOT Answer:**
+- Is this good or bad?
+- Did it improve or degrade?
+- What should be done?
+
+**Outputs:**
+
+1. **Meaning Distribution**
+   - `meaning_tag_counts`: Distribution across primary meanings
+   - `factor_counts`: Structural element distribution
+   - `signal_counts`: Observational sign distribution
+
+2. **Meaning Transitions**
+   - `daily_distributions`: Per-day meaning distribution
+   - `transitions`: Day-to-day meaning changes (observational only)
+
+**Example Usage:**
+
+```bash
+python3 python/analytics/pr64_interpretation_analytics.py \
+  --in_file interpretation_records.jsonl \
+  --out_dir analytics_out \
+  --format both
+```
+
+**Outputs:**
+- `pr64_interpretation_analytics.json` (full analytics)
+- `pr64_meaning_tag_distribution.csv` (tag counts)
+- `pr64_factor_distribution.csv` (factor counts)
+- `pr64_signal_distribution.csv` (signal counts)
+- `pr64_daily_meaning_distribution.csv` (daily transitions)
+
+**Important:**
+- READ-ONLY: Only reads interpretation records
+- Non-evaluative: Only counts and distributions, no judgment
+- No action changes: Pure observational visibility
+
+This observes "what structure exists" and "how structure changes".
+No evaluation. No recommendation.
+
 ### Constitutional Constraints (v0.6)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -615,6 +672,7 @@ python3 python/validation/pr60_interpretation_schema_smoke.py
 python3 python/validation/pr61_interpretation_engine_v1_smoke.py
 python3 python/validation/pr62_interpretation_report_integration_smoke.py
 python3 python/validation/pr63_interpretation_engine_v2_smoke.py
+python3 python/validation/pr64_interpretation_analytics_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
