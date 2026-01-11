@@ -1628,6 +1628,129 @@ for event in simulation["v10_simulation_trace"]:
 - Always returns valid v10 simulation record
 - Exit code always 0
 
+### v1.0 Execution Audit Trail v1 (PR105)
+
+Engine v1 = **Causal Chain Trace**
+
+Documents the causal chain from interpretation through simulation without execution, evaluation, or trading.
+
+**Audit Trail Philosophy:**
+- Audit Trail = Causal chain documentation
+- Link artifacts as explicit chain-of-custody
+- No execution, no evaluation, no recommendations
+- Fixed layer order (cannot reorder)
+
+**Schema Fields (v10_audit_ prefix):**
+- `v10_audit_mode`: ON | OFF
+- `v10_audit_status`: AVAILABLE | UNAVAILABLE
+- `v10_audit_chain`: Array of chain events (ordered)
+- `v10_audit_summary`: Non-evaluative audit description
+
+**Chain Event Structure:**
+- `layer`: Layer name (INTERPRETATION_ANALYTICS, BLINDSPOT, etc.)
+- `artifact`: Artifact identifier (pr81_blindspot_record, etc.)
+- `basis`: Array of field names referenced
+
+**Chain Layers (Fixed Order in v1):**
+1. **INTERPRETATION_ANALYTICS** (PR64) - Observation → meaning
+2. **BLINDSPOT** (PR81) - Structural absences
+3. **BOUNDARY** (PR91) - Observability limits
+4. **PERMISSION** (PR101) - Executability permission
+5. **PLAN** (PR103) - Plan shape generation
+6. **SIMULATION** (PR104) - Plan applicability scan
+
+**Usage:**
+
+```python
+from audit.v10_execution_audit_trail_engine_v1 import build_execution_audit_trail_v1
+
+# Full pipeline audit trail
+trail = build_execution_audit_trail_v1(
+    interpretation_analytics=analytics,
+    blindspot_record=blindspot,
+    boundary_record=boundary,
+    permission_record=execution,
+    plan_record=plan,
+    simulation_record=simulation
+)
+
+print(trail["v10_audit_status"])
+print(trail["v10_audit_summary"])
+for event in trail["v10_audit_chain"]:
+    print(f"  {event['layer']}: {event['artifact']}")
+```
+
+**Example Output (full chain):**
+
+```json
+{
+  "v10_audit_mode": "ON",
+  "v10_audit_status": "AVAILABLE",
+  "v10_audit_summary": "audit trail built with multiple layers of causal chain. chain links interpretation through simulation.",
+  "v10_audit_chain": [
+    {
+      "layer": "BLINDSPOT",
+      "artifact": "pr81_blindspot_record",
+      "basis": ["v8_blindspot_tag", "v8_blindspot_basis"]
+    },
+    {
+      "layer": "BOUNDARY",
+      "artifact": "pr91_boundary_record",
+      "basis": ["v9_boundary_type", "v9_boundary_basis"]
+    },
+    {
+      "layer": "PERMISSION",
+      "artifact": "pr101_execution_record",
+      "basis": ["v10_execution_permission", "v10_execution_basis"]
+    },
+    {
+      "layer": "PLAN",
+      "artifact": "pr103_plan_record",
+      "basis": ["v10_plan_type", "v10_plan_constraints", "v10_plan_basis"]
+    },
+    {
+      "layer": "SIMULATION",
+      "artifact": "pr104_simulation_record",
+      "basis": ["v10_simulation_type", "v10_simulation_basis"]
+    }
+  ]
+}
+```
+
+**Audit Trail Guarantees:**
+- Fixed layer order (no reordering)
+- Defensive (None/invalid → skip layer)
+- No execution (READ-ONLY)
+- No amounts, prices, or quantities
+- No token literals (SUI, USDC, etc.)
+- No addresses or wallet references
+- No trading verbs or commands
+- No evaluation (good/bad judgment)
+
+**Complete Pipeline:**
+
+```
+Interpretation Analytics (PR64)
+         ↓
+    Blindspot (PR81)
+         ↓
+    Boundary (PR91)
+         ↓
+    Permission (PR101)
+         ↓
+    Plan (PR103)
+         ↓
+    Simulation (PR104)
+         ↓
+    Audit Trail (PR105) ← Documents entire causal chain
+```
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v10 audit trail record
+- Exit code always 0
+
 ### Run Validations (v1.0)
 
 ```bash
@@ -1638,6 +1761,7 @@ python3 python/validation/pr101_execution_permissioning_engine_v1_smoke.py
 python3 python/validation/pr102_execution_plan_schema_smoke.py
 python3 python/validation/pr103_execution_plan_generator_v1_smoke.py
 python3 python/validation/pr104_execution_simulation_engine_v1_smoke.py
+python3 python/validation/pr105_execution_audit_trail_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
