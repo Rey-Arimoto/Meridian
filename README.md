@@ -1103,6 +1103,179 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v1.0 — Execution Constitution (READ-ONLY)
+
+### v1.0 Philosophy: Boundary → Execution
+
+v0.6 completed interpretation (observation → meaning).
+v0.7 completed reflection (interpretation → system description).
+v0.8 completed blindspot (structural absences enumeration).
+v0.9 completed boundary (structural limits of observability).
+v1.0 describes executability — whether execution is available and what intent exists.
+
+Execution answers a different question than Decision:
+- **Execution** = Executability Description
+- **Execution** ≠ Trading (no swap/transfer/send/approve/sign)
+- **Execution** ≠ Position changes (no fund movement/rebalancing)
+- **Execution** ≠ Recommendations (no should/must)
+
+**Execution ≠ Trading**
+- **Execution** = Description of execution intent
+- **Execution** ≠ Evaluation (good/bad judgment)
+- **Execution** ≠ Profit/loss analysis
+- **Execution** ≠ Scoring or optimization
+- **Execution** ≠ Trading commands
+
+### v1.0 Execution Schema (PR100)
+
+Execution records use `v10_` prefix:
+
+- `v10_execution_mode`: ON | OFF
+- `v10_execution_status`: AVAILABLE | UNAVAILABLE
+- `v10_execution_intent`: Structural execution intent type (non-evaluative)
+- `v10_execution_permission`: Execution permission level
+- `v10_execution_summary`: Non-evaluative execution description
+- `v10_execution_basis`: Array of boundary/blindspot/reflection/interpretation field names used
+- `v10_execution_artifacts`: Array of analytics artifacts referenced (optional)
+- `v10_execution_constraints`: Execution constraints (optional)
+
+**Example Execution Record:**
+
+```json
+{
+  "v10_execution_mode": "ON",
+  "v10_execution_status": "AVAILABLE",
+  "v10_execution_intent": "REBALANCE_INTENT",
+  "v10_execution_permission": "DRY_RUN_ONLY",
+  "v10_execution_summary": "rebalance intent observed. execution available in dry-run mode.",
+  "v10_execution_basis": ["v9_boundary_type", "v8_blindspot_tag"],
+  "v10_execution_artifacts": ["pr91_boundary_record"],
+  "v10_execution_constraints": ["dry_run_only", "no_fund_movement"]
+}
+```
+
+**Important:**
+- Execution describes executability, not trading
+- No evaluation of whether execution is good/bad
+- No recommendations for what should be executed
+- NONE/UNKNOWN/HOLD remain normal outcomes
+
+**Execution Intent Types (v1):**
+- `NONE` - No execution intent detected
+- `MAINTENANCE` - Maintenance execution intent
+- `REBALANCE_INTENT` - Rebalance execution intent
+- `HEDGE_INTENT` - Hedge execution intent
+- `LIQUIDITY_INTENT` - Liquidity execution intent
+- `UNCLASSIFIED` - Cannot classify with current rules (normal outcome)
+
+**Execution Permission Types (v1):**
+- `UNKNOWN` - Permission status unknown
+- `DRY_RUN_ONLY` - Execution permitted in dry-run mode only
+- `HOLD` - Execution on hold
+- `ALLOW` - Execution allowed
+
+### v1.0 Constitutional Guards (PR100)
+
+PR100 introduces constitutional guards to enforce v1.0 execution principles:
+
+**1. Forbidden Vocabulary Guard**
+- Detects evaluative vocabulary (good/bad, correct/wrong)
+- Detects scoric vocabulary (score/grade/rank)
+- Detects prescriptive vocabulary (should/must/recommend)
+
+**2. Execution Safety Guard (NEW in v1.0)**
+- Detects trading action vocabulary (swap/transfer/send/approve/sign)
+- Detects position management vocabulary (open/close/liquidate)
+- Excludes valid intent type descriptions (e.g., "rebalance intent")
+
+**3. v0.4 Boundary Guard**
+- Detects confidence_reason field access
+- Execution must not access v0.4 confidence layer
+
+**4. Observation Boundary Guard**
+- Detects v5 observation field access
+- Execution must only access v6/v7/v8/v9 fields as basis
+
+**Usage:**
+
+```python
+from execution.v10_execution_schema import V10ExecutionSchema
+from execution.v10_constitutional_guard import validate_execution_record
+
+# Create execution record
+record = V10ExecutionSchema.create_empty_record()
+record["v10_execution_intent"] = "REBALANCE_INTENT"
+record["v10_execution_permission"] = "DRY_RUN_ONLY"
+
+# Validate against constitutional guards
+warnings = validate_execution_record(record)
+
+if warnings:
+    for warning in warnings:
+        print(f"⚠ {warning}")
+```
+
+**Example Validation:**
+
+```python
+# Clean execution description (no warnings)
+record = {
+    "v10_execution_intent": "MAINTENANCE",
+    "v10_execution_summary": "maintenance intent observed. execution available.",
+    "v10_execution_basis": ["v9_boundary_type", "v8_blindspot_tag"]
+}
+warnings = validate_execution_record(record)  # []
+
+# Forbidden vocabulary (triggers warning)
+record = {
+    "v10_execution_intent": "REBALANCE_INTENT",
+    "v10_execution_summary": "this is a good opportunity that should be taken",
+    "v10_execution_basis": ["v9_boundary_type"]
+}
+warnings = validate_execution_record(record)
+# ["Forbidden vocabulary detected: 'good' in text",
+#  "Forbidden vocabulary detected: 'should' in text"]
+
+# Trading vocabulary (triggers warning)
+record = {
+    "v10_execution_intent": "REBALANCE_INTENT",
+    "v10_execution_summary": "swap tokens and transfer funds",
+    "v10_execution_basis": ["v9_boundary_type"]
+}
+warnings = validate_execution_record(record)
+# ["Execution action vocabulary detected: 'swap' in text",
+#  "Execution action vocabulary detected: 'transfer' in text"]
+```
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully
+- Always returns warnings list
+- Exit code always 0
+
+### Constitutional Constraints (v1.0)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **Boundary-bound**: Only uses v6/v7/v8/v9 fields as basis
+- **v0.4 boundary protection**: No confidence_reason analysis
+- **Observation boundary protection**: No direct v5 field access
+- **Execution safety**: No trading action vocabulary
+
+### Run Validations (v1.0)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr100_execution_schema_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
