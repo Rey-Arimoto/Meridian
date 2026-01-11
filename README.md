@@ -1533,6 +1533,101 @@ print(plan["v10_plan_constraints"])
 - Always returns valid v10 plan record
 - Exit code always 0
 
+### v1.0 Execution Simulation Engine v1 (PR104)
+
+Engine v1 = **Plan Applicability Scan**
+
+Simulates plan applicability based on constraints without execution, PnL, or evaluation.
+
+**Simulation Philosophy:**
+- Simulate = Plan applicability description
+- Enumerate constraints as events
+- No execution, no wallet, no transactions
+- No amounts, no token names, no PnL
+
+**Schema Fields (v10_simulation_ prefix):**
+- `v10_simulation_mode`: ON | OFF
+- `v10_simulation_status`: AVAILABLE | UNAVAILABLE
+- `v10_simulation_type`: PLAN_APPLICABILITY_SCAN | UNCLASSIFIED
+- `v10_simulation_summary`: Non-evaluative simulation description
+- `v10_simulation_basis`: Array of field names referenced
+- `v10_simulation_artifacts`: Array of artifact names (optional)
+- `v10_simulation_trace`: Array of simulation events (optional)
+
+**Trace Event Structure:**
+- `event_type`: CONSTRAINT_APPLIED | PLAN_APPLICABLE | PLAN_NOT_APPLIED | WINDOW_ADVANCED
+- `event_summary`: Non-evaluative event description
+- `event_basis`: Array of field names referenced
+
+**Simulation Logic (v1):**
+1. Check plan availability
+2. Enumerate constraints as CONSTRAINT_APPLIED events
+3. Determine applicability based on constraints
+4. Generate trace of constraint applications
+
+**Constraint Types Detected:**
+- `dry_run_only` - Observation-only mode
+- `manual_approval` - Human review required
+- `frequency_limit` - Rate limiting active
+- `time_window` - Time-based restrictions
+
+**Usage:**
+
+```python
+from execution.v10_execution_simulation_engine_v1 import simulate_execution_plan_v1
+from execution.v10_execution_plan_generator_v1 import generate_execution_plan_v1
+from execution.v10_execution_permissioning_engine_v1 import classify_execution_permission_v1
+
+# Full pipeline: Permission → Plan → Simulation
+execution = classify_execution_permission_v1(boundary)
+plan = generate_execution_plan_v1(execution, boundary)
+simulation = simulate_execution_plan_v1(plan)
+
+print(simulation["v10_simulation_type"])
+print(simulation["v10_simulation_summary"])
+for event in simulation["v10_simulation_trace"]:
+    print(f"  {event['event_type']}: {event['event_summary']}")
+```
+
+**Example Output (dry_run_only constraint):**
+
+```json
+{
+  "v10_simulation_mode": "ON",
+  "v10_simulation_status": "AVAILABLE",
+  "v10_simulation_type": "PLAN_APPLICABILITY_SCAN",
+  "v10_simulation_summary": "plan applicability scan complete. plan type MAINTENANCE applicable under constraint.",
+  "v10_simulation_basis": ["v10_plan_mode", "v10_plan_status", "v10_plan_type", "v10_plan_constraints"],
+  "v10_simulation_trace": [
+    {
+      "event_type": "CONSTRAINT_APPLIED",
+      "event_summary": "dry-run-only constraint applied. execution limited to observation mode.",
+      "event_basis": ["v10_plan_constraints"]
+    },
+    {
+      "event_type": "PLAN_APPLICABLE",
+      "event_summary": "plan applicable under constraint. constraints enumerated above.",
+      "event_basis": ["v10_plan_constraints"]
+    }
+  ]
+}
+```
+
+**Simulation Guarantees:**
+- No execution (READ-ONLY)
+- No amounts, prices, or quantities
+- No token literals (SUI, USDC, etc.)
+- No addresses or wallet references
+- No trading verbs or commands
+- No PnL calculation
+- No evaluation (good/bad judgment)
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v10 simulation record
+- Exit code always 0
+
 ### Run Validations (v1.0)
 
 ```bash
@@ -1542,6 +1637,7 @@ python3 python/validation/pr100_execution_schema_smoke.py
 python3 python/validation/pr101_execution_permissioning_engine_v1_smoke.py
 python3 python/validation/pr102_execution_plan_schema_smoke.py
 python3 python/validation/pr103_execution_plan_generator_v1_smoke.py
+python3 python/validation/pr104_execution_simulation_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

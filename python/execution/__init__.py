@@ -69,6 +69,21 @@ from .v10_execution_plan_generator_v1 import (
     get_generator_v1_info,
 )
 
+from .v10_execution_simulation_schema import (
+    V10ExecutionSimulationSchema,
+    validate_simulation_basis_fields,
+    get_simulation_schema_info,
+)
+
+from .v10_execution_simulation_engine_v1 import (
+    simulate_execution_plan_v1,
+    get_simulation_engine_v1_info,
+)
+
+from .v10_simulation_constitutional_guard import (
+    validate_v10_simulation_record,
+)
+
 __all__ = [
     # Schema
     "V10ExecutionSchema",
@@ -99,4 +114,13 @@ __all__ = [
     # Plan Generators
     "generate_execution_plan_v1",
     "get_generator_v1_info",
+    # Simulation Schema
+    "V10ExecutionSimulationSchema",
+    "validate_simulation_basis_fields",
+    "get_simulation_schema_info",
+    # Simulation Engine
+    "simulate_execution_plan_v1",
+    "get_simulation_engine_v1_info",
+    # Simulation Guards
+    "validate_v10_simulation_record",
 ]
