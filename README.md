@@ -1768,6 +1768,229 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v1.1 — Intelligence Native Market (READ-ONLY)
+
+### v1.1 Philosophy: Execution → Market Intelligence
+
+v1.0 completed execution constitution (boundary → executability).
+v1.1 integrates onchain market intelligence — regime classification, policy binding, execution preview, and human approval.
+
+**v1.1 Pipeline:**
+```
+Onchain Connection (PR106)
+         ↓
+Onchain Observation (PR107)
+         ↓
+Observation Bridge (PR108)
+         ↓
+Analytics Extension (PR109)
+         ↓
+Entropy Regime (PR110)
+         ↓
+Policy Binding (PR111)
+         ↓
+Execution Preview (PR112)
+         ↓
+Human Approval Gate (PR113)
+```
+
+### v1.1 Entropy Regime Classification (PR110)
+
+**Purpose:** Classify entropy regime from onchain analytics.
+
+**Regime Philosophy:**
+- Regime = State Classification (not action)
+- No recommendations, no optimization
+- READ-ONLY, non-evaluative, non-prescriptive
+
+**Regime Levels:**
+- `REGIME_LOW` - Low variation (stable)
+- `REGIME_MEDIUM` - Moderate variation
+- `REGIME_HIGH` - High variation (elevated)
+- `REGIME_CRITICAL` - Extreme variation or no observations
+
+**Classification Metrics:**
+- Market cost regime distribution (entropy)
+- Liquidity regime diversity (count)
+- Event activity variation (entropy)
+- Object dynamics variation (entropy)
+
+**Constitutional Guarantees:**
+- No token literals (SUI/USDC prohibited)
+- No amounts or addresses
+- No asset vocabulary
+- No action vocabulary
+- Defensive (never raises)
+- Warning-only (exit 0)
+
+### v1.1 Regime → Execution Policy Binding (PR111)
+
+**Purpose:** Bind regime classification to execution policy.
+
+**Binding Philosophy:**
+- Binding = Constitutional Gate (not action/decision)
+- No recommendations, no optimization
+- READ-ONLY, non-evaluative, non-prescriptive
+
+**Binding Rules (v1):**
+- `REGIME_CRITICAL` → `HOLD` + `["regime_critical_observed"]`
+- `REGIME_HIGH` → `DRY_RUN_ONLY` + `["regime_high_observed"]`
+- `REGIME_MEDIUM` → `UNKNOWN` + `["regime_medium_observed"]`
+- `REGIME_LOW` → `UNKNOWN` + `["regime_low_observed"]`
+
+**Permission Overrides:**
+- `HOLD` - Hard stop (critical regime)
+- `DRY_RUN_ONLY` - Simulation only (high regime)
+- `UNKNOWN` - No override (defer to execution engine)
+- `ALLOW` - Explicit permission (reserved)
+
+**Constitutional Guarantees:**
+- No amounts (override labels only)
+- No token literals, addresses
+- No asset/action vocabulary
+- Defensive, warning-only
+
+### v1.1 Execution Preview Engine (PR112)
+
+**Purpose:** Describe structural impact shape of potential execution.
+
+**Preview Philosophy:**
+- Preview = Impact Shape Description (not simulation/execution)
+- No execution, no signing, no transactions
+- READ-ONLY, non-evaluative, non-prescriptive
+
+**Preview Fields:**
+- `v11_preview_exposure_change`: NONE/INCREASE/DECREASE
+- `v11_preview_interaction_type`: NONE/POOL_TOUCH/EVENT_INTERACTION
+- `v11_preview_risk_surface`: LOW/MEDIUM/HIGH
+- `v11_preview_status`: AVAILABLE/BLOCKED/ERROR
+
+**Static Preview Rules (v1):**
+
+**Exposure Change:**
+- NOOP/MAINTENANCE → NONE
+- REBALANCE → DECREASE (conservative)
+- HEDGE → DECREASE
+- LIQUIDITY → INCREASE
+
+**Interaction Type:**
+- MAINTENANCE → NONE
+- REBALANCE/HEDGE/LIQUIDITY → POOL_TOUCH
+- NOOP → NONE
+
+**Risk Surface:**
+- REGIME_LOW → LOW
+- REGIME_MEDIUM → MEDIUM
+- REGIME_HIGH → HIGH
+- REGIME_CRITICAL → BLOCKED
+
+**Constitutional Guarantees:**
+- No trading vocabulary (swap/buy/sell/execute/sign/transfer)
+- No execution operations (transaction/broadcast/submit)
+- No token literals, addresses, amounts
+- No asset/action vocabulary
+- Defensive, warning-only
+
+### v1.1 Human Approval Gate (PR113)
+
+**Purpose:** Determine human approval requirement from upstream records.
+
+**Approval Philosophy:**
+- Approval Gate = State Machine (not action/recommendation)
+- "APPROVED" is a state label only (not instruction)
+- No execution, no recommendations, no evaluation
+
+**Approval Requirement Levels:**
+- `NOT_REQUIRED` - No approval needed
+- `REQUIRED` - Approval recommended
+- `REQUIRED_STRICT` - Approval mandatory (hard gate)
+
+**Approval States:**
+- `UNREQUESTED` - No approval requested yet
+- `REQUESTED` - Approval requested, pending
+- `APPROVED` - Approved (state label only)
+- `REJECTED` - Rejected
+- `EXPIRED` - Approval expired
+
+**Static Approval Rules (v1 - First Match Wins):**
+1. Preview status == `BLOCKED` → `REQUIRED_STRICT`
+2. Execution permission == `HOLD` → `REQUIRED_STRICT`
+3. Regime level == `REGIME_CRITICAL` → `REQUIRED_STRICT`
+4. Execution permission == `DRY_RUN_ONLY` → `REQUIRED`
+5. Regime level == `REGIME_HIGH` → `REQUIRED`
+6. Default → `NOT_REQUIRED`
+
+**Example Approval Record:**
+
+```json
+{
+  "v11_approval_mode": "ON",
+  "v11_approval_status": "AVAILABLE",
+  "v11_approval_requirement": "REQUIRED_STRICT",
+  "v11_approval_state": "UNREQUESTED",
+  "v11_approval_summary": "approval required under critical regime conditions. no approval requested.",
+  "v11_approval_basis": ["v11_regime_level", "v11_preview_risk_surface"],
+  "v11_approval_artifacts": ["pr110_regime_record", "pr112_preview_record"]
+}
+```
+
+**Constitutional Guarantees:**
+- No trading vocabulary (swap/buy/sell/execute/sign/transfer)
+- No execution operations (transaction/broadcast/submit)
+- No token literals, addresses, amounts
+- No asset/action vocabulary
+- No approval-specific vocabulary (go ahead/proceed/instruction)
+- "APPROVED" must not be described as instruction
+- Defensive, warning-only
+
+**Usage Pipeline:**
+
+```python
+from approval import gate_human_approval_v1
+
+# Gate approval from upstream records
+approval = gate_human_approval_v1(
+    execution_record=execution,
+    plan_record=plan,
+    simulation_record=simulation,
+    regime_record=regime,
+    policy_record=policy,
+    preview_record=preview,
+)
+
+print(approval["v11_approval_requirement"])  # REQUIRED_STRICT
+print(approval["v11_approval_state"])        # UNREQUESTED
+print(approval["v11_approval_summary"])
+```
+
+### Constitutional Constraints (v1.1)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **No amounts**: Numeric patterns prohibited
+- **No token literals**: SUI, USDC, BTC, ETH prohibited
+- **No addresses**: 0x... patterns prohibited
+- **No trading vocabulary**: swap, buy, sell, execute, sign, transfer prohibited
+- **Defensive**: Never raises exceptions
+- **Warning-only**: Exit code always 0
+
+### Run Validations (v1.1)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr110_entropy_regime_classification_smoke.py
+python3 python/validation/pr111_regime_execution_policy_binding_smoke.py
+python3 python/validation/pr112_execution_preview_engine_v1_smoke.py
+python3 python/validation/pr113_human_approval_gate_v1_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
@@ -1777,6 +2000,8 @@ v0.6 introduces interpretation (structural meaning without judgment).
 v0.7 introduces reflection (observing interpretation system characteristics).
 v0.8 introduces blindspot (observing structural absences in interpretation/reflection systems).
 v0.9 introduces boundary (classifying structural limits of observability).
+v1.0 introduces execution constitution (boundary → executability without trading).
+v1.1 introduces intelligence native market (onchain regime classification, policy binding, execution preview, human approval).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
