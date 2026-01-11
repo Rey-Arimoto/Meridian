@@ -499,6 +499,29 @@ Interpretation records use `v6_` prefix:
 - `v6_meaning_summary`: Non-evaluative explanation
 - `v6_meaning_basis`: Array of observation field names used
 
+### v0.6 Interpretation Engine v1 (PR61)
+
+**Interpretation v1 = Static Structural Mapping**
+
+Engine v1 maps observations to meaning types using static rules:
+
+**Meaning Tags (v1 Fixed Set):**
+- `OVERLAY_OBSERVED`: Overlay pattern detected
+- `ALIGNMENT_STABLE`: Actions aligned with shadow present
+- `DIVERGENCE_WITHOUT_CLASS`: Divergence observed but type unclear
+- `SHADOW_ABSENT_OR_UNAVAILABLE`: Shadow data not available
+- `OBSERVATION_INSUFFICIENT`: Required fields missing
+- `UNCLASSIFIED`: Cannot classify with current rules
+
+**Note:** UNKNOWN/UNCLASSIFIED are normal outcomes (not failures).
+
+**Static Mapping Examples:**
+- `semantics_tag == DIVERGED_RULE_OVERLAY` → `OVERLAY_OBSERVED`
+- `diff_status == ALIGNED` + shadow present → `ALIGNMENT_STABLE`
+- `diff_status == DIVERGED` + semantics unclear → `DIVERGENCE_WITHOUT_CLASS`
+
+This is not "getting smarter". This is structural language for what we can understand.
+
 ### Constitutional Constraints (v0.6)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -514,6 +537,7 @@ Interpretation records use `v6_` prefix:
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr60_interpretation_schema_smoke.py
+python3 python/validation/pr61_interpretation_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

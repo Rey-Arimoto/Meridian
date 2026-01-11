@@ -11,14 +11,14 @@ Modules:
     - v6_constitutional_guard: Constitutional guards against violations
 """
 
-from python.interpretation.v6_interpretation_schema import (
+from .v6_interpretation_schema import (
     V6InterpretationSchema,
     ALLOWED_BASIS_FIELDS,
     FORBIDDEN_BASIS_FIELDS,
     get_schema_info,
 )
 
-from python.interpretation.v6_constitutional_guard import (
+from .v6_constitutional_guard import (
     validate_interpretation_record,
     check_forbidden_vocabulary,
     check_confidence_boundary,
