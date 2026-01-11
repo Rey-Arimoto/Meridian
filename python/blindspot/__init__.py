@@ -21,6 +21,7 @@ Blindspot Definition:
 Modules:
     - v8_blindspot_schema: Schema definition for blindspot records
     - v8_constitutional_guard: Constitutional guards against violations
+    - v8_blindspot_detection_engine_v1: Structural absence detection
 """
 
 from .v8_blindspot_schema import (
@@ -42,6 +43,13 @@ from .v8_constitutional_guard import (
     FORBIDDEN_VOCABULARY,
 )
 
+from .v8_blindspot_detection_engine_v1 import (
+    detect_blindspot_v1,
+    detect_blindspot_batch_v1,
+    V1BlindspotTags,
+    get_engine_v1_info,
+)
+
 __all__ = [
     # Schema
     "V8BlindspotSchema",
@@ -56,4 +64,9 @@ __all__ = [
     "check_confidence_boundary",
     "check_observation_boundary",
     "FORBIDDEN_VOCABULARY",
+    # Detection Engine v1
+    "detect_blindspot_v1",
+    "detect_blindspot_batch_v1",
+    "V1BlindspotTags",
+    "get_engine_v1_info",
 ]

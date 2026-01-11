@@ -865,7 +865,7 @@ Blindspot records use `v8_` prefix:
 - No recommendations for what should be changed
 - UNKNOWN/UNCLASSIFIED remain normal outcomes
 
-**Blindspot Tags (v1 Fixed Set - Detection in PR81+):**
+**Blindspot Tags (v1 Fixed Set):**
 - `ABSENCE_INSUFFICIENT_EVIDENCE` - Analytics data insufficient
 - `ABSENCE_UNSEEN_SIGNAL_TYPES` - Certain signal types not observed
 - `ABSENCE_UNSEEN_FACTOR_TYPES` - Certain factor types not observed
@@ -873,6 +873,66 @@ Blindspot records use `v8_` prefix:
 - `ABSENCE_TRANSITION_NOT_OBSERVED` - Certain transitions not observed
 - `ABSENCE_SCHEMA_CANNOT_EXPRESS` - Structure cannot be expressed in current schema
 - `UNCLASSIFIED` - Cannot classify with current rules (normal outcome)
+
+### v0.8 Blindspot Detection Engine v1 (PR81)
+
+Engine v1 = **Structural Absence Scan**
+
+Detects structural absences by enumerating differences between possible structures and observed structures.
+
+**Detection Philosophy:**
+- Enumerate what exists in definition space but not in observed space
+- No judgment about whether absences are problems
+- No inference about why absences exist
+- Pure set difference operation
+
+**Detection Targets:**
+- **Unseen Signal Types**: Signals defined but never observed
+- **Unseen Factor Types**: Factors defined but never observed
+- **Unobserved Meaning Types**: Meanings defined but never observed
+- **Transition Gaps**: Theoretically possible transitions never observed
+
+**Usage:**
+
+```python
+from blindspot.v8_blindspot_detection_engine_v1 import detect_blindspot_v1, V1BlindspotTags
+from analytics.pr64_interpretation_analytics import generate_interpretation_analytics
+
+# Generate analytics from interpretation records
+analytics = generate_interpretation_analytics(interpretation_records)
+
+# Detect blindspot
+blindspot = detect_blindspot_v1(analytics)
+
+print(blindspot["v8_blindspot_tag"])
+print(blindspot["v8_blindspot_summary"])
+print(blindspot["v8_blindspot_basis"])
+```
+
+**Example Output:**
+
+```json
+{
+  "v8_blindspot_mode": "ON",
+  "v8_blindspot_status": "AVAILABLE",
+  "v8_blindspot_tag": "ABSENCE_UNSEEN_SIGNAL_TYPES",
+  "v8_blindspot_summary": "6 signal types not observed in data. certain observational patterns not present.",
+  "v8_blindspot_basis": ["meaning_tag_counts", "total_records", "signal_counts"],
+  "v8_blindspot_artifacts": ["pr64_interpretation_analytics"]
+}
+```
+
+**Detection Logic:**
+1. Extract observed sets from analytics (signals, factors, meanings, transitions)
+2. Compare against known definition space
+3. Enumerate differences as structural absences
+4. No evaluation, no recommendation
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v8 record
+- Exit code always 0
 
 ### Constitutional Constraints (v0.8)
 
@@ -890,6 +950,7 @@ Blindspot records use `v8_` prefix:
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr80_blindspot_schema_smoke.py
+python3 python/validation/pr81_blindspot_detection_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
