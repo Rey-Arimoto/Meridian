@@ -1991,6 +1991,378 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v1.0 Infrastructure — Market Structure Intelligence Pipeline (READ-ONLY)
+
+### v1.0 Philosophy: Intelligence Native Market Architecture
+
+v1.0 Infrastructure builds on the execution constitution (v1.0) and intelligence native market (v1.1) to provide:
+- End-to-end pipeline orchestration
+- Artifact bundling and chain-of-custody
+- Golden regression testing for determinism
+- CLI demonstration interface
+- Market structure vocabulary abstraction
+- Vocabulary drift detection
+
+**Pipeline Flow:**
+```
+Onchain Observation (PR107)
+         ↓
+Analytics Extension (PR109)
+         ↓
+Market Structure Vocabulary (PR119) ← Convert analytics to structural terms
+         ↓
+Vocabulary Drift Detection (PR120) ← Detect structural language shifts
+         ↓
+Entropy Regime (PR110)
+         ↓
+Policy Binding (PR111)
+         ↓
+Execution Preview (PR112)
+         ↓
+Human Approval Gate (PR113)
+         ↓
+Pipeline Orchestrator (PR115) ← Coordinate all layers
+         ↓
+Artifact Bundle (PR116) ← Chain-of-custody container
+         ↓
+CLI Demo (PR118) ← Human-readable digest
+```
+
+### v1.0 Pipeline Orchestrator v1 (PR115)
+
+**Purpose:** Coordinate observation → vocabulary → drift → regime → policy → preview → approval pipeline.
+
+**Orchestrator Philosophy:**
+- Orchestrator = Pipeline Coordinator (not execution)
+- Defensive layer-by-layer execution
+- No execution, no trading, no recommendations
+- READ-ONLY, non-evaluative, non-prescriptive
+
+**Pipeline Stages (Ordered):**
+1. **Onchain Observation** - Read pool/object state
+2. **Analytics Extension** - Compute market structure metrics
+3. **Market Structure Vocabulary** - Convert analytics to structural terms
+4. **Vocabulary Drift Detection** - Detect term set changes (NEW in PR120)
+5. **Entropy Regime** - Classify regime level
+6. **Policy Binding** - Apply regime → permission rules
+7. **Execution Preview** - Describe structural impact shape
+8. **Human Approval** - Gate approval requirement
+
+**Orchestrator Output:**
+```json
+{
+  "orchestrator_status": "SUCCESS",
+  "observation": {...},
+  "analytics": {...},
+  "vocabulary": {...},
+  "drift": {...},
+  "regime": {...},
+  "policy": {...},
+  "preview": {...},
+  "approval": {...},
+  "warnings": [...]
+}
+```
+
+**Constitutional Guarantees:**
+- Never raises exceptions (defensive)
+- Skips failed layers (continues with warnings)
+- No trading vocabulary or execution
+- Exit code always 0 (warning-only)
+
+### v1.0 Artifact Bundle Schema v1 (PR116)
+
+**Purpose:** Chain-of-custody container for pipeline artifacts.
+
+**Bundle Philosophy:**
+- Bundle = Artifact Container (not execution)
+- Fixed layer ordering (14 valid layer names)
+- Digest-based integrity verification
+- READ-ONLY, non-evaluative
+
+**Valid Layer Names (Fixed Set):**
+- `connection`, `provider_config`, `observation`
+- `analytics`, `vocabulary`, `drift`
+- `regime`, `policy`, `preview`, `approval`
+- `orchestrator_output`, `bundle_metadata`
+- `warnings`, `errors`
+
+**Bundle Guards:**
+1. **Overreach Guard** - Detects invalid layer names
+2. **Ordering Consistency Guard** - Verifies layer order matches definition
+
+**Example Bundle:**
+```json
+{
+  "bundle_status": "AVAILABLE",
+  "bundle_layers": [
+    {"layer": "observation", "artifact": {...}},
+    {"layer": "analytics", "artifact": {...}},
+    {"layer": "vocabulary", "artifact": {...}},
+    {"layer": "drift", "artifact": {...}},
+    {"layer": "regime", "artifact": {...}}
+  ],
+  "bundle_digest": "sha256:abcd1234...",
+  "bundle_warnings": []
+}
+```
+
+### v1.0 Golden Fixtures & Regression Harness (PR117)
+
+**Purpose:** Determinism proof using golden test vectors.
+
+**Regression Philosophy:**
+- Regression = Output Stability Verification (not optimization)
+- Golden fixtures = Canonical test cases
+- Deterministic output required (no randomness)
+- READ-ONLY, non-evaluative
+
+**Fixtures (v1.0):**
+- `mock_connection.json` - Mock onchain connection
+- `mock_provider_config.json` - Provider configuration
+- `mock_observations_case_A.json` - Stable/low activity case
+- `mock_observations_case_B.json` - High variation case
+- `expected_bundle_case_A.json` - Expected output A
+- `expected_bundle_case_B.json` - Expected output B
+
+**Harness Checks:**
+- Output matches expected bundle structure
+- All required layers present
+- No unexpected layers added
+- Digest verification passes
+
+### v1.0 CLI Demo v1 (PR118)
+
+**Purpose:** One-command end-to-end pipeline with human-readable digest.
+
+**CLI Philosophy:**
+- CLI = Demo Interface (not production execution)
+- Human-readable digest rendering
+- No execution, no trading, no recommendations
+- READ-ONLY, non-evaluative
+
+**Usage:**
+```bash
+python3 python/cli/v10_meridian_cli.py \
+  --connection mock_connection.json \
+  --provider_config mock_provider_config.json
+```
+
+**Digest Output:**
+```
+Bundle Status: AVAILABLE
+
+Observation: 10 observations collected
+Analytics: Market cost regime counts available
+Vocabulary: 8 structural terms identified
+Drift: DRIFT_LOW classification (minor structural changes)
+Regime: REGIME_MEDIUM (moderate variation)
+Policy: DRY_RUN_ONLY (regime-based constraint)
+Preview: Risk surface MEDIUM
+Approval: REQUIRED (approval recommended)
+```
+
+**Constitutional Guard:**
+- Detects instruction vocabulary in CLI output
+- No "execute", "run", "approve" commands
+- CLI is display-only interface
+
+### v1.0 Market Structure Vocabulary Schema & Builder v1 (PR119)
+
+**Purpose:** Convert analytics to stable structural vocabulary terms.
+
+**Vocabulary Philosophy:**
+- Vocabulary = Market Structure Language (not price, not ownership)
+- Fixed term set (11 terms in 4 families)
+- Presence-only mapping (no counts in output)
+- READ-ONLY, non-evaluative
+
+**Vocabulary Term Families:**
+
+**1. Market Cost Regime (3 terms):**
+- `COST_LOW_PRESENT` / `COST_MEDIUM_PRESENT` / `COST_HIGH_PRESENT`
+
+**2. Liquidity Regime (3 terms):**
+- `LIQUIDITY_LOW_PRESENT` / `LIQUIDITY_MEDIUM_PRESENT` / `LIQUIDITY_HIGH_PRESENT`
+
+**3. Event Activity (2 terms):**
+- `EVENT_ACTIVITY_PRESENT` / `EVENT_ACTIVITY_ABSENT`
+
+**4. Object Dynamics (3 terms):**
+- `OBJECT_DYNAMICS_DECREASE_PRESENT`
+- `OBJECT_DYNAMICS_STABLE_PRESENT`
+- `OBJECT_DYNAMICS_INCREASE_PRESENT`
+
+**Mapping Rules:**
+- Analytics distribution → Vocabulary term presence
+- Count > 0 → `_PRESENT`
+- Count == 0 → `_ABSENT`
+- No numeric counts in output (constitutional)
+
+**Example Vocabulary Record:**
+```json
+{
+  "v10_vocab_mode": "ON",
+  "v10_vocab_status": "AVAILABLE",
+  "v10_vocab_terms": [
+    "COST_LOW_PRESENT",
+    "COST_MEDIUM_PRESENT",
+    "LIQUIDITY_LOW_PRESENT",
+    "EVENT_ACTIVITY_PRESENT",
+    "OBJECT_DYNAMICS_STABLE_PRESENT"
+  ],
+  "v10_vocab_summary": "market structure vocabulary extracted from analytics. multiple regime types present.",
+  "v10_vocab_basis": ["market_cost_regime_counts", "liquidity_regime_presence", "event_activity_frequency"]
+}
+```
+
+**Constitutional Guards:**
+- Token literal guard (SUI, USDC, BTC, ETH prohibited)
+- Numeric pattern guard (counts, percentages, scores prohibited)
+- Address pattern guard (0x... prohibited)
+- Trading vocabulary guard (swap, buy, sell prohibited)
+- Vocabulary term validation (only approved terms allowed)
+
+### v1.0 Vocabulary Drift Detection Engine v1 (PR120)
+
+**Purpose:** Detect market structure drift by comparing vocabulary windows.
+
+**Drift Philosophy:**
+- Drift = Structural Language Shift (not evaluation, not prediction)
+- Qualitative classification only (no numeric output)
+- Evidence = Term names only (no counts)
+- READ-ONLY, non-evaluative, non-prescriptive
+
+**Detection Approach (v1 - Static, Qualitative):**
+
+1. **Extract term presence sets** from each window:
+   - Window A (past): union of all terms across all vocab records
+   - Window B (current): union of all terms across all vocab records
+
+2. **Compute structural deltas:**
+   - `terms_added`: terms in B but not in A (B \ A)
+   - `terms_removed`: terms in A but not in B (A \ B)
+
+3. **Bucket into drift levels** (INTERNAL bucketing - NO numbers in output):
+   - `DRIFT_NONE`: no delta
+   - `DRIFT_LOW`: small delta (1-2 terms)
+   - `DRIFT_MEDIUM`: moderate delta (3-4 terms)
+   - `DRIFT_HIGH`: large delta (5-6 terms)
+   - `DRIFT_CRITICAL`: very large delta (7+ terms)
+   - `UNCLASSIFIED`: insufficient data
+
+4. **Generate evidence list** (term names only, no counts):
+   - Format: `"{TERM_NAME}_ADDED"` or `"{TERM_NAME}_REMOVED"`
+   - Example: `["COST_HIGH_PRESENT_ADDED", "EVENT_ACTIVITY_ABSENT_REMOVED"]`
+
+**Example Drift Record:**
+```json
+{
+  "v10_drift_mode": "ON",
+  "v10_drift_status": "AVAILABLE",
+  "v10_drift_level": "DRIFT_MEDIUM",
+  "v10_drift_summary": "market structure drift classified as drift_medium. moderate structural changes detected. terms added and removed.",
+  "v10_drift_basis": ["vocab_window_A", "vocab_window_B"],
+  "v10_drift_evidence": [
+    "COST_HIGH_PRESENT_ADDED",
+    "LIQUIDITY_MEDIUM_PRESENT_ADDED",
+    "EVENT_ACTIVITY_ABSENT_REMOVED",
+    "OBJECT_DYNAMICS_DECREASE_PRESENT_REMOVED"
+  ],
+  "v10_drift_warnings": []
+}
+```
+
+**Constitutional Guards (STRENGTHENED for PR120):**
+
+**1. Numeric Pattern Guard (STRENGTHENED):**
+- Detects explicit counts: "3 terms", "5 changes", "10 deltas"
+- Detects percentages: "50%", "10 percent"
+- Detects numeric assignments: "delta=3", "count=5", "score=0.8"
+- Detects decimal numbers (excluding version numbers like "v1.0")
+- Detects currency symbols ($, ¥, €)
+
+**2. Drift Level Validation (NEW):**
+- Validates drift level is from approved set
+- Only `DRIFT_NONE`, `DRIFT_LOW`, `DRIFT_MEDIUM`, `DRIFT_HIGH`, `DRIFT_CRITICAL`, `UNCLASSIFIED` allowed
+
+**3. Inherited Guards:**
+- Token literal guard (from PR119)
+- Trading vocabulary guard (from PR112)
+- Execution operation guard (from PR100)
+- Address pattern guard (from PR102)
+- Asset vocabulary guard (from PR108)
+- Action vocabulary guard (from PR111)
+- Forbidden vocabulary guard (from PR100)
+
+**Important Constraints:**
+- **NO numeric patterns in output** - Summary must use qualitative language only
+  - ❌ "5 terms added and 3 terms removed"
+  - ✅ "terms added and removed"
+  - ✅ "moderate structural changes detected"
+- **Evidence format** - Term names only, no counts
+  - ❌ "COST_HIGH_PRESENT_ADDED (count=5)"
+  - ✅ "COST_HIGH_PRESENT_ADDED"
+- **Drift level** - Decided internally, never exposed as numbers
+  - Internal: `total_delta = len(terms_added) + len(terms_removed)`
+  - External: `"DRIFT_MEDIUM"` (label only)
+
+**Usage:**
+```python
+from drift import detect_market_structure_drift_v1, validate_drift_record
+
+# Detect drift between two vocabulary windows
+vocab_window_A = [vocab_record_1, vocab_record_2]  # Past window
+vocab_window_B = [vocab_record_3, vocab_record_4]  # Current window
+
+drift = detect_market_structure_drift_v1(vocab_window_A, vocab_window_B)
+
+# Validate against constitutional guards
+warnings = validate_drift_record(drift)
+
+if warnings:
+    print(f"Constitutional violations detected: {len(warnings)} warnings")
+    for warning in warnings:
+        print(f"  - {warning}")
+```
+
+**Defensive Behavior:**
+- None/empty windows → `UNCLASSIFIED` or `ERROR`
+- Invalid inputs → `ERROR` record (never raises)
+- Warning-only (exit code always 0)
+
+### Constitutional Constraints (v1.0 Infrastructure)
+
+All v1.0 infrastructure components enforce:
+
+- **READ-ONLY**: No execution, no signing, no transaction construction
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **No amounts**: Numeric patterns prohibited in output
+- **No token literals**: SUI, USDC, BTC, ETH prohibited
+- **No addresses**: 0x... patterns prohibited
+- **No trading vocabulary**: swap, buy, sell, execute, sign, transfer prohibited
+- **Defensive**: Never raises exceptions (returns ERROR records)
+- **Warning-only**: Exit code always 0
+
+### Run Validations (v1.0 Infrastructure)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr115_pipeline_orchestrator_v1_smoke.py
+python3 python/validation/pr116_artifact_bundle_schema_smoke.py
+python3 python/validation/pr117_golden_regression_harness_smoke.py
+python3 python/validation/pr118_cli_demo_smoke.py
+python3 python/validation/pr119_market_structure_vocabulary_smoke.py
+python3 python/validation/pr120_market_structure_drift_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## Status
 
 Meridian is under active development.
@@ -2002,6 +2374,7 @@ v0.8 introduces blindspot (observing structural absences in interpretation/refle
 v0.9 introduces boundary (classifying structural limits of observability).
 v1.0 introduces execution constitution (boundary → executability without trading).
 v1.1 introduces intelligence native market (onchain regime classification, policy binding, execution preview, human approval).
+v1.0 infrastructure completes end-to-end pipeline (orchestrator, artifact bundling, regression testing, CLI demo, market structure vocabulary, vocabulary drift detection).
 
 Meridian optimizes for **survival first**, because only surviving systems get to compound.
 
