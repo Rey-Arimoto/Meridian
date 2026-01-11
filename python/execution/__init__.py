@@ -64,6 +64,11 @@ from .v10_plan_constitutional_guard import (
     check_numeric_patterns,
 )
 
+from .v10_execution_plan_generator_v1 import (
+    generate_execution_plan_v1,
+    get_generator_v1_info,
+)
+
 __all__ = [
     # Schema
     "V10ExecutionSchema",
@@ -91,4 +96,7 @@ __all__ = [
     "validate_plan_record",
     "check_token_literals",
     "check_numeric_patterns",
+    # Plan Generators
+    "generate_execution_plan_v1",
+    "get_generator_v1_info",
 ]

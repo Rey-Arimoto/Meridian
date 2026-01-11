@@ -1441,6 +1441,98 @@ if warnings:
 - Always returns warnings list
 - Exit code always 0
 
+### v1.0 Execution Plan Generator v1 (PR103)
+
+Generator v1 = **Static Plan Synthesis**
+
+Generates execution plan records based on permission and boundary analysis using static rules.
+
+**Generator Philosophy:**
+- Generate plan shape from permission (not execution)
+- Static rules (if/elif), no learning, no inference
+- No amounts, no token names, no addresses
+- No trading verbs or execution commands
+
+**Generation Rules (v1 - Static):**
+1. **HOLD** → `NOOP` + `manual_approval`
+   - Execution structurally disallowed
+2. **UNKNOWN** → `UNCLASSIFIED` + `manual_approval`
+   - Insufficient structural clarity
+3. **DRY_RUN_ONLY** → `MAINTENANCE` + `dry_run_only` + `frequency_limit_once_per_day`
+   - Observation-only execution
+4. **ALLOW** → Intent-based type + `manual_approval`
+   - REBALANCE_INTENT → `REBALANCE`
+   - HEDGE_INTENT → `HEDGE`
+   - LIQUIDITY_INTENT → `LIQUIDITY`
+   - MAINTENANCE → `MAINTENANCE`
+   - Other → `UNCLASSIFIED`
+
+**Usage:**
+
+```python
+from execution.v10_execution_plan_generator_v1 import generate_execution_plan_v1
+from execution.v10_execution_permissioning_engine_v1 import classify_execution_permission_v1
+from boundary.v9_boundary_classification_engine_v1 import classify_boundary_v1
+from blindspot.v8_blindspot_detection_engine_v1 import detect_blindspot_v1
+
+# Full pipeline: Blindspot → Boundary → Permission → Plan
+blindspot = detect_blindspot_v1(interpretation_analytics)
+boundary = classify_boundary_v1(blindspot)
+execution = classify_execution_permission_v1(boundary)
+plan = generate_execution_plan_v1(execution, boundary)
+
+print(plan["v10_plan_type"])
+print(plan["v10_plan_description"])
+print(plan["v10_plan_constraints"])
+```
+
+**Example Output (DRY_RUN_ONLY):**
+
+```json
+{
+  "v10_plan_mode": "ON",
+  "v10_plan_status": "AVAILABLE",
+  "v10_plan_type": "MAINTENANCE",
+  "v10_plan_description": "maintenance plan available in dry-run-only mode due to boundary constraints.",
+  "v10_plan_constraints": ["dry_run_only", "frequency_limit_once_per_day"],
+  "v10_plan_basis": ["v10_execution_permission", "v9_boundary_type"],
+  "v10_plan_artifacts": []
+}
+```
+
+**Example Output (ALLOW + REBALANCE_INTENT):**
+
+```json
+{
+  "v10_plan_mode": "ON",
+  "v10_plan_status": "AVAILABLE",
+  "v10_plan_type": "REBALANCE",
+  "v10_plan_description": "rebalance plan shape available under allow permission; manual approval required.",
+  "v10_plan_constraints": ["manual_approval"],
+  "v10_plan_basis": ["v10_execution_permission", "v10_execution_intent"],
+  "v10_plan_artifacts": []
+}
+```
+
+**Generation Logic:**
+1. Extract permission from v10 execution record
+2. Apply static mapping rules
+3. Generate plan type and constraints
+4. No evaluation, no recommendation, no trading
+
+**Constitutional Guarantees:**
+- No amounts, prices, or quantities generated
+- No token literals (SUI, USDC, etc.) in descriptions
+- No addresses or wallet references
+- No trading verbs (swap, transfer, sign, etc.)
+- All generated plans pass PR102 constitutional guards
+
+**Warning-Only Validation:**
+- Never raises exceptions
+- Handles edge cases gracefully (None, invalid types)
+- Always returns valid v10 plan record
+- Exit code always 0
+
 ### Run Validations (v1.0)
 
 ```bash
@@ -1449,6 +1541,7 @@ source .venv/bin/activate
 python3 python/validation/pr100_execution_schema_smoke.py
 python3 python/validation/pr101_execution_permissioning_engine_v1_smoke.py
 python3 python/validation/pr102_execution_plan_schema_smoke.py
+python3 python/validation/pr103_execution_plan_generator_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
