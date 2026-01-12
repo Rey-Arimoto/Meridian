@@ -3047,6 +3047,230 @@ This is not instruction. This is trajectory display.
 
 ---
 
+### v1.2 Role × Distortion Eligibility Engine v1 (PR128)
+
+**Purpose:** Classify eligibility based on Role × Distortion × Regime × Boundary × Suppression. This is a labeling engine (not action, not recommendation).
+
+**Eligibility Philosophy:**
+```
+Eligibility ≠ Permission ≠ Action
+Eligibility = "Touchability classification"
+
+Eligibility provides:
+  - Asset functional role label
+  - Market distortion type label
+  - Regime × Role × Distortion alignment
+  - Hard boundary exclusions
+  - Permission trajectory integration
+
+Eligibility does NOT:
+  - Recommend actions
+  - Execute or trigger execution
+  - Contain token names, amounts, addresses
+  - Prescribe responses
+```
+
+**Classification Function:**
+```python
+from eligibility import classify_role_distortion_eligibility_v1
+
+# Input: Regime, Distortion, Role, Boundary, Permission Monitor records
+result = classify_role_distortion_eligibility_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    role_record={"v12_role_type": "VOLATILITY_ROLE"},
+    boundary_record={"v9_boundary_type": "UNCLASSIFIED"},
+    permission_monitor_record={"v12_monitor_suppression_state": "STABLE"},
+)
+
+# Output schema (v12_elig_ prefix)
+print(result.v12_elig_status)        # AVAILABLE | ERROR
+print(result.v12_elig_eligibility)   # INELIGIBLE | ELIGIBLE_CONSIDERATION_ONLY | ELIGIBLE_DRY_RUN_ONLY
+print(result.v12_elig_summary)       # Non-prescriptive summary
+print(result.v12_elig_signals)       # {"regime": "REGIME_MEDIUM", "role": "VOLATILITY_ROLE", ...}
+print(result.v12_elig_basis)         # ["v11_regime_level", "v12_distortion_type", ...]
+```
+
+**Static Classification Rules (first-match-wins):**
+
+```
+1. REGIME_CRITICAL → INELIGIBLE
+   Hard stop: Critical regime gates all eligibility
+
+2. Hard Boundary (SCHEMA/DATA/ENGINE) → INELIGIBLE
+   Hard stop: Boundary violations gate eligibility
+
+3. Suppression = SUPPRESSED → INELIGIBLE
+   Hard stop: Suppressed permission trajectory gates eligibility
+
+4. REGIME_HIGH → ELIGIBLE_DRY_RUN_ONLY
+   High regime limits to dry-run only
+
+5. REGIME_LOW → ELIGIBLE_DRY_RUN_ONLY
+   Low regime limits to dry-run only
+
+6. REGIME_MEDIUM:
+   a. VOLATILITY_ROLE × Defined Distortion (D1-D5) → ELIGIBLE_CONSIDERATION_ONLY
+      The only "consideration zone" alignment
+
+   b. else → ELIGIBLE_DRY_RUN_ONLY
+      MEDIUM without volatility-role + distortion alignment
+
+7. Default (UNCLASSIFIED regime) → ELIGIBLE_DRY_RUN_ONLY
+   Defensive default
+```
+
+**Eligibility Labels:**
+- **INELIGIBLE** - Not touchable (hard stops)
+- **ELIGIBLE_CONSIDERATION_ONLY** - May be considered (MEDIUM × VOLATILITY × D1-D5 only)
+- **ELIGIBLE_DRY_RUN_ONLY** - Dry-run simulation only
+
+**Role Types (asset functional role):**
+- `VOLATILITY_ROLE` - Volatility-bearing assets
+- `LIQUIDITY_ROLE` - Liquidity provision assets
+- `STABILITY_ROLE` - Stable value assets
+- `HEDGE_ROLE` - Hedging instruments
+- `GAS_ROLE` - Gas/fee payment assets
+- `UNCLASSIFIED` - Unknown role
+
+**Distortion Types (market structure distortions):**
+- `D1_LIQUIDATION` - Liquidation cascade patterns
+- `D2_RANGE_STICKINESS` - Price range adhesion
+- `D3_BOOK_HOLLOWING` - Order book depth erosion
+- `D4_EVENT_DISTORTION` - Event-driven distortions
+- `D5_CORRELATION_DISTORTION` - Correlation breakdown
+- `UNCLASSIFIED` - Unknown distortion
+
+**Regime Labels (from PR110):**
+- `REGIME_LOW` - Low entropy
+- `REGIME_MEDIUM` - Medium entropy
+- `REGIME_HIGH` - High entropy
+- `REGIME_CRITICAL` - Critical entropy
+- `UNCLASSIFIED` - Unknown regime
+
+**Boundary Types (from PR105-PR108):**
+- `SCHEMA_BOUNDARY` - Schema constraint violation
+- `DATA_BOUNDARY` - Data quality violation
+- `ENGINE_BOUNDARY` - Engine computation violation
+- `TEMPORAL_BOUNDARY` - Time-based constraint
+- `SAMPLING_BOUNDARY` - Sampling constraint
+- `UNCLASSIFIED` - No boundary violation
+
+**Suppression States (from PR126):**
+- `STABLE` - Permission trajectory stable
+- `DEGRADING` - Permission trajectory degrading
+- `RECOVERING` - Permission trajectory recovering
+- `SUPPRESSED` - Permission trajectory suppressed
+- `UNCLASSIFIED` - Unknown suppression state
+
+**Example: CRITICAL Regime → INELIGIBLE**
+```python
+result = classify_role_distortion_eligibility_v1(
+    regime_record={"v11_regime_level": "REGIME_CRITICAL"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    role_record={"v12_role_type": "VOLATILITY_ROLE"},
+)
+
+# Result:
+# v12_elig_eligibility: "INELIGIBLE"
+# v12_elig_summary: "eligibility label indicates ineligible under critical regime."
+```
+
+**Example: MEDIUM × VOLATILITY × D1 → CONSIDERATION_ONLY**
+```python
+result = classify_role_distortion_eligibility_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    role_record={"v12_role_type": "VOLATILITY_ROLE"},
+)
+
+# Result:
+# v12_elig_eligibility: "ELIGIBLE_CONSIDERATION_ONLY"
+# v12_elig_summary: "eligibility label indicates consideration-only under medium regime with volatility role and defined distortion."
+```
+
+**Example: Hard Boundary → INELIGIBLE**
+```python
+result = classify_role_distortion_eligibility_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    role_record={"v12_role_type": "VOLATILITY_ROLE"},
+    boundary_record={"v9_boundary_type": "SCHEMA_BOUNDARY"},
+)
+
+# Result:
+# v12_elig_eligibility: "INELIGIBLE"
+# v12_elig_summary: "eligibility label indicates ineligible under hard boundary type."
+```
+
+**Example: Suppressed Permission → INELIGIBLE**
+```python
+result = classify_role_distortion_eligibility_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    role_record={"v12_role_type": "VOLATILITY_ROLE"},
+    permission_monitor_record={"v12_monitor_suppression_state": "SUPPRESSED"},
+)
+
+# Result:
+# v12_elig_eligibility: "INELIGIBLE"
+# v12_elig_summary: "eligibility label indicates ineligible under suppressed permission trajectory."
+```
+
+**Defensive Design:**
+- Invalid input (None, empty dict) → Defensive default (ELIGIBLE_DRY_RUN_ONLY)
+- Exception during classification → ERROR record (INELIGIBLE)
+- Unknown regime → Defensive default (ELIGIBLE_DRY_RUN_ONLY)
+- Always returns valid record (never raises)
+
+**Constitutional Guarantees (PR128):**
+- **READ-ONLY** - No execution, no recommendations
+- **Non-evaluative** - No good/bad vocabulary
+- **Non-prescriptive** - No "should" language
+- **No token literals** - No SUI, USDC, BTC, ETH
+- **No amounts** - No numeric values in output
+- **No addresses** - No 0x... patterns
+- **No trading vocabulary** - No swap, buy, sell, execute, sign, transfer
+- **No eligibility coupling** - No "eligible therefore act" patterns
+- **Deterministic** - Same inputs → same outputs
+- **Defensive** - Never raises exceptions
+
+**Schema Fields (v12_elig_ prefix):**
+- `v12_elig_mode` - ON | OFF
+- `v12_elig_status` - AVAILABLE | ERROR
+- `v12_elig_eligibility` - INELIGIBLE | ELIGIBLE_CONSIDERATION_ONLY | ELIGIBLE_DRY_RUN_ONLY
+- `v12_elig_summary` - Non-prescriptive summary text
+- `v12_elig_signals` - Dict of label signals (regime, distortion, role, boundary, suppression)
+- `v12_elig_basis` - Array of field names referenced
+- `v12_elig_warnings` - Optional array of warnings
+
+**Files:**
+- `python/eligibility/v12_role_distortion_eligibility_schema.py` - Schema definition
+- `python/eligibility/v12_role_distortion_eligibility_engine_v1.py` - Classification engine
+- `python/eligibility/v12_eligibility_constitutional_guard.py` - Constitutional validation
+- `python/eligibility/__init__.py` - Package exports
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` from entropy regime classification
+- **Role (TBD)**: `v12_role_type` from asset role classification
+- **Distortion (TBD)**: `v12_distortion_type` from distortion detection
+- **Boundary (PR105-PR108)**: `v9_boundary_type` from boundary detection
+- **Permission Monitor (PR126)**: `v12_monitor_suppression_state` from permission trajectory
+
+**Philosophy (PR128):**
+```
+Eligibility = Touchability classification
+Role = Asset functional role
+Distortion = Market structure aberration
+Regime × Role × Distortion = Alignment signal
+
+This is not permission.
+This is not action.
+This is structural alignment detection.
+```
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -3068,6 +3292,7 @@ cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr126_continuous_permission_monitor_v1_smoke.py
 python3 python/validation/pr127_permission_trajectory_binding_v1_smoke.py
+python3 python/validation/pr128_role_distortion_eligibility_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
