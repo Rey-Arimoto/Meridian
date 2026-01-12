@@ -3892,6 +3892,144 @@ This is label propagation for structural dependency graph.
 
 ---
 
+### v1.2 Distortion Subtype Taxonomy & Classifier v1 (PR134)
+
+**Purpose:** Classify distortion subtypes (D1A-D5C) for fine-grained distortion taxonomy.
+
+**What is a Subtype?**
+
+Subtype ≠ Action
+Subtype ≠ Signal
+Subtype = Fine-grained label propagation
+
+**Distortion Subtype Taxonomy (v1):**
+
+```python
+# D1 (Liquidation) Subtypes
+D1A_FORCED_FLOW       # Forced liquidation flow detected
+D1B_CASCADE_RISK      # Cascade liquidation risk observed
+D1C_STRESS_UNWIND     # Stress position unwinding observed
+
+# D2 (Range Stickiness) Subtypes
+D2A_MEAN_REVERT_PRESSURE  # Mean reversion pressure observed
+D2B_RANGE_PINNING         # Range pinning behavior observed
+D2C_BREAKOUT_FAKEOUT      # Breakout fakeout pattern observed
+
+# D3 (Book Hollowing) Subtypes
+D3A_TOP_GAP              # Top-of-book gap observed
+D3B_DEPTH_EVAPORATION    # Depth evaporation observed
+D3C_SPREAD_SHOCK         # Spread shock observed
+
+# D4 (Event Distortion) Subtypes
+D4A_EVENT_SPIKE       # Event spike observed
+D4B_EVENT_AFTERSHOCK  # Event aftershock observed
+D4C_EVENT_SILENCE     # Event silence observed
+
+# D5 (Correlation Distortion) Subtypes
+D5A_COUPLING_TIGHTEN  # Coupling tightening observed
+D5B_DECOUPLING        # Decoupling observed
+D5C_ROTATION_PRESSURE # Rotation pressure observed
+```
+
+**Classification Rules (First-match-wins):**
+
+1. **Invalid inputs** → `ERROR`
+2. **Parent distortion D1-D5** → classify subtype using qualitative inputs:
+   - **D1**: market_cost_regime × liquidity_regime
+   - **D2**: range_pattern
+   - **D3**: book_pattern
+   - **D4**: event_pattern
+   - **D5**: correlation_pattern
+3. **Default** → first subtype for parent (D1A, D2A, D3A, D4A, D5A)
+
+**Example:**
+
+```python
+from distortion import (
+    classify_distortion_subtype_v1,
+    SUBTYPE_D1B_CASCADE_RISK,
+    D1_LIQUIDATION,
+)
+
+# Classify D1 subtype
+result = classify_distortion_subtype_v1(
+    parent_distortion_record={"v12_distortion_type": D1_LIQUIDATION},
+    analytics={
+        "market_cost_regime": "HIGH",
+        "liquidity_regime": "DECREASING",
+    },
+)
+
+# Check subtype
+if result["v12_subtype_label"] == SUBTYPE_D1B_CASCADE_RISK:
+    print("Cascade risk subtype detected")
+    # Output: D1B_CASCADE_RISK
+```
+
+**Subtype Schema Fields:**
+
+```python
+{
+    "v12_subtype_mode": "READ_ONLY",
+    "v12_subtype_status": "AVAILABLE",
+    "v12_subtype_parent_distortion": "D1_LIQUIDATION",
+    "v12_subtype_label": "D1B_CASCADE_RISK",
+    "v12_subtype_summary": "Distortion subtype D1B_CASCADE_RISK observed for parent distortion D1_LIQUIDATION.",
+    "v12_subtype_basis": ["v12_distortion_type", "analytics"],
+}
+```
+
+**Files:**
+- `python/distortion/v12_distortion_subtype_schema.py` - Subtype taxonomy with 15 subtypes
+- `python/distortion/v12_distortion_subtype_classifier_v1.py` - Classification engine
+- `python/distortion/v12_distortion_subtype_constitutional_guard.py` - Subtype coupling guard
+- `python/distortion/__init__.py` - Updated package exports (PR129 + PR134)
+
+**Integration Points:**
+- **Parent Distortion (PR129)**: `v12_distortion_type` → subtype classification
+- **Analytics**: Qualitative labels (market_cost_regime, liquidity_regime, etc.) → subtype selection
+- **Eligibility (PR128)**: Subtypes available for future eligibility refinement (append-only, does not change PR128 rules yet)
+
+**Constitutional Guarantees (PR134):**
+- READ-ONLY classification (no execution)
+- No numeric patterns
+- No token literals
+- No trading vocabulary
+- No prescriptive language
+- No subtype coupling ("D1B therefore act", "subtype implies trade") ← NEW
+- Warning-only guards (never fail)
+
+**Philosophy (PR134):**
+```
+Subtype = Fine-grained label (not action)
+D1A/D1B/D1C = Liquidation variants (not recommendations)
+Classification = Static deterministic mapping (not learning)
+
+Subtypes refine parent distortion types with qualitative labels.
+Subtypes do NOT change behavior.
+Subtypes ONLY provide fine-grained taxonomy for:
+  - Human review and explanation
+  - Future eligibility refinement (v2)
+  - Structural analysis and pattern detection
+  - Artifact labeling and chain-of-custody
+
+This is NOT decision logic.
+This is NOT instruction.
+This is label propagation for fine-grained distortion taxonomy.
+```
+
+**Use Cases:**
+
+1. **Fine-grained explanation**: Explain D1B cascade risk vs D1A forced flow
+2. **Pattern detection**: Identify recurring subtype patterns over time
+3. **Future eligibility**: Enable subtype-specific eligibility rules (v2)
+4. **Human review**: Present detailed distortion classification to operators
+5. **Artifact labeling**: Tag records with fine-grained distortion subtypes
+
+**Note:** PR134 is append-only. It does NOT change PR128 eligibility rules. Subtype-specific eligibility refinement is reserved for future PRs.
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -3908,7 +4046,8 @@ This is label propagation for structural dependency graph.
 - **No contribution coupling**: "++ therefore trade", "-- therefore stop" patterns prohibited (PR131)
 - **No return guarantee language**: "annual return", "backtest", "assured" prohibited (PR131)
 - **No contribution zone coupling**: "primary therefore trade", "blocked so stop" patterns prohibited (PR132)
-- **No rescue coupling** (NEW): "rescue therefore act", "buffer so trade", "救えるので触ってよい" patterns prohibited (PR133)
+- **No rescue coupling**: "rescue therefore act", "buffer so trade", "救えるので触ってよい" patterns prohibited (PR133)
+- **No subtype coupling** (NEW): "D1B therefore act", "subtype implies trade" patterns prohibited (PR134)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -3925,6 +4064,7 @@ python3 python/validation/pr130_role_carrier_qualification_v1_smoke.py
 python3 python/validation/pr131_contribution_model_v1_smoke.py
 python3 python/validation/pr132_contribution_constraint_binding_v1_smoke.py
 python3 python/validation/pr133_role_rescue_relation_v1_smoke.py
+python3 python/validation/pr134_distortion_subtype_classifier_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
