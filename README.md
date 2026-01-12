@@ -2832,6 +2832,221 @@ No window sizes are specified numerically to maintain constitutional constraints
 - `python/monitor/v12_monitor_constitutional_guard.py` - Constitutional validation
 - `python/monitor/__init__.py` - Package exports
 
+---
+
+### v1.2 Permission Trajectory → Human Interface Binding v1 (PR127)
+
+**Purpose:** Bind PR126 monitor records into human-readable trajectory signals for v1.1 Human Interface Layer (PR122-PR125).
+
+**Binding Philosophy:**
+```
+Binding ≠ Conclusion
+Trajectory ≠ Permission to act
+Signal = Human-readable structural label
+
+"改善"や"回復"は 状態記述 であり、次の一手 ではない
+(Improvement/recovery is state description, not next action)
+```
+
+**Pipeline Integration:**
+```
+... → Policy (PR111) → Preview (PR112) → Approval Gate (PR113)
+         ↓
+Permission Monitor (PR126) → Trajectory Signal (PR127) ← NEW
+         ↓
+Explanation Context (PR122) → Narrative (PR123) → Packet (PR124) → Render (PR125)
+```
+
+**Binding Function:**
+```python
+from signal import bind_permission_trajectory_signal_v1
+from monitor import monitor_permission_v1
+
+# Step 1: Monitor permission trajectory (PR126)
+monitor_record = monitor_permission_v1(records_window)
+
+# Step 2: Bind to human interface signal (PR127)
+signal = bind_permission_trajectory_signal_v1(monitor_record)
+
+# Output schema (v12_signal_ prefix)
+print(signal["v12_signal_status"])              # AVAILABLE | UNAVAILABLE | ERROR
+print(signal["v12_signal_permission_level"])    # HOLD | DRY_RUN_ONLY | ALLOW | UNKNOWN
+print(signal["v12_signal_suppression_state"])   # STABLE | DEGRADING | RECOVERING | SUPPRESSED
+print(signal["v12_signal_transition_label"])    # NONE | DEGRADATION | RECOVERY | SUPPRESSION
+print(signal["v12_signal_window_label"])        # SHORT | MEDIUM | LONG (no numbers)
+print(signal["v12_signal_summary"])             # Non-prescriptive summary
+print(signal["v12_signal_basis"])               # ["v12_monitor_*"] field names
+```
+
+**Static Mapping (v1):**
+```
+Monitor → Signal Binding:
+
+v12_monitor_current_permission → v12_signal_permission_level
+v12_monitor_suppression_state → v12_signal_suppression_state
+v12_monitor_window → v12_signal_window_label
+
+Transition Events:
+  event_type == "DEGRADATION" → transition_label = DEGRADATION
+  event_type == "RECOVERY" → transition_label = RECOVERY
+  event_type == "SUPPRESSION" → transition_label = SUPPRESSION
+  event_type == "PERMISSION_CHANGE" → transition_label = NONE
+
+Summary Template (non-prescriptive):
+  "permission level labeled as {level}. suppression state labeled as {state}."
+  NO "therefore", "so", "execute", "should"
+```
+
+**Example: DEGRADATION Signal**
+```python
+monitor = {
+    "v12_monitor_status": "AVAILABLE",
+    "v12_monitor_current_permission": "DRY_RUN_ONLY",
+    "v12_monitor_suppression_state": "DEGRADING",
+    "v12_monitor_transition_events": [{
+        "event_type": "DEGRADATION",
+        "from_permission": "ALLOW",
+        "to_permission": "DRY_RUN_ONLY",
+    }],
+    "v12_monitor_window": "MEDIUM",
+}
+
+signal = bind_permission_trajectory_signal_v1(monitor)
+
+# Result:
+# v12_signal_permission_level: "DRY_RUN_ONLY"
+# v12_signal_suppression_state: "DEGRADING"
+# v12_signal_transition_label: "DEGRADATION"
+# v12_signal_summary: "permission level labeled as DRY_RUN_ONLY. suppression state labeled as DEGRADING. transition labeled as DEGRADATION. window labeled as MEDIUM."
+```
+
+**Example: RECOVERY Signal**
+```python
+monitor = {
+    "v12_monitor_status": "AVAILABLE",
+    "v12_monitor_current_permission": "DRY_RUN_ONLY",
+    "v12_monitor_suppression_state": "RECOVERING",
+    "v12_monitor_transition_events": [{
+        "event_type": "RECOVERY",
+        "from_permission": "HOLD",
+        "to_permission": "DRY_RUN_ONLY",
+    }],
+    "v12_monitor_window": "SHORT",
+}
+
+signal = bind_permission_trajectory_signal_v1(monitor)
+
+# Result:
+# v12_signal_permission_level: "DRY_RUN_ONLY"
+# v12_signal_suppression_state: "RECOVERING"
+# v12_signal_transition_label: "RECOVERY"
+```
+
+**Human Interface Extension (Optional):**
+
+Extend PR122 explanation context with trajectory signals:
+
+```python
+from explain.v12_explain_context_permission_trajectory_extension import (
+    extend_explanation_context_with_trajectory_signals,
+    get_trajectory_signal_types,
+)
+
+# Extend context with trajectory signals (append-only, backward compatible)
+extended_context = extend_explanation_context_with_trajectory_signals(
+    context_record=context,  # PR122 context
+    trajectory_signal=signal,  # PR127 signal
+)
+
+# New signal types added to context:
+# TRAJECTORY_DEGRADING - Permission trajectory moving toward more restrictive
+# TRAJECTORY_RECOVERING - Permission trajectory moving toward less restrictive
+# TRAJECTORY_SUPPRESSED - Permission trajectory currently suppressed
+# TRAJECTORY_STABLE - Permission trajectory stable (no change)
+```
+
+**Strengthened Trajectory Coupling Guard:**
+
+PR127 adds signal-specific coupling detection:
+
+```python
+from signal import check_signal_trajectory_coupling
+
+# Forbidden patterns:
+check_signal_trajectory_coupling("level improved therefore execute")
+# → Warning: Signal trajectory coupling detected
+
+check_signal_trajectory_coupling("state degrading so halt operations")
+# → Warning: Signal trajectory coupling detected
+
+check_signal_trajectory_coupling("recovering means proceed")
+# → Warning: Signal trajectory coupling detected
+
+# Clean patterns:
+check_signal_trajectory_coupling("permission level labeled as DRY_RUN_ONLY")
+# → No warnings (labels state, no action coupling)
+```
+
+**Forbidden Signal Coupling Patterns:**
+- "level improved therefore act"
+- "state degrading so halt"
+- "recovering means execute"
+- "if stable then execute"
+- "transition indicates action"
+- Signal label coupling to action
+
+**Defensive Design:**
+- Invalid input (None, empty dict) → Valid ERROR record
+- Monitor ERROR → Signal ERROR
+- Monitor UNAVAILABLE → Signal ERROR
+- Always returns valid schema (never raises)
+
+**Constitutional Guarantees (PR127):**
+- **READ-ONLY** - No execution, no recommendations
+- **Non-evaluative** - No good/bad vocabulary
+- **Non-prescriptive** - No "should" language
+- **No token literals** - No SUI, USDC, BTC, ETH
+- **No amounts** - No numeric values in output
+- **No addresses** - No 0x... patterns
+- **No trajectory coupling** - Strengthened guard for signal patterns
+- **Deterministic** - Same inputs → same outputs
+- **Defensive** - Never raises exceptions
+
+**Schema Fields (v12_signal_ prefix):**
+- `v12_signal_mode` - ON | OFF
+- `v12_signal_status` - AVAILABLE | UNAVAILABLE | ERROR
+- `v12_signal_permission_level` - UNKNOWN | HOLD | DRY_RUN_ONLY | ALLOW
+- `v12_signal_suppression_state` - STABLE | DEGRADING | RECOVERING | SUPPRESSED
+- `v12_signal_transition_label` - NONE | DEGRADATION | RECOVERY | SUPPRESSION
+- `v12_signal_window_label` - SHORT | MEDIUM | LONG (no numbers)
+- `v12_signal_summary` - Non-prescriptive summary text
+- `v12_signal_basis` - Array of v12_monitor_* field names referenced
+
+**Files:**
+- `python/signal/v12_permission_trajectory_signal_schema.py` - Signal schema definition
+- `python/signal/v12_permission_trajectory_binding_engine_v1.py` - Binding engine
+- `python/signal/v12_signal_constitutional_guard.py` - Constitutional validation (strengthened)
+- `python/signal/__init__.py` - Package exports
+- `python/explain/v12_explain_context_permission_trajectory_extension.py` - Human interface extension
+
+**Final Declaration (PR127):**
+
+Japanese:
+```
+PR126 は許可の揺れを記録した。
+PR127 はその揺れを、人間が読める信号に変換した。
+それは指示ではない。軌跡の表示である。
+```
+
+English:
+```
+PR126 recorded permission as trajectory.
+PR127 renders that trajectory into human-readable signals.
+This is not instruction. This is trajectory display.
+```
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -2852,6 +3067,7 @@ No window sizes are specified numerically to maintain constitutional constraints
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr126_continuous_permission_monitor_v1_smoke.py
+python3 python/validation/pr127_permission_trajectory_binding_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
