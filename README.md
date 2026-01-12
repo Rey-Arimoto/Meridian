@@ -1963,6 +1963,140 @@ print(approval["v11_approval_state"])        # UNREQUESTED
 print(approval["v11_approval_summary"])
 ```
 
+---
+
+## v1.1 Human Interface Layer (READ-ONLY)
+
+### v1.1 Philosophy: Structural Situation Summary for Human Review
+
+The Human Interface Layer packages structural state into non-prescriptive context for human review.
+
+**Key Principles:**
+- **Context ≠ Action** - Explanation provides situation summary, not recommendations
+- **Context ≠ Recommendation** - No prescriptive language, no "should"
+- **Structural Signals Only** - Regime, drift, permission states (no raw values)
+- **No Prescriptive Coupling** - No "approved therefore execute" patterns
+- **Label-Only Signals** - Signal names only (no embedded values)
+
+**Explanation Context Philosophy:**
+```
+Context provides:
+  - Current state signals (regime, drift, permission)
+  - Artifact references (which records explain state)
+  - Non-evaluative summary
+  - Basis field names (no raw values)
+
+Context does NOT:
+  - Recommend actions
+  - Evaluate quality (good/bad)
+  - Contain token names, amounts, addresses
+  - Prescribe responses
+```
+
+### v1.1 Human Explanation Context Schema v1 (PR122)
+
+**Purpose:** Define schema for packaging structural situation as human-readable context.
+
+**Explanation Context = Structural Situation Summary (not action/recommendation)**
+
+**Schema Fields:**
+- `v11_explain_mode` - ON | OFF
+- `v11_explain_status` - AVAILABLE | UNAVAILABLE
+- `v11_explain_summary` - Non-evaluative structural situation description
+- `v11_explain_signals` - Array of structural signal labels (regime, drift, permission)
+- `v11_explain_basis` - Array of field names referenced (not values)
+- `v11_explain_artifacts` - Array of artifact names referenced
+
+**Example Signals (Extensible):**
+- Regime: `REGIME_LOW`, `REGIME_MEDIUM`, `REGIME_HIGH`, `REGIME_CRITICAL`
+- Drift: `DRIFT_NONE`, `DRIFT_LOW`, `DRIFT_MEDIUM`, `DRIFT_HIGH`, `DRIFT_CRITICAL`
+- Permission: `PERMISSION_UNKNOWN`, `PERMISSION_HOLD`, `PERMISSION_DRY_RUN_ONLY`, `PERMISSION_ALLOW`
+- Preview: `PREVIEW_BLOCKED`, `PREVIEW_AVAILABLE`
+- Approval: `APPROVAL_NOT_REQUIRED`, `APPROVAL_REQUIRED`, `APPROVAL_REQUIRED_STRICT`
+
+**Example Explanation Context:**
+
+```json
+{
+  "v11_explain_mode": "ON",
+  "v11_explain_status": "AVAILABLE",
+  "v11_explain_summary": "current structural situation: regime medium, drift low, permission dry-run-only.",
+  "v11_explain_signals": [
+    "REGIME_MEDIUM",
+    "DRIFT_LOW",
+    "PERMISSION_DRY_RUN_ONLY"
+  ],
+  "v11_explain_basis": [
+    "v11_regime_level",
+    "v10_drift_level",
+    "v10_execution_permission"
+  ],
+  "v11_explain_artifacts": [
+    "pr110_regime_record",
+    "pr120_drift_record",
+    "pr101_execution_record"
+  ]
+}
+```
+
+**Constitutional Guarantees (PR122):**
+- No trading vocabulary (swap/buy/sell/execute/sign/transfer)
+- No execution operations (transaction/broadcast/submit)
+- No token literals (SUI/USDC/BTC/ETH), addresses, amounts
+- No numeric patterns (counts, percentages, scores)
+- No forbidden vocabulary (good/bad, correct/wrong)
+- **No prescriptive coupling** (NEW):
+  - No "approved therefore execute" patterns
+  - No "if approved then execute" patterns
+  - No "upon approval execute" patterns
+  - No action coupling to approval state
+- Signals are label-only (no embedded values)
+- Defensive, warning-only (exit 0 always)
+
+**Usage Example:**
+
+```python
+from explain import (
+    V11HumanExplanationContextSchema,
+    validate_explanation_context,
+)
+
+# Create explanation context
+explanation = V11HumanExplanationContextSchema.create_explanation_record(
+    summary="current structural situation: regime medium, drift low, permission dry-run-only.",
+    signals=["REGIME_MEDIUM", "DRIFT_LOW", "PERMISSION_DRY_RUN_ONLY"],
+    basis=["v11_regime_level", "v10_drift_level", "v10_execution_permission"],
+    artifacts=["pr110_regime_record", "pr120_drift_record", "pr101_execution_record"],
+)
+
+# Validate against constitutional guards
+warnings = validate_explanation_context(explanation)
+if warnings:
+    print(f"Constitutional warnings: {warnings}")
+
+print(explanation["v11_explain_summary"])
+print(explanation["v11_explain_signals"])
+```
+
+**Prescriptive Coupling Guard (NEW in PR122):**
+
+Detects and warns on:
+- "approved therefore execute" / "approved so execute"
+- "if approved then execute" / "when approved execute"
+- "approval means execute" / "approval triggers execution"
+- Generic action coupling to approval state
+
+Example violations:
+```python
+# VIOLATION: Prescriptive coupling
+"approval state available. if approved then execute the swap operation."
+
+# CLEAN: Structural state only
+"current structural situation: approval required, regime medium, permission dry-run-only."
+```
+
+---
+
 ### Constitutional Constraints (v1.1)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -1985,6 +2119,7 @@ python3 python/validation/pr110_entropy_regime_classification_smoke.py
 python3 python/validation/pr111_regime_execution_policy_binding_smoke.py
 python3 python/validation/pr112_execution_preview_engine_v1_smoke.py
 python3 python/validation/pr113_human_approval_gate_v1_smoke.py
+python3 python/validation/pr122_human_explanation_context_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
