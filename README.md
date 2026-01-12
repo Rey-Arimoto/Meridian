@@ -4299,6 +4299,191 @@ This is label propagation for structural pattern strength classification.
 
 ---
 
+### v1.2 Rescue Flow Graph Engine v1 (PR137)
+
+**Purpose:** Build READ-ONLY graph artifact describing ROLE-to-ROLE rescue structure using label-only edges from PR135 EdgeType and PR136 RescueStrength.
+
+**What is a Rescue Flow Graph?**
+
+FlowGraph ≠ Action
+FlowGraph ≠ Instruction
+FlowGraph = Structural mapping
+
+**Graph Structure:**
+
+```python
+# Nodes: 5 ROLE labels (fixed)
+GAS_ROLE
+STABILITY_ROLE
+LIQUIDITY_ROLE
+VOLATILITY_ROLE
+HEDGE_ROLE
+
+# Edges: Label-only connections with edge_type + rescue_strength
+{
+    "from_role": "STABILITY_ROLE",
+    "to_role": "VOLATILITY_ROLE",
+    "edge_type": "EDGE_SHIELD",           # PR135
+    "rescue_strength": "RESCUE_MEDIUM",   # PR136
+    "conditions": ["REGIME_MEDIUM", "D1_LIQUIDATION"],
+    "note": "Stability provides shielding support to volatility role"
+}
+```
+
+**Canonical Rescue Map (v1):**
+
+```python
+# Fixed structural edges (v1)
+STABILITY_ROLE -> LIQUIDITY_ROLE  (EDGE_SHIELD)
+STABILITY_ROLE -> VOLATILITY_ROLE (EDGE_SHIELD)
+HEDGE_ROLE     -> VOLATILITY_ROLE (EDGE_SHIELD)
+LIQUIDITY_ROLE -> VOLATILITY_ROLE (EDGE_NEUTRAL)
+GAS_ROLE       -> ALL_ROLES       (EDGE_NEUTRAL)
+```
+
+**Non-rescue Constraints:**
+
+- `EDGE_AMPLIFY` edges must have `RESCUE_NONE` (amplify ≠ rescue)
+- `EDGE_LEAK` edges must have `RESCUE_NONE` (leak ≠ rescue)
+
+**Rescue Strength Assignment:**
+
+1. Match from PR136 `rescue_strength_records` by (role, regime, distortion, edge_type) if provided
+2. Conservative defaults if not provided:
+   - REGIME_MEDIUM + EDGE_SHIELD from STABILITY/HEDGE → `RESCUE_MEDIUM`
+   - REGIME_HIGH/LOW + EDGE_SHIELD → `RESCUE_WEAK`
+   - Default → `RESCUE_NONE`
+
+**Example:**
+
+```python
+from flow import (
+    build_rescue_flow_graph_v1,
+    FLOW_MODE_ON,
+)
+
+# Build rescue flow graph
+result = build_rescue_flow_graph_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_catalog_record={"v12_distortion_type": "D1_LIQUIDATION"},
+)
+
+# Check flow graph
+if result["v12_flow_mode"] == FLOW_MODE_ON:
+    print(f"Flow graph has {len(result['v12_flow_nodes'])} nodes")
+    print(f"Flow graph has {len(result['v12_flow_edges'])} edges")
+
+    # Inspect edges
+    for edge in result["v12_flow_edges"]:
+        print(f"{edge['from_role']} -> {edge['to_role']}: {edge['edge_type']} ({edge['rescue_strength']})")
+```
+
+**Flow Graph Schema Fields:**
+
+```python
+{
+    "v12_flow_mode": "ON",
+    "v12_flow_status": "AVAILABLE",
+    "v12_flow_graph_type": "RESCUE_FLOW_GRAPH",
+    "v12_flow_summary": "Rescue flow graph available. 5 role nodes and 8 rescue edges assembled as structural mapping.",
+    "v12_flow_nodes": ["GAS_ROLE", "STABILITY_ROLE", "LIQUIDITY_ROLE", "VOLATILITY_ROLE", "HEDGE_ROLE"],
+    "v12_flow_edges": [
+        {
+            "from_role": "STABILITY_ROLE",
+            "to_role": "LIQUIDITY_ROLE",
+            "edge_type": "EDGE_SHIELD",
+            "rescue_strength": "RESCUE_MEDIUM",
+            "conditions": ["REGIME_MEDIUM", "EDGE_SHIELD", "D1_LIQUIDATION"],
+            "note": "Stability provides shielding support to liquidity role"
+        },
+        // ... more edges
+    ],
+    "v12_flow_basis": ["v11_regime_level", "v12_distortion_type"],
+}
+```
+
+**Graph Visualization Example:**
+
+```
+STABILITY_ROLE ─[EDGE_SHIELD, RESCUE_MEDIUM]─> LIQUIDITY_ROLE
+               └[EDGE_SHIELD, RESCUE_MEDIUM]─> VOLATILITY_ROLE
+
+HEDGE_ROLE     ─[EDGE_SHIELD, RESCUE_MEDIUM]─> VOLATILITY_ROLE
+
+LIQUIDITY_ROLE ─[EDGE_NEUTRAL, RESCUE_NONE]──> VOLATILITY_ROLE
+
+GAS_ROLE       ─[EDGE_NEUTRAL, RESCUE_NONE]──> STABILITY_ROLE
+               ├[EDGE_NEUTRAL, RESCUE_NONE]──> LIQUIDITY_ROLE
+               ├[EDGE_NEUTRAL, RESCUE_NONE]──> VOLATILITY_ROLE
+               └[EDGE_NEUTRAL, RESCUE_NONE]──> HEDGE_ROLE
+```
+
+**Files:**
+- `python/flow/v12_rescue_flow_graph_schema.py` - Flow graph schema with edge structure
+- `python/flow/v12_rescue_flow_graph_engine_v1.py` - Graph builder with canonical map
+- `python/flow/v12_flow_constitutional_guard.py` - Flow coupling guard
+- `python/flow/__init__.py` - Package exports
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` → rescue strength defaults
+- **Role (PR130)**: ROLE labels as graph nodes
+- **Distortion (PR129)**: `v12_distortion_type` → conditions labeling
+- **Edge Type (PR135)**: `v12_edge_type` → edge classification
+- **Rescue Strength (PR136)**: `v12_rescue_strength` → edge strength annotation
+- **Constraints (PR132)**: `v12_contrib_constraint_labels` → optional constraints
+
+**Constitutional Guarantees (PR137):**
+- READ-ONLY graph construction (no execution)
+- No numeric patterns
+- No token literals (only ROLE labels)
+- No trading vocabulary
+- No prescriptive language
+- No flow coupling ("this edge means execute", "strong rescue therefore trade") ← NEW
+- Warning-only guards (never fail)
+- Defensive error handling (never raises)
+
+**Philosophy (PR137):**
+```
+FlowGraph = Structural mapping (not action)
+Edges = Label-only connections (not instructions)
+Rescue = Structural dependency (not recommendation)
+
+Flow graph nodes are ROLE labels ONLY.
+Flow graph edges are structural annotations ONLY.
+
+EDGE_SHIELD + RESCUE_MEDIUM = Shielding pattern with medium strength observed (not "use this edge")
+EDGE_NEUTRAL + RESCUE_NONE = Neutral pattern with no rescue observed (not "ignore this")
+
+Flow graph describes structural ROLE-to-ROLE relationships.
+Flow graph does NOT instruct action.
+Flow graph does NOT change behavior.
+Flow graph ONLY provides structural mapping for:
+  - Human review and visualization
+  - Pattern analysis across regime transitions
+  - Structural dependency understanding
+  - Artifact labeling and chain-of-custody
+
+Canonical map is FIXED (v1).
+No dynamic edge generation.
+No role creation.
+No token/asset/pool/address references.
+
+This is NOT decision logic.
+This is NOT instruction.
+This is label propagation for structural ROLE-to-ROLE mapping.
+```
+
+**Use Cases:**
+
+1. **Structural visualization**: Render ROLE-to-ROLE rescue graph for human operators
+2. **Pattern analysis**: Track how rescue edges change across regime transitions
+3. **Human explanation**: Present structural dependencies in explainable format
+4. **Artifact labeling**: Tag flow graphs with structural rescue context
+5. **Integration with PR135/PR136**: Combine edge types and rescue strengths for multi-layer analysis
+6. **Canonical baseline**: Use fixed canonical map as structural reference point
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4318,7 +4503,8 @@ This is label propagation for structural pattern strength classification.
 - **No rescue coupling**: "rescue therefore act", "buffer so trade", "救えるので触ってよい" patterns prohibited (PR133)
 - **No subtype coupling**: "D1B therefore act", "subtype implies trade" patterns prohibited (PR134)
 - **No edge coupling**: "EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop" patterns prohibited (PR135)
-- **No rescue strength coupling** (NEW): "RESCUE_STRONG therefore trade", "strong rescue means proceed" patterns prohibited (PR136)
+- **No rescue strength coupling**: "RESCUE_STRONG therefore trade", "strong rescue means proceed" patterns prohibited (PR136)
+- **No flow coupling** (NEW): "this edge means execute", "flow graph therefore act" patterns prohibited (PR137)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -4338,6 +4524,7 @@ python3 python/validation/pr133_role_rescue_relation_v1_smoke.py
 python3 python/validation/pr134_distortion_subtype_classifier_v1_smoke.py
 python3 python/validation/pr135_edge_type_classifier_v1_smoke.py
 python3 python/validation/pr136_rescue_strength_engine_v1_smoke.py
+python3 python/validation/pr137_rescue_flow_graph_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
