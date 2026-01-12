@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-PR133: v1.2 Rescue Constitutional Guard (READ-ONLY)
+PR136: v1.2 Rescue Strength Constitutional Guard (READ-ONLY)
 
 Purpose:
-    Enforce constitutional constraints on rescue relation records.
+    Enforce constitutional constraints on rescue strength records.
     Guards against numeric patterns, token literals, trading vocabulary,
     prescriptive language, and rescue coupling.
 
@@ -15,7 +15,7 @@ Constitutional Constraints:
     - No execution operations: No transaction, broadcast, submit
     - No forbidden vocabulary: No good/bad, correct/wrong
     - No prescriptive language: No "should", "must", "need to"
-    - NEW: No rescue coupling: No "rescue therefore act", "救えるので触ってよい"
+    - NEW: No rescue coupling: No "RESCUE_STRONG therefore trade", "strong rescue means proceed"
 
 All guards are warning-only (never fail, exit 0).
 """
@@ -40,25 +40,19 @@ FORBIDDEN_VOCABULARY = [
     "go ahead", "proceed", "continue", "stop",
 ]
 
-# Rescue coupling pattern (NEW in PR133)
+# Rescue coupling pattern (NEW in PR136 - enhanced from PR133)
 RESCUE_COUPLING_RE = re.compile(
-    r"\b(rescue|rescued|rescuer|buffer|anchor|dampen|continuity|escape|BUFFER|ANCHOR|DAMPEN|CONTINUITY|ESCAPE)\b.{0,40}\b(therefore|so|thus|hence|then|means|implies)\b.{0,40}\b(act|execute|proceed|touch|trade|swap|buy|sell|sign|transfer|broadcast)\\b",
+    r"\b(RESCUE_STRONG|RESCUE_MEDIUM|RESCUE_WEAK|RESCUE_NONE|rescue|strong|medium|weak)\b.{0,40}\b(therefore|so|thus|hence|then|means|implies)\b.{0,40}\b(act|execute|proceed|touch|trade|swap|buy|sell|sign|transfer|broadcast)\\b",
     re.IGNORECASE | re.DOTALL,
 )
 
-# Japanese rescue coupling patterns
-RESCUE_COUPLING_JP_RE = re.compile(
-    r"(救|バッファ|アンカー|ダンプ).{0,20}(ので|から|ため).{0,20}(触|実行|取引|スワップ)",
-    re.IGNORECASE,
-)
 
-
-def check_rescue_relation_record(record: Dict[str, Any]) -> List[str]:
+def check_rescue_strength_record(record: Dict[str, Any]) -> List[str]:
     """
-    Validate rescue relation record against constitutional guards.
+    Validate rescue strength record against constitutional guards.
 
     Args:
-        record: Rescue relation record to validate
+        record: Rescue strength record to validate
 
     Returns:
         List of warnings (empty if valid)
@@ -139,14 +133,13 @@ def check_rescue_relation_record(record: Dict[str, Any]) -> List[str]:
 
 def check_rescue_coupling(text: str) -> List[str]:
     """
-    Check for rescue coupling patterns (NEW in PR133).
+    Check for rescue coupling patterns (NEW in PR136).
 
     Detects:
+        - "RESCUE_STRONG therefore trade"
+        - "strong rescue means proceed"
         - "rescue therefore act"
-        - "buffer so trade"
-        - "dampen means proceed"
-        - "救えるので触ってよい"
-        - Rescue edge type coupling to action
+        - Rescue strength coupling to action
 
     Args:
         text: Text to check
@@ -159,18 +152,14 @@ def check_rescue_coupling(text: str) -> List[str]:
 
     warnings = []
 
-    # Pattern 1: Rescue + action coupling (English)
+    # Pattern 1: Rescue strength + action coupling
     if RESCUE_COUPLING_RE.search(text):
-        warnings.append("Rescue coupling detected (rescue therefore act).")
+        warnings.append("Rescue coupling detected (rescue strength therefore act).")
 
-    # Pattern 2: Japanese rescue coupling
-    if RESCUE_COUPLING_JP_RE.search(text):
-        warnings.append("Rescue coupling detected (Japanese: 救えるので触ってよい).")
-
-    # Pattern 3: Direct rescue term + action proximity
+    # Pattern 2: Direct rescue strength label + action proximity
     rescue_action_patterns = [
-        r'\b(rescue|buffer|anchor|dampen|continuity|escape)\b.{0,30}\b(touch|execute|trade|swap|buy|sell|proceed|act)\\b',
-        r'\b(edge|relation)\b.{0,30}\b(therefore|so|thus|means)\b.{0,30}\b(action|execute|proceed)\\b',
+        r'\b(RESCUE_STRONG|RESCUE_MEDIUM|RESCUE_WEAK|strong|medium|weak)\b.{0,30}\b(touch|execute|trade|swap|buy|sell|proceed|act)\\b',
+        r'\b(rescue|strength)\b.{0,30}\b(therefore|so|thus|means|implies)\b.{0,30}\b(action|execute|proceed)\\b',
     ]
 
     for pattern in rescue_action_patterns:
@@ -183,28 +172,27 @@ def check_rescue_coupling(text: str) -> List[str]:
 if __name__ == "__main__":
     # Self-test
     print("=" * 60)
-    print("v1.2 Rescue Constitutional Guard - Self Test")
+    print("v1.2 Rescue Strength Constitutional Guard - Self Test")
     print("=" * 60)
     print()
 
-    # Test 1: Clean rescue record (no warnings)
-    print("Test 1: Clean rescue record (no warnings)")
+    # Test 1: Clean rescue strength record (no warnings)
+    print("Test 1: Clean rescue strength record (no warnings)")
     clean_record = {
-        "v12_rescue_summary": "Role rescue relation from STABILITY_ROLE to VOLATILITY_ROLE may provide edge type BUFFER with strength MODERATE.",
-        "v12_rescue_edge_type": "BUFFER",
+        "v12_rescue_summary": "Rescue strength RESCUE_STRONG may indicate structural pattern for REGIME_MEDIUM × STABILITY_ROLE × D1_LIQUIDATION × EDGE_SHIELD.",
     }
-    clean_warnings = check_rescue_relation_record(clean_record)
+    clean_warnings = check_rescue_strength_record(clean_record)
     print(f"Clean record warnings: {len(clean_warnings)}")
     if clean_warnings:
         print(f"  Warnings: {clean_warnings}")
     print()
 
-    # Test 2: Dirty rescue record (numeric patterns)
-    print("Test 2: Dirty rescue record (numeric patterns)")
+    # Test 2: Dirty rescue strength record (numeric patterns)
+    print("Test 2: Dirty rescue strength record (numeric patterns)")
     dirty_numeric = {
-        "v12_rescue_summary": "Role rescue relation expected to yield 30% improvement in stability.",
+        "v12_rescue_summary": "Rescue strength expected to yield 30% improvement.",
     }
-    dirty_warnings = check_rescue_relation_record(dirty_numeric)
+    dirty_warnings = check_rescue_strength_record(dirty_numeric)
     print(f"Dirty record warnings: {len(dirty_warnings)}")
     if dirty_warnings:
         print("  Warnings:")
@@ -212,12 +200,12 @@ if __name__ == "__main__":
             print(f"    - {w}")
     print()
 
-    # Test 3: Dirty rescue record (rescue coupling)
-    print("Test 3: Dirty rescue record (rescue coupling)")
+    # Test 3: Dirty rescue strength record (rescue coupling)
+    print("Test 3: Dirty rescue strength record (rescue coupling)")
     dirty_coupling = {
-        "v12_rescue_summary": "Role rescue relation buffer therefore execute trade.",
+        "v12_rescue_summary": "Rescue strength RESCUE_STRONG therefore execute trade.",
     }
-    dirty_warnings_coupling = check_rescue_relation_record(dirty_coupling)
+    dirty_warnings_coupling = check_rescue_strength_record(dirty_coupling)
     print(f"Dirty record warnings: {len(dirty_warnings_coupling)}")
     if dirty_warnings_coupling:
         print("  Warnings:")
@@ -225,25 +213,25 @@ if __name__ == "__main__":
             print(f"    - {w}")
     print()
 
-    # Test 4: Dirty rescue record (rescued so proceed)
-    print("Test 4: Dirty rescue record (rescued so proceed)")
-    dirty_rescued = {
-        "v12_rescue_summary": "Role rescued by buffer so proceed with swap.",
+    # Test 4: Dirty rescue strength record (strong rescue means proceed)
+    print("Test 4: Dirty rescue strength record (strong rescue means proceed)")
+    dirty_means = {
+        "v12_rescue_summary": "Strong rescue means proceed with swap.",
     }
-    dirty_warnings_rescued = check_rescue_relation_record(dirty_rescued)
-    print(f"Dirty record warnings: {len(dirty_warnings_rescued)}")
-    if dirty_warnings_rescued:
+    dirty_warnings_means = check_rescue_strength_record(dirty_means)
+    print(f"Dirty record warnings: {len(dirty_warnings_means)}")
+    if dirty_warnings_means:
         print("  Warnings:")
-        for w in dirty_warnings_rescued:
+        for w in dirty_warnings_means:
             print(f"    - {w}")
     print()
 
-    # Test 5: Dirty rescue record (token literals)
-    print("Test 5: Dirty rescue record (token literals)")
+    # Test 5: Dirty rescue strength record (token literals)
+    print("Test 5: Dirty rescue strength record (token literals)")
     dirty_token = {
-        "v12_rescue_summary": "Role rescue relation with SUI and USDC tokens.",
+        "v12_rescue_summary": "Rescue strength with SUI and USDC tokens.",
     }
-    dirty_warnings_token = check_rescue_relation_record(dirty_token)
+    dirty_warnings_token = check_rescue_strength_record(dirty_token)
     print(f"Dirty record warnings: {len(dirty_warnings_token)}")
     if dirty_warnings_token:
         print("  Warnings:")

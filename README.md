@@ -4158,6 +4158,147 @@ This is label propagation for structural pattern classification.
 
 ---
 
+### v1.2 Rescue Strength Classification Engine v1 (PR136)
+
+**Purpose:** Classify rescue strength (RESCUE_NONE/WEAK/MEDIUM/STRONG) with strict conditions for STRONG requiring explicit ALLOW_RESCUE_STRONG constraint binding.
+
+**What is Rescue Strength?**
+
+RescueStrength ≠ Action
+RescueStrength ≠ Recommendation
+RescueStrength = Structural label propagation
+
+**Rescue Strength Labels (v1):**
+
+```python
+RESCUE_NONE     # No rescue strength (default/blocked)
+RESCUE_WEAK     # Weak rescue strength observed
+RESCUE_MEDIUM   # Medium rescue strength observed
+RESCUE_STRONG   # Strong rescue strength observed (strict conditions)
+```
+
+**Classification Rules (First-match-wins):**
+
+0. **Invalid inputs** → `RESCUE_NONE` (defensive, never errors)
+1. **REGIME_CRITICAL** → `RESCUE_NONE`
+2. **INELIGIBLE** → `RESCUE_NONE`
+3. **EDGE_LEAK** → `RESCUE_NONE`
+3.5. **ELIGIBLE_DRY_RUN_ONLY** → cap at `RESCUE_WEAK`
+4. **RESCUE_STRONG (strict)**:
+   - REGIME_MEDIUM + EDGE_SHIELD + STABILITY/HEDGE + D1/D4/D5
+   - constraint_binding contains "ALLOW_RESCUE_STRONG"
+   - eligibility != INELIGIBLE and != ELIGIBLE_DRY_RUN_ONLY
+   - NEVER for VOLATILITY_ROLE or EDGE_AMPLIFY
+5. **RESCUE_MEDIUM**:
+   - REGIME_MEDIUM + SHIELD/NEUTRAL + STABILITY/HEDGE/LIQUIDITY
+6. **RESCUE_WEAK**:
+   - REGIME_HIGH/LOW + EDGE_SHIELD
+7. **Default** → `RESCUE_NONE`
+
+**Example:**
+
+```python
+from rescue import (
+    classify_rescue_strength_v1,
+    RESCUE_STRONG,
+)
+
+# Classify rescue strength (STRONG requires ALLOW_RESCUE_STRONG)
+result = classify_rescue_strength_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    role_record={"v12_role_carrier_role_type": "STABILITY_ROLE"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    edge_record={"v12_edge_type": "EDGE_SHIELD"},
+    eligibility_record={"v12_eligibility_status": "ELIGIBLE_CONSIDERATION_ONLY"},
+    constraint_binding_record={"v12_contrib_constraint_labels": ["ALLOW_RESCUE_STRONG"]},
+)
+
+# Check rescue strength
+if result["v12_rescue_strength"] == RESCUE_STRONG:
+    print("Strong rescue strength observed")
+    # Output: RESCUE_STRONG
+```
+
+**Rescue Strength Schema Fields:**
+
+```python
+{
+    "v12_rescue_mode": "READ_ONLY",
+    "v12_rescue_status": "AVAILABLE",
+    "v12_rescue_strength": "RESCUE_STRONG",
+    "v12_rescue_regime": "REGIME_MEDIUM",
+    "v12_rescue_role": "STABILITY_ROLE",
+    "v12_rescue_distortion": "D1_LIQUIDATION",
+    "v12_rescue_edge_type": "EDGE_SHIELD",
+    "v12_rescue_eligibility": "ELIGIBLE_CONSIDERATION_ONLY",
+    "v12_rescue_summary": "Rescue strength RESCUE_STRONG may indicate structural pattern for REGIME_MEDIUM × STABILITY_ROLE × D1_LIQUIDATION × EDGE_SHIELD.",
+    "v12_rescue_basis": ["v11_regime_level", "v12_role_carrier_role_type", "v12_distortion_type", "v12_edge_type"],
+}
+```
+
+**Files:**
+- `python/rescue/v12_rescue_strength_schema.py` - Rescue strength schema with 4 labels
+- `python/rescue/v12_rescue_strength_engine_v1.py` - Classification engine with strict STRONG conditions
+- `python/rescue/v12_rescue_constitutional_guard.py` - Rescue coupling guard (updated)
+- `python/rescue/__init__.py` - Package exports
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` → strength classification and blocking
+- **Role (PR130)**: `v12_role_carrier_role_type` → strength classification
+- **Distortion (PR129)**: `v12_distortion_type` → STRONG conditions (D1/D4/D5)
+- **Edge Type (PR135)**: `v12_edge_type` → STRONG requires EDGE_SHIELD, blocks EDGE_LEAK
+- **Eligibility (PR128)**: `v12_eligibility_status` → INELIGIBLE blocks, DRY_RUN_ONLY caps at WEAK
+- **Constraints (PR132)**: `v12_contrib_constraint_labels` → ALLOW_RESCUE_STRONG enables STRONG
+
+**Constitutional Guarantees (PR136):**
+- READ-ONLY classification (no execution)
+- No numeric patterns
+- No token literals
+- No trading vocabulary
+- No prescriptive language
+- No rescue coupling ("RESCUE_STRONG therefore trade", "strong rescue means proceed") ← ENHANCED
+- Warning-only guards (never fail)
+- Defensive error handling (never raises)
+
+**Philosophy (PR136):**
+```
+RescueStrength = Structural label (not action)
+RESCUE_STRONG = Strong structural pattern observed (not "act now")
+RESCUE_MEDIUM = Medium structural pattern observed (not "consider acting")
+RESCUE_WEAK = Weak structural pattern observed (not "minor action ok")
+RESCUE_NONE = No structural pattern observed (not "blocked")
+
+Rescue strength classifies structural pattern strength in regime × role × distortion × edge space.
+Rescue strength does NOT instruct action.
+Rescue strength does NOT change behavior.
+Rescue strength ONLY provides structural labels for:
+  - Human review and explanation
+  - Pattern strength recognition across time
+  - Structural analysis and visualization
+  - Artifact labeling and chain-of-custody
+
+RESCUE_STRONG has strict conditions to prevent false positives:
+  - Requires explicit ALLOW_RESCUE_STRONG constraint binding
+  - Never granted to VOLATILITY_ROLE or EDGE_AMPLIFY
+  - Blocked by DRY_RUN_ONLY eligibility status
+  - Only for STABILITY/HEDGE roles with specific distortions (D1/D4/D5)
+
+This is NOT decision logic.
+This is NOT instruction.
+This is label propagation for structural pattern strength classification.
+```
+
+**Use Cases:**
+
+1. **Structural strength analysis**: Identify strong/medium/weak rescue patterns across regime transitions
+2. **Human explanation**: Present rescue strength context to operators for review
+3. **Pattern strength visualization**: Build time-series graphs of rescue strength transitions
+4. **Artifact labeling**: Tag records with structural rescue strength labels
+5. **Integration with edge types**: Combine with PR135 edge types for multi-layer structural labeling
+6. **Constraint binding validation**: ALLOW_RESCUE_STRONG acts as explicit gatekeeper for STRONG classification
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4176,7 +4317,8 @@ This is label propagation for structural pattern classification.
 - **No contribution zone coupling**: "primary therefore trade", "blocked so stop" patterns prohibited (PR132)
 - **No rescue coupling**: "rescue therefore act", "buffer so trade", "救えるので触ってよい" patterns prohibited (PR133)
 - **No subtype coupling**: "D1B therefore act", "subtype implies trade" patterns prohibited (PR134)
-- **No edge coupling** (NEW): "EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop" patterns prohibited (PR135)
+- **No edge coupling**: "EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop" patterns prohibited (PR135)
+- **No rescue strength coupling** (NEW): "RESCUE_STRONG therefore trade", "strong rescue means proceed" patterns prohibited (PR136)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -4195,6 +4337,7 @@ python3 python/validation/pr132_contribution_constraint_binding_v1_smoke.py
 python3 python/validation/pr133_role_rescue_relation_v1_smoke.py
 python3 python/validation/pr134_distortion_subtype_classifier_v1_smoke.py
 python3 python/validation/pr135_edge_type_classifier_v1_smoke.py
+python3 python/validation/pr136_rescue_strength_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
