@@ -4758,6 +4758,170 @@ Rescue flow narrative does NOT:
 
 ---
 
+### v1.2 Approval Packet Integration Orchestrator v1 (PR140)
+
+**Purpose:** Integration orchestrator for v1.2 components. Assembles approval packet + render + rescue extensions from artifact bundle.
+
+**⚠️ Constitutional Notice - Integration ≠ Judgment:**
+
+```
+This orchestrator does NOT:
+- Recommend approval decisions
+- Contain "should approve" logic
+- Make approval judgments
+- Execute transactions
+
+This orchestrator ONLY:
+- Assembles information from v1.2 components
+- Generates human-readable packet + render
+- Collects constitutional warnings
+```
+
+**What is v1.2 Integration?**
+
+Integration = Assembly (not judgment)
+Orchestrator = Information bundler (not approval decider)
+
+**Architecture:**
+
+```
+Artifact Bundle (PR115/PR116)
+    ↓
+v1.2 Integration Orchestrator (PR140)
+    ├─ Extract artifacts from bundle
+    ├─ Build missing components (explain_context, narrative, preview, approval_gate)
+    ├─ Apply label-only projection to inputs
+    ├─ Assemble v1.2 packet using PR124 builder
+    │  └─ Components: trajectory, distortion, eligibility, contribution, rescue
+    ├─ Render packet using PR125/PR138 renderer
+    │  └─ Optional: Rescue Flow section (PR138)
+    ├─ Generate rescue narrative extension (PR139, if mode ON)
+    └─ Collect constitutional warnings from all components
+    ↓
+{approval_packet, render_record, rescue_narrative_extension, warnings}
+```
+
+**Integrated Components:**
+
+- **PR124**: Approval Packet Builder (reused, not modified)
+- **PR125/PR138**: Human Review Renderer with Rescue Flow
+- **PR139**: Rescue Flow Narrative Extension
+- **PR126**: Continuous Permission Monitor
+- **PR127**: Permission Trajectory Binding
+- **PR128**: Role-Distortion Eligibility
+- **PR129/PR134**: Distortion Detection & Subtype
+- **PR130**: Role Carrier Qualification
+- **PR131/PR132**: Contribution Model & Constraints
+- **PR133**: Role Rescue Relation
+- **PR135**: Edge Type Classification
+- **PR136**: Rescue Strength Classification
+- **PR137**: Rescue Flow Graph
+
+**Usage:**
+
+```python
+from packet import build_approval_packet_v12
+
+# Prepare artifact bundle (PR115/PR116 format)
+artifact_bundle = {
+    "artifacts": {
+        # Required
+        "regime_record": regime,
+        "drift_record": drift,
+
+        # Optional v1.2 components
+        "permission_record": permission,
+        "trajectory_record": trajectory,
+        "distortion_catalog_record": distortion,
+        "eligibility_record": eligibility,
+        "role_qualification_record": qualification,
+        "contribution_record": contribution,
+        "rescue_flow_graph": rescue_flow,
+
+        # Optional pre-built components
+        "explain_context_record": explain_context,
+        "narrative_record": narrative,
+        "preview_record": preview,
+        "approval_gate_record": approval_gate,
+        "approval_registry_record": approval_registry,
+    }
+}
+
+# Build v1.2 approval packet (integration orchestration)
+result = build_approval_packet_v12(
+    artifact_bundle=artifact_bundle,
+    narrative_style="STANDARD",
+    render_style="STANDARD",
+    render_format="MARKDOWN",
+    rescue_narrative_mode="ON",
+)
+
+# Access outputs
+packet = result["approval_packet"]
+render = result["render_record"]
+rescue_narrative = result["rescue_narrative_extension"]
+warnings = result["warnings"]
+
+# Check packet status
+if packet["v11_packet_status"] == "AVAILABLE":
+    # Packet ready for human review
+    print(render["v11_render_output"])
+```
+
+**Files:**
+- `python/packet/v12_approval_packet_integration_orchestrator_engine_v1.py` - Integration engine
+- `python/packet/__init__.py` - Extended with v12 exports
+- `python/validation/pr140_approval_packet_integration_orchestrator_v1_smoke.py` - Integration tests
+
+**Integration Points:**
+- **Reuses PR124**: Calls v1.1 approval packet builder (no modification)
+- **Artifact Bundle (PR115/PR116)**: Input format
+- **All v1.2 components**: Orchestrates PR126-PR139
+- **Constitutional guards**: Collects warnings from packet/render/narrative
+
+**Constitutional Guarantees (PR140):**
+- READ-ONLY: No execution logic
+- Non-prescriptive: No "should approve" language
+- No approval recommendation: Assembly only, no judgment
+- Defensive: Invalid input → graceful ERROR + warnings
+- Warning-only: All guards return warnings (never fail)
+- Label-only projection: Removes numeric patterns/token literals before downstream
+
+**Philosophy (PR140):**
+```
+Integration = Assembly (not judgment)
+Orchestrator = Information bundler (not approval decider)
+
+The v1.2 integration orchestrator:
+  - Assembles artifacts into packet
+  - Generates human-readable render
+  - Collects constitutional warnings
+  - Provides complete review bundle
+
+The v1.2 integration orchestrator does NOT:
+  - Recommend approval decisions
+  - Contain "should approve" language
+  - Make approval judgments
+  - Execute transactions
+  - Modify PR124 (reuses existing builder)
+
+PR124 Relationship:
+  - PR124 = v1.1 packet builder (core component assembly)
+  - PR140 = v1.2 integration orchestrator (artifact bundle → packet + render + warnings)
+  - PR140 calls PR124 internally (adapter pattern)
+  - PR124 remains unchanged (backward compatible)
+```
+
+**Use Cases:**
+
+1. **End-to-end v1.2 testing**: Validate full pipeline from artifacts to render
+2. **Human review preparation**: Generate complete packet + render for operator interface
+3. **Constitutional validation**: Collect all warnings across v1.2 components
+4. **Artifact bundling**: Convert individual v1.2 records into unified review bundle
+5. **Integration testing**: Verify PR126-PR139 components work together correctly
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4779,7 +4943,8 @@ Rescue flow narrative does NOT:
 - **No edge coupling**: "EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop" patterns prohibited (PR135)
 - **No rescue strength coupling**: "RESCUE_STRONG therefore trade", "strong rescue means proceed" patterns prohibited (PR136)
 - **No flow coupling**: "this edge means execute", "flow graph therefore act" patterns prohibited (PR137)
-- **No rescue narrative coupling** (NEW): "RESCUE_STRONG therefore execute", "rescue flow means trade" patterns prohibited (PR139)
+- **No rescue narrative coupling**: "RESCUE_STRONG therefore execute", "rescue flow means trade" patterns prohibited (PR139)
+- **No integration recommendation coupling** (NEW): "packet AVAILABLE therefore approve", "warnings empty means proceed" patterns prohibited (PR140)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -4802,6 +4967,7 @@ python3 python/validation/pr136_rescue_strength_engine_v1_smoke.py
 python3 python/validation/pr137_rescue_flow_graph_v1_smoke.py
 python3 python/validation/pr138_rescue_flow_render_extension_smoke.py
 python3 python/validation/pr139_rescue_flow_narrative_extension_v1_smoke.py
+python3 python/validation/pr140_approval_packet_integration_orchestrator_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
