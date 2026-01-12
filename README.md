@@ -4619,6 +4619,145 @@ Rescue flow render does NOT:
 
 ---
 
+### v1.2 Rescue Flow Narrative Extension v1 (PR139)
+
+**Purpose:** Add Rescue Flow Graph (PR137) to Human Narrative Builder (PR123) output as "structural explanation" (not instruction/conclusion).
+
+**What is Rescue Flow Narrative?**
+
+Narrative ≠ Instruction ≠ Conclusion
+Rescue Flow Narrative = Structural description in natural language
+
+**Extension:**
+
+Adds rescue flow structural narrative to human-readable explanation context with label-focused text generation.
+
+**Text Generation Rules:**
+
+- **CONCISE**: 1-2 lines (existence statement only)
+- **STANDARD**: 2-4 paragraphs (existence, support directions, strength distribution)
+- **DETAILED**: STANDARD + up to 6 edge lines
+
+**Text Style:**
+
+- Deterministic text generation (no LLM, no randomness)
+- Label-focused structural description
+- Non-prescriptive language only
+- Allowed: "indicates", "may", "can", "tends to", "is labeled as"
+- Forbidden: "therefore", "so", "means", "should", "must", "execute", "trade", "swap"
+
+**Example Output (CONCISE style):**
+
+```
+rescue flow graph indicates structural ROLE-to-ROLE rescue relationships. graph contains 2 labeled edges across 3 role labels.
+```
+
+**Example Output (STANDARD style):**
+
+```
+rescue flow graph indicates structural ROLE-to-ROLE rescue relationships. graph contains 2 labeled edges across 3 role labels.
+
+HEDGE may support VOLATILITY. STABILITY may support VOLATILITY.
+
+rescue strength labels range from MEDIUM to WEAK.
+```
+
+**Example Output (DETAILED style):**
+
+```
+rescue flow graph indicates structural ROLE-to-ROLE rescue relationships. graph contains 2 labeled edges across 3 role labels.
+
+HEDGE may support VOLATILITY. STABILITY may support VOLATILITY.
+
+rescue strength labels range from MEDIUM to WEAK.
+
+edge details: STABILITY may support VOLATILITY | RESCUE_MEDIUM | HEDGE may support VOLATILITY | RESCUE_WEAK
+```
+
+**Usage:**
+
+```python
+from narrative import build_rescue_flow_narrative_extension_v1
+from flow import build_rescue_flow_graph_v1
+
+# Build flow graph (PR137)
+flow_graph = build_rescue_flow_graph_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_catalog_record={"v12_distortion_type": "D1_LIQUIDATION"},
+)
+
+# Build rescue flow narrative extension (PR139)
+narrative_extension = build_rescue_flow_narrative_extension_v1(
+    rescue_flow_graph_record=flow_graph,
+    style="STANDARD",
+    mode="ON",
+)
+
+# Check output
+if narrative_extension["v12_rescue_narrative_status"] == "AVAILABLE":
+    for paragraph in narrative_extension["v12_rescue_narrative_paragraphs"]:
+        print(paragraph)
+```
+
+**Files:**
+- `python/narrative/v12_narrative_rescue_flow_extension_schema.py` - Schema for rescue narrative
+- `python/narrative/v12_rescue_flow_narrative_extension_engine_v1.py` - Narrative generation engine
+- `python/narrative/v12_rescue_flow_narrative_constitutional_guard.py` - Constitutional guards
+- `python/narrative/__init__.py` - Extended with rescue narrative exports
+
+**Integration Points:**
+- **Human Narrative Builder (PR123)**: Extended with rescue flow structural narrative
+- **Rescue Flow Graph (PR137)**: Converted to natural language description
+- **Edge Type (PR135)**: Expressed as "may support", "is neutral to", etc.
+- **Rescue Strength (PR136)**: Expressed in strength distribution text
+
+**Constitutional Guarantees (PR139):**
+- Non-prescriptive language only ("may", "indicates", not "should", "must")
+- No action vocabulary ("execute", "trade", "swap", "buy", "sell")
+- No causal coupling ("RESCUE_STRONG therefore execute")
+- No token literals (only ROLE labels)
+- No numeric patterns beyond structural counts
+- Narrative ≠ Instruction ≠ Conclusion
+- Warning-only guards (never fail)
+
+**Philosophy (PR139):**
+```
+Narrative = Structural description (not instruction)
+Rescue Flow Narrative = Label-focused explanation in natural language
+
+The rescue flow narrative describes ROLE-to-ROLE patterns with:
+  - Non-prescriptive language
+  - Structural focus only
+  - Constitutional guarantees enforced
+
+"STABILITY may support VOLATILITY" = Structural pattern observed
+NOT: "therefore execute trade"
+NOT: "this means act"
+NOT: "system should swap"
+
+Rescue flow narrative provides:
+  - Human-readable structural explanation
+  - Label-focused natural language
+  - Non-prescriptive context description
+
+Rescue flow narrative does NOT:
+  - Recommend actions
+  - Imply next steps
+  - Contain trading instructions
+  - Include token/amount/address references
+  - Use causal coupling language
+```
+
+**Use Cases:**
+
+1. **Human context**: Add structural narrative to explanation context for operators
+2. **Natural language**: Convert flow graph to readable text for non-technical review
+3. **Audit trail**: Include rescue flow explanation in narrative artifacts
+4. **Extension architecture**: Add rescue context without modifying PR123 core
+5. **Constitutional enforcement**: Prevent prescriptive language in narrative generation
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4639,7 +4778,8 @@ Rescue flow render does NOT:
 - **No subtype coupling**: "D1B therefore act", "subtype implies trade" patterns prohibited (PR134)
 - **No edge coupling**: "EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop" patterns prohibited (PR135)
 - **No rescue strength coupling**: "RESCUE_STRONG therefore trade", "strong rescue means proceed" patterns prohibited (PR136)
-- **No flow coupling** (NEW): "this edge means execute", "flow graph therefore act" patterns prohibited (PR137)
+- **No flow coupling**: "this edge means execute", "flow graph therefore act" patterns prohibited (PR137)
+- **No rescue narrative coupling** (NEW): "RESCUE_STRONG therefore execute", "rescue flow means trade" patterns prohibited (PR139)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -4661,6 +4801,7 @@ python3 python/validation/pr135_edge_type_classifier_v1_smoke.py
 python3 python/validation/pr136_rescue_strength_engine_v1_smoke.py
 python3 python/validation/pr137_rescue_flow_graph_v1_smoke.py
 python3 python/validation/pr138_rescue_flow_render_extension_smoke.py
+python3 python/validation/pr139_rescue_flow_narrative_extension_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
