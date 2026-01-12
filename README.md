@@ -2401,7 +2401,178 @@ Narrative Builder (PR123) ← Human-readable story
          ↓
 Approval Packet (PR124) ← Review unit carrier
          ↓
-[Human Review Interface] (ready for UI/CLI presentation)
+Human Review Renderer (PR125) ← Formats for display
+         ↓
+[Human Review Interface] (CLI/UI presentation ready)
+```
+
+### v1.1 Human Review Renderer v1 (PR125)
+
+**Purpose:** Render approval packet (PR124) into human-readable format for CLI/UI display.
+
+**Render = Display Shape (not instruction/conclusion)**
+
+**Render Philosophy:**
+```
+Render ≠ Instruction
+Render ≠ Conclusion
+Render = Display Shape
+
+Render provides:
+  - Formatted output for human reading (Markdown/Text)
+  - Structured presentation of packet contents
+  - Non-prescriptive labels and state descriptions
+  - Clear section organization
+
+Render does NOT:
+  - Recommend actions
+  - Draw conclusions
+  - Contain token names, amounts, addresses
+  - Prescribe responses
+  - Imply next steps
+```
+
+**Schema Fields:**
+- `v11_render_mode` - ON | OFF
+- `v11_render_status` - AVAILABLE | UNAVAILABLE | ERROR
+- `v11_render_format` - MARKDOWN | TEXT
+- `v11_render_style` - CONCISE | STANDARD | DETAILED
+- `v11_render_summary` - Short non-prescriptive summary
+- `v11_render_output` - Formatted text string (Markdown or plain text)
+- `v11_render_basis` - Array of field names referenced
+
+**Render Styles:**
+- **CONCISE** - One screen view (minimal sections)
+- **STANDARD** - Normal operation (Labels, Narrative, Preview, Approval)
+- **DETAILED** - Full view (includes Basis & Artifacts)
+
+**Render Sections (Markdown):**
+
+1. **Title**: `# Approval Packet (READ-ONLY)`
+2. **Labels**: Regime, drift, permission, preview, approval labels
+3. **Narrative**: Human-readable story (PR123) - STANDARD/DETAILED only
+4. **Preview**: Impact shape description (PR112) - STANDARD/DETAILED only
+5. **Approval**: Gate + Registry state labels (PR113/114) - STANDARD/DETAILED only
+6. **Metadata**: Basis & Artifacts - DETAILED only
+
+**Example Rendered Output (STANDARD, Markdown):**
+
+```markdown
+# Approval Packet (READ-ONLY)
+
+## Labels
+
+- REGIME_MEDIUM
+- DRIFT_LOW
+- PERMISSION_DRY_RUN_ONLY
+- PREVIEW_RISK_SURFACE: CONSTRAINED
+- APPROVAL_REQUIREMENT: REQUIRED
+- APPROVAL_STATE: UNREQUESTED
+
+## Narrative
+
+current regime label indicates elevated uncertainty. structural drift label indicates low vocabulary shift. execution permission label limits consideration to dry-run-only.
+
+## Preview
+
+Risk Surface: CONSTRAINED
+Status: AVAILABLE
+
+## Approval
+
+Requirement: REQUIRED
+State: UNREQUESTED
+```
+
+**Constitutional Guarantees (PR125):**
+- No trading vocabulary (swap/buy/sell/execute/sign/transfer)
+- No execution operations (transaction/broadcast/submit)
+- No token literals (SUI/USDC/BTC/ETH), addresses, amounts
+- No numeric patterns (counts, percentages, scores)
+- No forbidden vocabulary (good/bad, correct/wrong)
+- No prescriptive language (should/must/need to)
+- No evaluative language (quality judgments)
+- No causal coupling ("therefore", "so", "hence")
+- Defensive (never raises exceptions)
+- Warning-only (exit 0 always)
+
+**Usage Example:**
+
+```python
+from packet import build_approval_packet_v1
+from render import render_review_packet_v1
+
+# Build approval packet (from PR124)
+packet = build_approval_packet_v1(
+    explain_context_record=explanation,
+    narrative_record=narrative,
+    preview_record=preview,
+    approval_gate_record=approval_gate,
+)
+
+# Render for human review (MARKDOWN, STANDARD style)
+render = render_review_packet_v1(packet, fmt="MARKDOWN", style="STANDARD")
+
+# Display to terminal/UI
+print(render["v11_render_output"])
+
+# Try CONCISE style for compact view
+concise_render = render_review_packet_v1(packet, fmt="MARKDOWN", style="CONCISE")
+print(concise_render["v11_render_output"])
+
+# Try TEXT format for plain terminal
+text_render = render_review_packet_v1(packet, fmt="TEXT", style="STANDARD")
+print(text_render["v11_render_output"])
+```
+
+**Style Comparison:**
+
+```python
+# CONCISE (one screen)
+"""
+# Approval Packet (READ-ONLY)
+
+## Labels
+
+- REGIME_MEDIUM
+- DRIFT_LOW
+- PERMISSION_DRY_RUN_ONLY
+- APPROVAL_REQUIREMENT: REQUIRED
+"""
+
+# STANDARD (normal operation)
+"""
+# Approval Packet (READ-ONLY)
+
+## Labels
+[labels...]
+
+## Narrative
+[human-readable story...]
+
+## Preview
+[impact shape...]
+
+## Approval
+[gate state...]
+"""
+
+# DETAILED (everything)
+"""
+[...all sections plus...]
+
+## Metadata
+
+**Basis Fields:**
+- v11_regime_level
+- v10_drift_level
+- v10_execution_permission
+
+**Artifacts:**
+- pr110_regime_record
+- pr120_drift_record
+- pr101_execution_record
+"""
 ```
 
 ---
@@ -2431,6 +2602,7 @@ python3 python/validation/pr113_human_approval_gate_v1_smoke.py
 python3 python/validation/pr122_human_explanation_context_smoke.py
 python3 python/validation/pr123_human_narrative_builder_v1_smoke.py
 python3 python/validation/pr124_approval_packet_builder_v1_smoke.py
+python3 python/validation/pr125_human_review_renderer_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
