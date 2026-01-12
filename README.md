@@ -2225,7 +2225,183 @@ PR122: Explanation Context (structural signals)
          ↓
 PR123: Narrative Builder (human-readable story)
          ↓
-[PR124: Approval Packet Builder] (ready for human review)
+PR124: Approval Packet Builder (review unit carrier)
+```
+
+### v1.1 Approval Packet Builder v1 (PR124)
+
+**Purpose:** Bundle component records into a single review unit for human interface.
+
+**Packet = Review Unit Carrier (not decision/instruction)**
+
+**Packet Philosophy:**
+```
+Packet ≠ Decision
+Packet ≠ Instruction
+Packet = Review Unit Carrier
+
+Packet provides:
+  - Bundled component records (context, narrative, preview, gate, registry)
+  - Non-prescriptive summary
+  - Artifact references and basis
+  - Current approval state (as label only)
+
+Packet does NOT:
+  - Recommend actions
+  - Evaluate quality (good/bad)
+  - Contain token names, amounts, addresses
+  - Prescribe responses
+  - Imply what to do next
+```
+
+**Schema Fields:**
+- `v11_packet_mode` - ON | OFF
+- `v11_packet_status` - AVAILABLE | UNAVAILABLE | ERROR
+- `v11_packet_packet_type` - APPROVAL_PACKET | UNCLASSIFIED
+- `v11_packet_summary` - Short non-prescriptive summary
+- `v11_packet_components` - Object of embedded component records:
+  - `explain_context` - PR122 record or minimal projection
+  - `narrative` - PR123 record or minimal projection
+  - `preview` - PR112 record or minimal projection
+  - `approval_gate` - PR113 record or minimal projection
+  - `approval_registry` - PR114 record or minimal projection
+- `v11_packet_basis` - Array of field names used (references only)
+- `v11_packet_artifacts` - Array of artifact labels
+
+**Component Projection:**
+
+To avoid duplicating large nested objects, components can be stored as:
+1. **Full records** - Complete component with all fields
+2. **Minimal projections** - Only mode/status/type/labels + basis/artifacts
+
+**Example Approval Packet:**
+
+```json
+{
+  "v11_packet_mode": "ON",
+  "v11_packet_status": "AVAILABLE",
+  "v11_packet_packet_type": "APPROVAL_PACKET",
+  "v11_packet_summary": "approval packet assembled. context, narrative, preview, gate included. approval requirement labeled as REQUIRED. preview risk surface labeled as CONSTRAINED.",
+  "v11_packet_components": {
+    "explain_context": {
+      "v11_explain_mode": "ON",
+      "v11_explain_status": "AVAILABLE",
+      "v11_explain_signals": ["REGIME_MEDIUM", "DRIFT_LOW"],
+      "v11_explain_basis": ["v11_regime_level", "v10_drift_level"]
+    },
+    "narrative": {
+      "v11_narrative_mode": "ON",
+      "v11_narrative_status": "AVAILABLE",
+      "v11_narrative_style": "STANDARD",
+      "v11_narrative_text": "current regime label indicates elevated uncertainty. structural drift label indicates low vocabulary shift."
+    },
+    "preview": {
+      "v11_preview_mode": "ON",
+      "v11_preview_status": "AVAILABLE",
+      "v11_preview_risk_surface": "CONSTRAINED"
+    },
+    "approval_gate": {
+      "v11_approval_mode": "ON",
+      "v11_approval_status": "AVAILABLE",
+      "v11_approval_requirement": "REQUIRED",
+      "v11_approval_state": "UNREQUESTED"
+    }
+  },
+  "v11_packet_basis": [
+    "v11_regime_level",
+    "v10_drift_level",
+    "v10_execution_permission"
+  ],
+  "v11_packet_artifacts": [
+    "pr110_regime_record",
+    "pr120_drift_record",
+    "pr101_execution_record"
+  ]
+}
+```
+
+**Packet Summary Templates:**
+
+Non-prescriptive summary generation:
+- "approval packet assembled."
+- "context, narrative, preview, gate included."
+- "approval requirement labeled as REQUIRED."
+- "preview risk surface labeled as CONSTRAINED."
+
+No "approve now", "execute", "do X" language.
+
+**Constitutional Guarantees (PR124):**
+- No trading vocabulary (swap/buy/sell/execute/sign/transfer)
+- No execution operations (transaction/broadcast/submit)
+- No token literals (SUI/USDC/BTC/ETH), addresses, amounts
+- No numeric patterns (counts, percentages, scores)
+- No forbidden vocabulary (good/bad, correct/wrong)
+- No prescriptive language (should/must/need to)
+- No prescriptive coupling ("approved therefore execute")
+- No narrative coupling ("this means X", "therefore Y")
+- **No cross-component coupling** (NEW):
+  - No "APPROVED therefore ALLOW" patterns
+  - No "REQUIRED so execute" patterns
+  - No approval state proximity to execution verbs
+  - No state label coupling to action words
+- Defensive (never raises exceptions)
+- Warning-only (exit 0 always)
+
+**Usage Example:**
+
+```python
+from explain import V11HumanExplanationContextSchema
+from narrative import build_human_narrative_v1
+from packet import build_approval_packet_v1
+
+# Create explanation context
+explanation = V11HumanExplanationContextSchema.create_explanation_record(
+    summary="current structural situation: regime medium, drift low, permission dry-run-only.",
+    signals=["REGIME_MEDIUM", "DRIFT_LOW", "PERMISSION_DRY_RUN_ONLY"],
+    basis=["v11_regime_level", "v10_drift_level", "v10_execution_permission"],
+    artifacts=["pr110_regime_record", "pr120_drift_record", "pr101_execution_record"],
+)
+
+# Build narrative
+narrative = build_human_narrative_v1(explanation, style="STANDARD")
+
+# Assemble approval packet
+packet = build_approval_packet_v1(
+    explain_context_record=explanation,
+    narrative_record=narrative,
+    preview_record=preview,  # from PR112
+    approval_gate_record=approval_gate,  # from PR113
+)
+
+print(packet["v11_packet_summary"])
+# Output: "approval packet assembled. context, narrative, preview, gate included. approval requirement labeled as REQUIRED."
+
+print(list(packet["v11_packet_components"].keys()))
+# Output: ['explain_context', 'narrative', 'preview', 'approval_gate']
+```
+
+**Pipeline Flow (Complete):**
+
+```
+Observation (PR107) → Analytics (PR109) → Vocabulary (PR119)
+         ↓
+Drift Detection (PR120)
+         ↓
+Regime Classification (PR110)
+         ↓
+Policy Binding (PR111)
+         ↓
+Preview Engine (PR112)
+         ↓
+Approval Gate (PR113)
+         ↓
+Explanation Context (PR122) ← Bundles structural signals
+         ↓
+Narrative Builder (PR123) ← Human-readable story
+         ↓
+Approval Packet (PR124) ← Review unit carrier
+         ↓
+[Human Review Interface] (ready for UI/CLI presentation)
 ```
 
 ---
@@ -2254,6 +2430,7 @@ python3 python/validation/pr112_execution_preview_engine_v1_smoke.py
 python3 python/validation/pr113_human_approval_gate_v1_smoke.py
 python3 python/validation/pr122_human_explanation_context_smoke.py
 python3 python/validation/pr123_human_narrative_builder_v1_smoke.py
+python3 python/validation/pr124_approval_packet_builder_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
