@@ -3635,6 +3635,118 @@ not from trading skill.
 
 ---
 
+### v1.2 Contribution → Constraint Binding v1 (PR132)
+
+**Purpose:** Bind contribution model (PR131) to existing pipeline as non-prescriptive constraint labels.
+
+**What is Binding?**
+
+Binding ≠ Decision
+Binding ≠ Instruction
+Binding = Label propagation
+
+**Zone Labels:**
+
+```python
+CONTRIB_ZONE_PRIMARY    # Contribution center (MEDIUM × VOLATILITY × D1-D5)
+CONTRIB_ZONE_SECONDARY  # Non-MEDIUM regime (HIGH/LOW)
+CONTRIB_ZONE_BLOCKED    # Critical/Ineligible/Suppressed
+CONTRIB_ZONE_NONE       # Default (no zone detected)
+```
+
+**Binding Rules (First-match-wins):**
+
+1. **REGIME_CRITICAL** → `CONTRIB_ZONE_BLOCKED` (always blocked)
+2. **INELIGIBLE** → `CONTRIB_ZONE_BLOCKED` (no touchability)
+3. **SUPPRESSED** (PR126) → `CONTRIB_ZONE_BLOCKED` (permission suppressed)
+4. **REGIME_HIGH or LOW** → `CONTRIB_ZONE_SECONDARY` (non-MEDIUM)
+5. **REGIME_MEDIUM × VOLATILITY × D1-D5** → `CONTRIB_ZONE_PRIMARY` (contribution center)
+6. **Default** → `CONTRIB_ZONE_NONE` (no zone)
+
+**Example:**
+
+```python
+from bind import bind_contribution_constraints_v1, CONTRIB_ZONE_PRIMARY
+
+# Bind contribution to constraint labels
+result = bind_contribution_constraints_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    role_record={"v12_role_carrier_role_type": "VOLATILITY_ROLE"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    eligibility_record={"v12_eligibility_status": "ELIGIBLE_CONSIDERATION_ONLY"},
+)
+
+# Check zone
+if result["v12_contrib_constraint_zone_label"] == CONTRIB_ZONE_PRIMARY:
+    print("Primary contribution zone observed")
+    print(f"Constraints: {result['v12_contrib_constraint_labels']}")
+    # Output: ['contrib_primary_medium_volatility_distortion']
+```
+
+**Constraint Schema Fields:**
+
+```python
+{
+    "v12_contrib_constraint_mode": "ON",
+    "v12_contrib_constraint_status": "AVAILABLE",
+    "v12_contrib_constraint_zone_label": "CONTRIB_ZONE_PRIMARY",
+    "v12_contrib_constraint_labels": [
+        "contrib_primary_medium_volatility_distortion"
+    ],
+    "v12_contrib_constraint_regime_level": "REGIME_MEDIUM",
+    "v12_contrib_constraint_role_type": "VOLATILITY_ROLE",
+    "v12_contrib_constraint_distortion_type": "D1_LIQUIDATION",
+    "v12_contrib_constraint_summary": "contribution zone labeled CONTRIB_ZONE_PRIMARY...",
+    "v12_contrib_constraint_basis": ["regime_level", "role_type", "distortion_type"],
+}
+```
+
+**Files:**
+- `python/bind/v12_contribution_constraint_schema.py` - Schema definition
+- `python/bind/v12_contribution_constraint_binding_engine_v1.py` - Binding engine
+- `python/bind/v12_contribution_binding_constitutional_guard.py` - Constitutional validation
+- `python/bind/__init__.py` - Package exports
+- `python/bridge/v12_contrib_constraints_to_explain_context_extension.py` - PR122 integration
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` → zone classification
+- **Role (PR130)**: `v12_role_carrier_role_type` → PRIMARY zone filter
+- **Distortion (PR129)**: `v12_distortion_type` → PRIMARY zone filter
+- **Eligibility (PR128)**: `v12_eligibility_status` → BLOCKED zone check
+- **Permission Monitor (PR126)**: `v12_monitor_suppression_state` → BLOCKED zone check
+- **Explanation (PR122)**: Append-only constraint labels
+
+**Constitutional Guarantees (PR132):**
+- READ-ONLY binding (label propagation only)
+- No numeric patterns
+- No token literals
+- No trading vocabulary
+- No prescriptive language
+- No contribution zone coupling ("primary therefore trade", "blocked so stop") ← NEW
+- Warning-only guards (never fail)
+
+**Philosophy (PR132):**
+```
+Binding = Label propagation (not decision)
+Zone = Structural observation (not recommendation)
+Constraint = Label for explain/plan/preview (not instruction)
+
+PRIMARY zone = Contribution center observed
+SECONDARY zone = Non-MEDIUM regime observed
+BLOCKED zone = Critical/ineligible/suppressed observed
+NONE zone = Default (no zone detected)
+
+Binding does NOT change behavior.
+Binding does NOT trigger execution.
+Binding ONLY appends labels to existing pipeline.
+
+This is NOT decision logic.
+This is NOT instruction.
+This is label propagation for human interface and artifact chain-of-custody.
+```
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -3648,8 +3760,9 @@ not from trading skill.
 - **No trajectory coupling**: "permission improved therefore act" patterns prohibited (PR127)
 - **No distortion coupling**: "D1 therefore act" patterns prohibited (PR129)
 - **No role coupling**: "QUALIFIED therefore act" patterns prohibited (PR130)
-- **No contribution coupling** (NEW): "++ therefore trade", "-- therefore stop" patterns prohibited (PR131)
-- **No return guarantee language** (NEW): "annual return", "backtest", "assured" prohibited (PR131)
+- **No contribution coupling**: "++ therefore trade", "-- therefore stop" patterns prohibited (PR131)
+- **No return guarantee language**: "annual return", "backtest", "assured" prohibited (PR131)
+- **No contribution zone coupling** (NEW): "primary therefore trade", "blocked so stop" patterns prohibited (PR132)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -3664,6 +3777,7 @@ python3 python/validation/pr128_role_distortion_eligibility_v1_smoke.py
 python3 python/validation/pr129_distortion_detector_v1_smoke.py
 python3 python/validation/pr130_role_carrier_qualification_v1_smoke.py
 python3 python/validation/pr131_contribution_model_v1_smoke.py
+python3 python/validation/pr132_contribution_constraint_binding_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
