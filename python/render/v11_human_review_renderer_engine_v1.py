@@ -18,7 +18,8 @@ Render Sections:
     3. Narrative: Human-readable story (PR123)
     4. Preview: Impact shape only (PR112)
     5. Approval: Gate + Registry state labels (PR113/114)
-    6. Basis & Artifacts: Field/artifact references (DETAILED only)
+    6. Rescue Flow: ROLE-to-ROLE rescue structure (PR137/PR138, optional)
+    7. Basis & Artifacts: Field/artifact references (DETAILED only)
 
 Constitutional Guarantees:
     - READ-ONLY: No execution, no recommendations
@@ -31,12 +32,14 @@ Constitutional Guarantees:
 
 from typing import Any, Dict, List, Optional
 from .v11_review_render_schema import V11ReviewRenderSchema
+from .v12_rescue_flow_render_adapter import project_rescue_flow_for_render  # PR138
 
 
 def render_review_packet_v1(
     packet_record: Optional[Dict[str, Any]] = None,
     fmt: str = "MARKDOWN",
     style: str = "STANDARD",
+    rescue_flow_graph: Optional[Dict[str, Any]] = None,  # PR138
 ) -> Dict[str, Any]:
     """
     Render approval packet into human-readable format.
@@ -45,6 +48,7 @@ def render_review_packet_v1(
         packet_record: PR124 approval packet record
         fmt: MARKDOWN | TEXT
         style: CONCISE | STANDARD | DETAILED
+        rescue_flow_graph: PR137 flow graph record (optional, PR138)
 
     Returns:
         Render record (always valid, ERROR on failure)
@@ -76,9 +80,9 @@ def render_review_packet_v1(
 
     # Render based on format
     if fmt == "MARKDOWN":
-        output = _render_markdown(components, packet_summary, basis, artifacts, style)
+        output = _render_markdown(components, packet_summary, basis, artifacts, style, rescue_flow_graph)
     else:  # TEXT
-        output = _render_text(components, packet_summary, basis, artifacts, style)
+        output = _render_text(components, packet_summary, basis, artifacts, style, rescue_flow_graph)
 
     # Collect basis fields
     render_basis = list(dict.fromkeys(basis))  # Deduplicate
@@ -97,6 +101,7 @@ def _render_markdown(
     basis: List[str],
     artifacts: List[str],
     style: str,
+    rescue_flow_graph: Optional[Dict[str, Any]] = None,  # PR138
 ) -> str:
     """
     Render packet as Markdown.
@@ -107,6 +112,7 @@ def _render_markdown(
         basis: Basis field names
         artifacts: Artifact names
         style: CONCISE | STANDARD | DETAILED
+        rescue_flow_graph: PR137 flow graph record (optional, PR138)
 
     Returns:
         Markdown string
@@ -152,6 +158,15 @@ def _render_markdown(
             lines.extend(approval_section)
             lines.append("")
 
+    # Section 4.5: Rescue Flow (if STANDARD or DETAILED, PR138)
+    if rescue_flow_graph and style in ["STANDARD", "DETAILED"]:
+        rescue_flow_section = _render_rescue_flow_section(rescue_flow_graph, style)
+        if rescue_flow_section:
+            lines.append("## Rescue Flow")
+            lines.append("")
+            lines.extend(rescue_flow_section)
+            lines.append("")
+
     # Section 5: Basis & Artifacts (if DETAILED only)
     if style == "DETAILED":
         metadata_section = _render_metadata_section(basis, artifacts)
@@ -170,6 +185,7 @@ def _render_text(
     basis: List[str],
     artifacts: List[str],
     style: str,
+    rescue_flow_graph: Optional[Dict[str, Any]] = None,  # PR138
 ) -> str:
     """
     Render packet as plain text.
@@ -180,6 +196,7 @@ def _render_text(
         basis: Basis field names
         artifacts: Artifact names
         style: CONCISE | STANDARD | DETAILED
+        rescue_flow_graph: PR137 flow graph record (optional, PR138)
 
     Returns:
         Plain text string
@@ -221,6 +238,15 @@ def _render_text(
             lines.append("-" * 60)
             lines.extend(approval_section)
             lines.append("")
+
+        # Rescue Flow section (PR138)
+        if rescue_flow_graph:
+            rescue_flow_section = _render_rescue_flow_section(rescue_flow_graph, style)
+            if rescue_flow_section:
+                lines.append("RESCUE FLOW:")
+                lines.append("-" * 60)
+                lines.extend(rescue_flow_section)
+                lines.append("")
 
     if style == "DETAILED":
         metadata_section = _render_metadata_section(basis, artifacts)
@@ -322,6 +348,39 @@ def _render_approval_section(components: Dict[str, Any]) -> List[str]:
         registry_status = approval_registry.get("v11_registry_status", "")
         if registry_status:
             lines.append(f"Registry Status: {registry_status}")
+
+    return lines
+
+
+def _render_rescue_flow_section(
+    rescue_flow_graph: Dict[str, Any],
+    style: str,
+) -> List[str]:
+    """
+    Render rescue flow section (PR138).
+
+    Args:
+        rescue_flow_graph: PR137 flow graph record
+        style: CONCISE | STANDARD | DETAILED
+
+    Returns:
+        List of formatted lines
+    """
+    lines = []
+
+    # Use adapter to project flow graph
+    flow_lines = project_rescue_flow_for_render(rescue_flow_graph, style)
+
+    if not flow_lines:
+        return []
+
+    # Add intro text (non-prescriptive)
+    lines.append("ROLE-to-ROLE structural rescue mapping (label-only):")
+    lines.append("")
+
+    # Add flow lines
+    for flow_line in flow_lines:
+        lines.append(f"- {flow_line}")
 
     return lines
 

@@ -4484,6 +4484,141 @@ This is label propagation for structural ROLE-to-ROLE mapping.
 
 ---
 
+### v1.2 Rescue Flow → Human Review Renderer Extension v1 (PR138)
+
+**Purpose:** Extend Human Review Renderer (PR125) to display Rescue Flow Graph (PR137) as label-only structure visible to humans.
+
+**What is Rescue Flow Rendering?**
+
+Render = Display shape (not instruction)
+Rescue Flow Render = Structural mapping visible to humans
+
+**Extension:**
+
+Adds optional Rescue Flow section to review render output with ROLE-to-ROLE structural rescue edges.
+
+**Rendering Rules:**
+
+- **CONCISE**: No rescue flow (omitted)
+- **STANDARD**: Up to 8 edges, sorted by priority (no conditions)
+- **DETAILED**: All edges + conditions + basis
+
+**Edge Sorting Priority:**
+
+1. `rescue_strength` (STRONG > MEDIUM > WEAK > NONE)
+2. `edge_type` (EDGE_SHIELD first)
+3. `from_role` (STABILITY > HEDGE > LIQUIDITY > VOLATILITY > GAS)
+
+**Example Output (STANDARD style):**
+
+```markdown
+## Rescue Flow
+
+ROLE-to-ROLE structural rescue mapping (label-only):
+
+- STABILITY_ROLE → VOLATILITY_ROLE | EDGE_SHIELD | RESCUE_MEDIUM
+- STABILITY_ROLE → LIQUIDITY_ROLE | EDGE_SHIELD | RESCUE_MEDIUM
+- HEDGE_ROLE → VOLATILITY_ROLE | EDGE_SHIELD | RESCUE_WEAK
+- GAS_ROLE → STABILITY_ROLE | EDGE_NEUTRAL | RESCUE_NONE
+```
+
+**Example Output (DETAILED style):**
+
+```markdown
+## Rescue Flow
+
+ROLE-to-ROLE structural rescue mapping (label-only):
+
+- STABILITY_ROLE → VOLATILITY_ROLE | EDGE_SHIELD | RESCUE_MEDIUM | conditions: REGIME_MEDIUM, EDGE_SHIELD, D1_LIQUIDATION
+- STABILITY_ROLE → LIQUIDITY_ROLE | EDGE_SHIELD | RESCUE_MEDIUM | conditions: REGIME_MEDIUM, EDGE_SHIELD
+- HEDGE_ROLE → VOLATILITY_ROLE | EDGE_SHIELD | RESCUE_WEAK | conditions: REGIME_MEDIUM, EDGE_SHIELD
+```
+
+**Usage:**
+
+```python
+from render import render_review_packet_v1
+from flow import build_rescue_flow_graph_v1
+
+# Build flow graph (PR137)
+flow_graph = build_rescue_flow_graph_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_catalog_record={"v12_distortion_type": "D1_LIQUIDATION"},
+)
+
+# Render review packet with rescue flow (PR138)
+result = render_review_packet_v1(
+    packet_record=packet,
+    fmt="MARKDOWN",
+    style="STANDARD",
+    rescue_flow_graph=flow_graph,  # Optional parameter
+)
+
+# Check output
+if "## Rescue Flow" in result["v11_render_output"]:
+    print("Rescue Flow section included in render")
+```
+
+**Files:**
+- `python/render/v11_review_render_schema.py` - Extended with `v11_render_sections_present`
+- `python/render/v12_rescue_flow_render_adapter.py` - Adapter for projecting flow graph
+- `python/render/v11_human_review_renderer_engine_v1.py` - Extended with rescue flow section
+- `python/render/v11_render_constitutional_guard.py` - Extended with flow coupling guard
+
+**Integration Points:**
+- **Human Review Renderer (PR125)**: Extended with optional rescue flow section
+- **Rescue Flow Graph (PR137)**: Rendered as label-only structure
+- **Edge Type (PR135)**: Displayed in edge format
+- **Rescue Strength (PR136)**: Displayed in edge format
+
+**Constitutional Guarantees (PR138):**
+- Backward compatible (optional parameter, defaults to no rescue flow)
+- CONCISE style excludes rescue flow
+- STANDARD/DETAILED include rescue flow if provided
+- No token literals (only ROLE labels)
+- No numeric patterns
+- No trading vocabulary
+- No prescriptive language
+- No flow coupling ("this edge means execute") ← ENFORCED
+- Warning-only guards (never fail)
+
+**Philosophy (PR138):**
+```
+Render = Display shape (not instruction)
+Rescue Flow Render = Structural mapping visible to humans
+
+The rendered rescue flow shows ROLE-to-ROLE edges with:
+  - Label-only format
+  - Non-prescriptive wording
+  - Constitutional guarantees enforced
+
+EDGE_SHIELD + RESCUE_MEDIUM displayed = Shielding pattern with medium strength observed
+NOT: "use this edge"
+NOT: "this means act"
+NOT: "execute based on this"
+
+Rescue flow render provides:
+  - Human-readable structural mapping
+  - Label-only edge presentation
+  - Non-prescriptive context display
+
+Rescue flow render does NOT:
+  - Recommend actions
+  - Imply next steps
+  - Contain trading instructions
+  - Include token/amount/address references
+```
+
+**Use Cases:**
+
+1. **Human review**: Present structural rescue mapping to operators
+2. **Visual context**: Show ROLE-to-ROLE relationships in approval packet
+3. **Audit trail**: Include structural context in review artifacts
+4. **Explanation**: Add rescue flow context to human-readable output
+5. **Backward compatibility**: Render works with or without rescue flow parameter
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4525,6 +4660,7 @@ python3 python/validation/pr134_distortion_subtype_classifier_v1_smoke.py
 python3 python/validation/pr135_edge_type_classifier_v1_smoke.py
 python3 python/validation/pr136_rescue_strength_engine_v1_smoke.py
 python3 python/validation/pr137_rescue_flow_graph_v1_smoke.py
+python3 python/validation/pr138_rescue_flow_render_extension_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

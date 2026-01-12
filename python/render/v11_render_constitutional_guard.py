@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PR125: v1.1 Render Constitutional Guard (READ-ONLY)
+PR125/PR138: v1.1 Render Constitutional Guard (READ-ONLY)
 
 Purpose:
     Enforce constitutional constraints on render output.
@@ -17,6 +17,7 @@ Constitutional Constraints:
     - No prescriptive language: No "should", "must", "need to"
     - No evaluative language: No quality judgments
     - No causal coupling: No "therefore", "so", "hence"
+    - No rescue flow coupling: No "STRONG rescue therefore trade" (PR138)
 
 Guards:
     1. Token literal guard (from observation)
@@ -29,6 +30,7 @@ Guards:
     8. Prescriptive coupling guard (from explain)
     9. Narrative coupling guard (from narrative)
     10. Cross-component coupling guard (from packet)
+    11. Rescue flow coupling guard (PR138)
 
 All guards are warning-only (never fail, exit 0).
 """
@@ -90,6 +92,9 @@ def check_render_record(record: Dict[str, Any]) -> List[str]:
     from packet.v11_packet_constitutional_guard import (
         check_cross_component_coupling,
     )
+    from flow.v12_flow_constitutional_guard import (  # PR138
+        check_flow_coupling,
+    )
 
     warnings = []
 
@@ -136,6 +141,10 @@ def check_render_record(record: Dict[str, Any]) -> List[str]:
             # Cross-component coupling guard
             cross_coupling_warnings = check_cross_component_coupling(output)
             warnings.extend(cross_coupling_warnings)
+
+            # Rescue flow coupling guard (PR138)
+            flow_coupling_warnings = check_flow_coupling(output)
+            warnings.extend(flow_coupling_warnings)
 
     # Check render summary
     if "v11_render_summary" in record:

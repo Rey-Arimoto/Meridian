@@ -46,6 +46,7 @@ Schema Fields:
     - v11_render_summary: Short non-prescriptive summary
     - v11_render_output: Formatted text string (Markdown or plain text)
     - v11_render_basis: Array of field names referenced
+    - v11_render_sections_present: (Optional) List of section labels (PR138)
 """
 
 from typing import Any, Dict, List, Optional
@@ -68,6 +69,7 @@ class V11ReviewRenderSchema:
     # Optional fields
     OPTIONAL_FIELDS = [
         "v11_render_warnings",
+        "v11_render_sections_present",  # PR138: list of section labels
     ]
 
     # Valid enum values
