@@ -2095,6 +2095,139 @@ Example violations:
 "current structural situation: approval required, regime medium, permission dry-run-only."
 ```
 
+### v1.1 Human Narrative Builder v1 (PR123)
+
+**Purpose:** Convert explanation context (PR122) into human-readable narrative.
+
+**Narrative = Structural Situation Story (not action/recommendation)**
+
+**Narrative Philosophy:**
+```
+Narrative ≠ Instruction
+Narrative ≠ Recommendation
+Narrative = Structural Situation Description
+
+Narrative provides:
+  - Human-readable story of current state
+  - Label-based language (regime, drift, permission)
+  - Non-evaluative description
+  - Artifact references
+
+Narrative does NOT:
+  - Recommend actions
+  - Evaluate quality (good/bad)
+  - Contain token names, amounts, addresses
+  - Prescribe responses
+  - Use imperative language
+```
+
+**Schema Fields:**
+- `v11_narrative_mode` - ON | OFF
+- `v11_narrative_status` - AVAILABLE | UNAVAILABLE | ERROR
+- `v11_narrative_style` - CONCISE | STANDARD | DETAILED
+- `v11_narrative_text` - Human-readable narrative (non-prescriptive)
+- `v11_narrative_sections` - Optional array of labeled sections
+- `v11_narrative_basis` - Array of field names referenced
+- `v11_narrative_artifacts` - Array of artifact names referenced
+
+**Narrative Styles:**
+- **CONCISE** - Minimal verbosity (e.g., "regime label medium. drift label low.")
+- **STANDARD** - Balanced narrative (default)
+- **DETAILED** - Extended narrative with context
+
+**Example Narrative (STANDARD):**
+
+```json
+{
+  "v11_narrative_mode": "ON",
+  "v11_narrative_status": "AVAILABLE",
+  "v11_narrative_style": "STANDARD",
+  "v11_narrative_text": "current regime label indicates elevated uncertainty. structural drift label indicates shifting market vocabulary. execution permission label limits consideration to dry-run-only. approval label indicates human withholding may be required.",
+  "v11_narrative_basis": [
+    "v11_regime_level",
+    "v10_drift_level",
+    "v10_execution_permission",
+    "v11_approval_requirement"
+  ],
+  "v11_narrative_artifacts": [
+    "pr110_regime_record",
+    "pr120_drift_record",
+    "pr101_execution_record",
+    "pr113_approval_record"
+  ]
+}
+```
+
+**Narrative Language Patterns:**
+- Use "may / can / indicates / is labeled as" language
+- Avoid "should / must / do X" language
+- Use passive/descriptive voice
+- Focus on state labels, not values
+
+**Example Comparison:**
+
+```python
+# CONCISE (68 chars)
+"regime label medium. drift label low. permission label dry-run-only."
+
+# STANDARD (160 chars)
+"current regime label indicates elevated uncertainty. structural drift label indicates low vocabulary shift. execution permission label limits consideration to dry-run-only."
+
+# DETAILED (320 chars)
+"current entropy regime label indicates elevated market uncertainty. structural assumptions may weaken. structural vocabulary drift label indicates low language shift. market structure vocabulary shows minor changes. execution permission label limits consideration to dry-run-only. live execution operations are withheld."
+```
+
+**Constitutional Guarantees (PR123):**
+- No trading vocabulary (swap/buy/sell/execute/sign/transfer)
+- No execution operations (transaction/broadcast/submit)
+- No token literals (SUI/USDC/BTC/ETH), addresses, amounts
+- No numeric patterns (counts, percentages, scores)
+- No forbidden vocabulary (good/bad, correct/wrong)
+- No prescriptive language (should/must/need to)
+- No prescriptive coupling ("approved therefore execute")
+- **No narrative coupling** (NEW):
+  - No "this means X" / "this implies Y"
+  - No "therefore X" / "thus Y" causal patterns
+  - No "because X, Y" causal structures
+- Deterministic templates (no LLM, no randomness)
+- Defensive, warning-only (exit 0 always)
+
+**Usage Example:**
+
+```python
+from explain import V11HumanExplanationContextSchema
+from narrative import build_human_narrative_v1
+
+# Create explanation context
+explanation = V11HumanExplanationContextSchema.create_explanation_record(
+    summary="current structural situation: regime medium, drift low, permission dry-run-only.",
+    signals=["REGIME_MEDIUM", "DRIFT_LOW", "PERMISSION_DRY_RUN_ONLY"],
+    basis=["v11_regime_level", "v10_drift_level", "v10_execution_permission"],
+    artifacts=["pr110_regime_record", "pr120_drift_record", "pr101_execution_record"],
+)
+
+# Build narrative (STANDARD style by default)
+narrative = build_human_narrative_v1(explanation, style="STANDARD")
+
+print(narrative["v11_narrative_text"])
+# Output: "current regime label indicates elevated uncertainty. structural drift label indicates low vocabulary shift. execution permission label limits consideration to dry-run-only."
+
+# Try CONCISE style
+concise = build_human_narrative_v1(explanation, style="CONCISE")
+print(concise["v11_narrative_text"])
+# Output: "regime label medium. drift label low. permission label dry-run-only."
+```
+
+**Pipeline Flow (Context → Narrative):**
+
+```
+PR122: Explanation Context (structural signals)
+         ↓
+PR123: Narrative Builder (human-readable story)
+         ↓
+[PR124: Approval Packet Builder] (ready for human review)
+```
+
 ---
 
 ### Constitutional Constraints (v1.1)
@@ -2120,6 +2253,7 @@ python3 python/validation/pr111_regime_execution_policy_binding_smoke.py
 python3 python/validation/pr112_execution_preview_engine_v1_smoke.py
 python3 python/validation/pr113_human_approval_gate_v1_smoke.py
 python3 python/validation/pr122_human_explanation_context_smoke.py
+python3 python/validation/pr123_human_narrative_builder_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
