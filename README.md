@@ -2609,6 +2609,255 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v1.2 Continuous Permission Monitor (READ-ONLY)
+
+### v1.2 Philosophy: Permission as State Trajectory
+
+The Continuous Permission Monitor treats **permission as a state trajectory**, not a point-in-time flag.
+
+**Key Principles:**
+- **Permission = State Trajectory** - Track evolution over time, not isolated snapshots
+- **Monitor ≠ Execution** - Monitoring does not trigger actions
+- **Monitor ≠ Recommendation** - No prescriptive language or "should" statements
+- **Transition Detection** - Identify permission degradation/recovery events
+- **Suppression States** - Label trajectory direction: STABLE/DEGRADING/RECOVERING/SUPPRESSED
+- **No Trajectory Coupling** - Forbid "permission improved therefore act" patterns
+
+**Permission Monitor Philosophy:**
+```
+Monitor provides:
+  - Permission state trajectory (sequence of permission labels)
+  - Transition event detection (DEGRADATION/RECOVERY/SUPPRESSION)
+  - Suppression state labels (STABLE/DEGRADING/RECOVERING/SUPPRESSED)
+  - Non-prescriptive summary of state evolution
+  - Basis field names (which artifacts informed state)
+
+Monitor does NOT:
+  - Recommend actions ("you should execute")
+  - Evaluate quality (good/bad permissions)
+  - Execute or trigger execution
+  - Contain token names, amounts, addresses
+  - Couple trajectory to action ("improved therefore act")
+```
+
+**Pipeline Position:**
+```
+Policy Binding (PR111)
+         ↓
+Execution Preview (PR112)
+         ↓
+Human Approval Gate (PR113)
+         ↓
+Permission Monitor (PR126) ← NEW: Track permission trajectory
+         ↓
+[Human Interface Layer]
+```
+
+### v1.2 Continuous Permission Monitor v1 (PR126)
+
+**Purpose:** Monitor execution permission state evolution over time, detecting degradation/recovery transitions.
+
+**Monitor Function:**
+```python
+from monitor import monitor_permission_v1
+
+# Input: window of timestep records (each containing all artifacts)
+records_window = [
+    {"v10_execution_permission": "ALLOW", "v11_policy_permission": "ALLOW"},
+    {"v10_execution_permission": "DRY_RUN_ONLY", "v11_policy_permission": "DRY_RUN_ONLY"},
+    {"v10_execution_permission": "HOLD", "v11_policy_permission": "HOLD"},
+]
+
+# Monitor permission trajectory
+monitor = monitor_permission_v1(
+    records_window=records_window,
+    window_label="MEDIUM",  # SHORT | MEDIUM | LONG (no numbers)
+)
+
+# Output schema (v12_monitor_ prefix)
+print(monitor["v12_monitor_status"])              # AVAILABLE | UNAVAILABLE | ERROR
+print(monitor["v12_monitor_current_permission"])  # HOLD | DRY_RUN_ONLY | ALLOW | UNKNOWN
+print(monitor["v12_monitor_suppression_state"])   # STABLE | DEGRADING | RECOVERING | SUPPRESSED
+print(monitor["v12_monitor_permission_trajectory"]) # ["ALLOW", "DRY_RUN_ONLY", "HOLD"]
+print(monitor["v12_monitor_transition_events"])   # List of transition dicts
+print(monitor["v12_monitor_summary"])             # Non-prescriptive summary
+print(monitor["v12_monitor_basis"])               # ["v11_policy_permission", "v10_execution_permission"]
+```
+
+**Permission Source Priority (per timestep):**
+1. If `v11_policy_permission` exists → use it
+2. Else use `v10_execution_permission`
+3. Default to `UNKNOWN`
+
+**Permission Restrictiveness Order:**
+```
+HOLD (most restrictive)
+  ↓
+DRY_RUN_ONLY
+  ↓
+ALLOW
+  ↓
+UNKNOWN (least restrictive)
+```
+
+**Transition Detection:**
+Emit transition event when permission label changes:
+- **DEGRADATION** - Moving toward more restrictive (ALLOW → DRY_RUN_ONLY)
+- **RECOVERY** - Moving toward less restrictive (HOLD → DRY_RUN_ONLY)
+- **SUPPRESSION** - Transitioning to HOLD
+- **PERMISSION_CHANGE** - Same restrictiveness level
+
+**Suppression State (derived from last two steps):**
+- If current permission == HOLD → **SUPPRESSED**
+- If moved toward more restrictive → **DEGRADING**
+- If moved toward less restrictive → **RECOVERING**
+- Else → **STABLE**
+
+**Example: ALLOW → DRY_RUN_ONLY → HOLD**
+```python
+window = [
+    {"v10_execution_permission": "ALLOW"},
+    {"v10_execution_permission": "DRY_RUN_ONLY"},
+    {"v10_execution_permission": "HOLD"},
+]
+result = monitor_permission_v1(window)
+
+# Step 1: ALLOW → DRY_RUN_ONLY
+# - Event: DEGRADATION
+# - Suppression state: DEGRADING
+
+# Step 2: DRY_RUN_ONLY → HOLD
+# - Event: SUPPRESSION
+# - Suppression state: SUPPRESSED (current permission is HOLD)
+
+print(result["v12_monitor_current_permission"])  # "HOLD"
+print(result["v12_monitor_suppression_state"])   # "SUPPRESSED"
+print(len(result["v12_monitor_transition_events"]))  # 2
+```
+
+**Example: HOLD → DRY_RUN_ONLY (Recovery)**
+```python
+window = [
+    {"v10_execution_permission": "HOLD"},
+    {"v10_execution_permission": "DRY_RUN_ONLY"},
+]
+result = monitor_permission_v1(window)
+
+# Event: RECOVERY (moving toward less restrictive)
+# Suppression state: RECOVERING
+
+print(result["v12_monitor_current_permission"])  # "DRY_RUN_ONLY"
+print(result["v12_monitor_suppression_state"])   # "RECOVERING"
+print(result["v12_monitor_transition_events"][0]["event_type"])  # "RECOVERY"
+```
+
+**Transition Event Schema:**
+```python
+{
+    "event_type": "DEGRADATION",        # DEGRADATION | RECOVERY | SUPPRESSION | PERMISSION_CHANGE
+    "from_permission": "ALLOW",
+    "to_permission": "DRY_RUN_ONLY",
+    "position": 1,                      # Index in trajectory
+}
+```
+
+**Defensive Design:**
+- Invalid input (None, empty list) → Valid ERROR record
+- Invalid window_label → Default to "MEDIUM"
+- Missing permission fields → Default to "UNKNOWN"
+- Always returns valid schema (never raises)
+
+**Constitutional Guarantees (PR126):**
+- **READ-ONLY** - No execution, no recommendations
+- **Non-evaluative** - No good/bad vocabulary
+- **Non-prescriptive** - No "should" language
+- **No token literals** - No SUI, USDC, BTC, ETH
+- **No amounts** - No numeric values in output
+- **No addresses** - No 0x... patterns
+- **No trajectory coupling** (NEW) - Forbid "permission improved therefore act"
+- **Deterministic** - Same inputs → same outputs
+- **Defensive** - Never raises exceptions
+
+**NEW: Trajectory Coupling Guard (PR126)**
+
+Detects and warns on action coupling to state trajectory:
+
+```python
+from monitor import check_trajectory_coupling
+
+# Forbidden patterns:
+check_trajectory_coupling("permission allowed therefore execute")
+# → Warning: Trajectory coupling detected
+
+check_trajectory_coupling("state is suppressed so stop operations")
+# → Warning: Trajectory coupling detected
+
+check_trajectory_coupling("recovering therefore proceed with action")
+# → Warning: Trajectory coupling detected
+
+# Clean patterns:
+check_trajectory_coupling("current permission labeled as DRY_RUN_ONLY")
+# → No warnings (labels state, no action coupling)
+```
+
+**Forbidden Trajectory Coupling Patterns:**
+- "permission improved therefore act"
+- "suppressed so do X"
+- "recovering therefore execute"
+- "if permission allowed then execute"
+- "when recovering, proceed"
+- State trajectory coupling to action
+
+**Window Labels (no numbers):**
+- `SHORT` - Recent history
+- `MEDIUM` - Mid-term history
+- `LONG` - Extended history
+
+No window sizes are specified numerically to maintain constitutional constraints.
+
+**Schema Fields (v12_monitor_ prefix):**
+- `v12_monitor_mode` - ON | OFF
+- `v12_monitor_status` - AVAILABLE | UNAVAILABLE | ERROR
+- `v12_monitor_window` - SHORT | MEDIUM | LONG
+- `v12_monitor_current_permission` - UNKNOWN | HOLD | DRY_RUN_ONLY | ALLOW
+- `v12_monitor_permission_trajectory` - List of permission labels
+- `v12_monitor_transition_events` - List of transition event dicts
+- `v12_monitor_suppression_state` - STABLE | DEGRADING | RECOVERING | SUPPRESSED
+- `v12_monitor_summary` - Non-prescriptive summary text
+- `v12_monitor_basis` - Array of field names referenced
+
+**Files:**
+- `python/monitor/v12_permission_monitor_schema.py` - Schema definition
+- `python/monitor/v12_continuous_permission_monitor_engine_v1.py` - Monitor engine
+- `python/monitor/v12_monitor_constitutional_guard.py` - Constitutional validation
+- `python/monitor/__init__.py` - Package exports
+
+### Constitutional Constraints (v1.2)
+
+- **READ-ONLY**: No execution logic or decision changes
+- **Non-evaluative**: No good/bad, correct/wrong vocabulary
+- **Non-scoric**: No scores, grades, rankings
+- **Non-prescriptive**: No "should" or recommendations
+- **No amounts**: Numeric patterns prohibited
+- **No token literals**: SUI, USDC, BTC, ETH prohibited
+- **No addresses**: 0x... patterns prohibited
+- **No trading vocabulary**: swap, buy, sell, execute, sign, transfer prohibited
+- **No trajectory coupling** (NEW): "permission improved therefore act" patterns prohibited
+- **Defensive**: Never raises exceptions
+- **Warning-only**: Exit code always 0
+
+### Run Validations (v1.2)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr126_continuous_permission_monitor_v1_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## v1.0 Infrastructure — Market Structure Intelligence Pipeline (READ-ONLY)
 
 ### v1.0 Philosophy: Intelligence Native Market Architecture
