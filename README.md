@@ -4030,6 +4030,134 @@ This is label propagation for fine-grained distortion taxonomy.
 
 ---
 
+### v1.2 Edge Type Classification Engine v1 (PR135)
+
+**Purpose:** Classify edge types for regime × role × distortion combinations as structural labels.
+
+**What is EdgeType?**
+
+EdgeType ≠ Action
+EdgeType ≠ Recommendation
+EdgeType = Structural label propagation
+
+**Edge Type Labels (v1):**
+
+```python
+EDGE_NONE      # No edge classification (default/unclassified)
+EDGE_AMPLIFY   # Amplification pattern observed (MEDIUM × VOLATILITY × distortion)
+EDGE_SHIELD    # Shielding pattern observed (CRITICAL/GAS/STABILITY/HEDGE)
+EDGE_LEAK      # Leak pattern observed (HIGH × LIQUIDITY × distortion)
+EDGE_NEUTRAL   # Neutral pattern observed (LOW regime or baseline)
+```
+
+**Classification Rules (First-match-wins):**
+
+1. **Invalid inputs** → `EDGE_NEUTRAL` (defensive, never errors)
+2. **REGIME_CRITICAL** → `EDGE_SHIELD` (always shield)
+3. **GAS_ROLE** → `EDGE_SHIELD` (always shield)
+4. **STABILITY_ROLE** + distortion in {D1,D3,D4,D5} → `EDGE_SHIELD`
+5. **HEDGE_ROLE** + regime in {MEDIUM,HIGH,CRITICAL} → `EDGE_SHIELD`
+6. **LIQUIDITY_ROLE** + regime in {HIGH,CRITICAL} → `EDGE_LEAK`
+7. **LIQUIDITY_ROLE** + regime MEDIUM → `EDGE_NEUTRAL`
+8. **REGIME_MEDIUM + VOLATILITY_ROLE** + distortion D1-D5 → `EDGE_AMPLIFY`
+9. **REGIME_HIGH** → `EDGE_LEAK` (esp LIQUIDITY + D3)
+10. **REGIME_LOW** → `EDGE_NEUTRAL`
+11. **Default** → `EDGE_NEUTRAL` (defensive)
+
+**Example:**
+
+```python
+from edge import (
+    classify_edge_type_v1,
+    EDGE_AMPLIFY,
+)
+
+# Classify edge type
+result = classify_edge_type_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    role_record={"v12_role_carrier_role_type": "VOLATILITY_ROLE"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    subtype_record={"v12_subtype_label": "D1B_CASCADE_RISK"},
+)
+
+# Check edge type
+if result["v12_edge_type"] == EDGE_AMPLIFY:
+    print("Amplification edge detected")
+    # Output: EDGE_AMPLIFY
+```
+
+**Edge Type Schema Fields:**
+
+```python
+{
+    "v12_edge_mode": "READ_ONLY",
+    "v12_edge_status": "AVAILABLE",
+    "v12_edge_type": "EDGE_AMPLIFY",
+    "v12_edge_regime": "REGIME_MEDIUM",
+    "v12_edge_role": "VOLATILITY_ROLE",
+    "v12_edge_distortion": "D1_LIQUIDATION",
+    "v12_edge_subtype_label": "D1B_CASCADE_RISK",
+    "v12_edge_summary": "Edge type EDGE_AMPLIFY may indicate structural pattern for REGIME_MEDIUM × VOLATILITY_ROLE × D1_LIQUIDATION.",
+    "v12_edge_basis": ["v11_regime_level", "v12_role_carrier_role_type", "v12_distortion_type", "v12_subtype_label"],
+}
+```
+
+**Files:**
+- `python/edge/v12_edge_type_schema.py` - Edge type schema with 5 labels
+- `python/edge/v12_edge_type_classifier_v1.py` - Classification engine with first-match-wins rules
+- `python/edge/v12_edge_constitutional_guard.py` - Edge coupling guard
+- `python/edge/__init__.py` - Package exports
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` → edge classification
+- **Role (PR130)**: `v12_role_carrier_role_type` → edge classification
+- **Distortion (PR129)**: `v12_distortion_type` → edge classification
+- **Distortion Subtype (PR134)**: `v12_subtype_label` → optional refinement
+- **Contribution (PR131)**: `v12_contrib_contribution_label` → optional annotation
+- **Constraints (PR132)**: `v12_contrib_constraint_zone_label` → optional annotation
+
+**Constitutional Guarantees (PR135):**
+- READ-ONLY classification (no execution)
+- No numeric patterns
+- No token literals
+- No trading vocabulary
+- No prescriptive language
+- No edge coupling ("EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop") ← NEW
+- Warning-only guards (never fail)
+- Defensive error handling (never raises)
+
+**Philosophy (PR135):**
+```
+EdgeType = Structural label (not action)
+EDGE_AMPLIFY = Amplification pattern observed (not "go ahead")
+EDGE_SHIELD = Shielding pattern observed (not "protect yourself")
+EDGE_LEAK = Leak pattern observed (not "avoid this")
+EDGE_NEUTRAL = Neutral pattern observed (not "baseline safe")
+
+Edge types classify structural patterns in regime × role × distortion space.
+Edge types do NOT instruct action.
+Edge types do NOT change behavior.
+Edge types ONLY provide structural labels for:
+  - Human review and explanation
+  - Pattern recognition across time
+  - Structural analysis and visualization
+  - Artifact labeling and chain-of-custody
+
+This is NOT decision logic.
+This is NOT instruction.
+This is label propagation for structural pattern classification.
+```
+
+**Use Cases:**
+
+1. **Structural pattern analysis**: Identify AMPLIFY/SHIELD/LEAK patterns across regime transitions
+2. **Human explanation**: Present edge type context to operators for review
+3. **Pattern visualization**: Build time-series graphs of edge type transitions
+4. **Artifact labeling**: Tag records with structural edge type labels
+5. **Integration with contribution/constraints**: Combine with PR131/PR132 for multi-layer labeling
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4047,7 +4175,8 @@ This is label propagation for fine-grained distortion taxonomy.
 - **No return guarantee language**: "annual return", "backtest", "assured" prohibited (PR131)
 - **No contribution zone coupling**: "primary therefore trade", "blocked so stop" patterns prohibited (PR132)
 - **No rescue coupling**: "rescue therefore act", "buffer so trade", "救えるので触ってよい" patterns prohibited (PR133)
-- **No subtype coupling** (NEW): "D1B therefore act", "subtype implies trade" patterns prohibited (PR134)
+- **No subtype coupling**: "D1B therefore act", "subtype implies trade" patterns prohibited (PR134)
+- **No edge coupling** (NEW): "EDGE_AMPLIFY therefore trade", "EDGE_SHIELD so stop" patterns prohibited (PR135)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -4065,6 +4194,7 @@ python3 python/validation/pr131_contribution_model_v1_smoke.py
 python3 python/validation/pr132_contribution_constraint_binding_v1_smoke.py
 python3 python/validation/pr133_role_rescue_relation_v1_smoke.py
 python3 python/validation/pr134_distortion_subtype_classifier_v1_smoke.py
+python3 python/validation/pr135_edge_type_classifier_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
