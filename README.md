@@ -3252,8 +3252,8 @@ result = classify_role_distortion_eligibility_v1(
 
 **Integration Points:**
 - **Regime (PR110)**: `v11_regime_level` from entropy regime classification
-- **Role (TBD)**: `v12_role_type` from asset role classification
-- **Distortion (TBD)**: `v12_distortion_type` from distortion detection
+- **Role (PR130)**: `v12_role_type` from asset role classification
+- **Distortion (PR129)**: `v12_distortion_type` from distortion detection
 - **Boundary (PR105-PR108)**: `v9_boundary_type` from boundary detection
 - **Permission Monitor (PR126)**: `v12_monitor_suppression_state` from permission trajectory
 
@@ -3271,6 +3271,243 @@ This is structural alignment detection.
 
 ---
 
+### v1.2 Distortion Detector v1 (PR129)
+
+**Purpose:** Classify market structure distortion types (D0-D5) from existing pipeline artifacts.
+
+**What is Distortion?**
+
+Distortion ≠ Signal
+Distortion ≠ Recommendation
+Distortion = Structural label (failure-mode classification)
+
+**Distortion Types:**
+
+```python
+D0_NONE                     # No distortion (REGIME_CRITICAL state)
+D1_LIQUIDATION             # Decrease + forced events
+D2_RANGE_STICKINESS        # Stable liquidity + low drift
+D3_BOOK_HOLLOWING          # Low liquidity + decrease
+D4_EVENT_DISTORTION        # Event activity present
+D5_CORRELATION_DISTORTION  # Correlation drift detected
+DISTORTION_UNCLASSIFIED    # Default when no rules match
+```
+
+**Classification Rules (First-match-wins):**
+
+1. **REGIME_CRITICAL** → D0_NONE (no distortion in critical regime)
+2. **Event activity present** → D4_EVENT_DISTORTION (unless also decrease → D1)
+3. **Correlation present + drift >= MEDIUM** → D5_CORRELATION_DISTORTION
+4. **Low liquidity + decrease** → D3_BOOK_HOLLOWING (unless also events → D1)
+5. **Decrease + events** → D1_LIQUIDATION (priority over D3/D4)
+6. **Stable liquidity + no events + low drift** → D2_RANGE_STICKINESS
+7. **Default** → DISTORTION_UNCLASSIFIED
+
+**Example:**
+
+```python
+from distortion import detect_distortion_v1, D1_LIQUIDATION, D4_EVENT_DISTORTION
+
+# Detect distortion from pipeline artifacts
+result = detect_distortion_v1(
+    regime_record=regime,
+    analytics_record=analytics,
+    drift_record=drift,
+    bridge_record=bridge,
+)
+
+# Check distortion type
+if result["v12_distortion_type"] == D1_LIQUIDATION:
+    print("Liquidation distortion detected")
+elif result["v12_distortion_type"] == D4_EVENT_DISTORTION:
+    print("Event distortion detected")
+```
+
+**Distortion Schema Fields:**
+
+```python
+{
+    "v12_distortion_mode": "ON",
+    "v12_distortion_status": "AVAILABLE",
+    "v12_distortion_type": "D1_LIQUIDATION",
+    "v12_distortion_summary": "distortion label classified as D1_LIQUIDATION...",
+    "v12_distortion_basis": ["object_dynamics", "event_activity_present"],
+    "v12_distortion_artifacts": ["v109_analytics", "v108_bridge"],
+}
+```
+
+**Files:**
+- `python/distortion/v12_distortion_schema.py` - Schema definition
+- `python/distortion/v12_distortion_detector_engine_v1.py` - Detection engine
+- `python/distortion/v12_distortion_constitutional_guard.py` - Constitutional validation
+- `python/distortion/__init__.py` - Package exports
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` for D0_NONE detection
+- **Analytics (PR109)**: `event_activity_present`, `liquidity_regime`, `object_dynamics`
+- **Drift (PR120)**: `v10_drift_label`, `v10_vocab_family_presence`
+- **Bridge (PR108)**: `event_activity` fallback
+
+**Constitutional Guarantees (PR129):**
+- READ-ONLY classification only
+- No token literals (SUI, USDC, BTC, ETH)
+- No numeric patterns (counts, percentages)
+- No prescriptive language ("should", "must")
+- No distortion coupling ("D1 therefore act") ← NEW
+- Warning-only guards (never fail)
+
+**Philosophy (PR129):**
+```
+Distortion = Structural aberration label
+D1-D5 = Failure mode classification
+Detection = Pattern recognition (not judgment)
+
+This is not signal.
+This is not recommendation.
+This is structural classification.
+```
+
+---
+
+### v1.2 Role Carrier Qualification Engine v1 (PR130)
+
+**Purpose:** Assess asset-to-role fit through 4-axis asset profile analysis.
+
+**What is Role Carrier Qualification?**
+
+Qualification ≠ Signal
+Qualification ≠ Recommendation
+Qualification = Structural fit classification
+
+**4-Axis Asset Profile:**
+
+```python
+# Observability: Can role-bearing properties be structurally observed?
+OBS_LOW, OBS_MEDIUM, OBS_HIGH
+
+# Censorship Resistance: Can asset function persist under constraint?
+CENS_LOW, CENS_MEDIUM, CENS_HIGH
+
+# Liquidatability: Can role be rebalanced under stress?
+LIQ_LOW, LIQ_MEDIUM, LIQ_HIGH
+
+# Dependency: Does it depend on external systems that can fail?
+DEP_NONE, DEP_LOW, DEP_MEDIUM, DEP_HIGH
+```
+
+**5 Role Types:**
+
+```python
+GAS_ROLE           # Network operation utility carrier
+STABILITY_ROLE     # Value stability carrier
+LIQUIDITY_ROLE     # Market depth carrier
+VOLATILITY_ROLE    # Price movement carrier
+HEDGE_ROLE         # Directional offset carrier
+```
+
+**Role Requirements (Example: GAS_ROLE):**
+
+```python
+{
+    "min_observability": OBS_HIGH,           # Must be highly observable
+    "min_censorship_resistance": CENS_HIGH,  # Must resist censorship
+    "min_liquidatability": LIQ_MEDIUM,       # Moderate liquidity needed
+    "max_dependency": DEP_LOW,               # Low dependency tolerance
+}
+```
+
+**Qualification Logic:**
+
+1. Check each axis against role requirements
+2. Track failed axes
+3. Return:
+   - **QUALIFIED**: 0 failures (all axes meet requirements)
+   - **PARTIALLY_QUALIFIED**: 1-3 failures (some axes meet requirements)
+   - **DISQUALIFIED**: 4 failures (no axes meet requirements)
+
+**Example:**
+
+```python
+from role import (
+    V12AssetProfileSchema,
+    qualify_asset_for_role_v1,
+    GAS_ROLE,
+    QUALIFIED,
+    OBS_HIGH,
+    CENS_HIGH,
+    LIQ_MEDIUM,
+    DEP_LOW,
+)
+
+# Step 1: Create asset profile
+asset_profile = V12AssetProfileSchema.create_asset_profile(
+    observability=OBS_HIGH,
+    censorship_resistance=CENS_HIGH,
+    liquidatability=LIQ_MEDIUM,
+    dependency=DEP_LOW,
+)
+
+# Step 2: Assess fit for GAS_ROLE
+result = qualify_asset_for_role_v1(asset_profile, GAS_ROLE)
+
+# Check qualification
+if result["v12_role_carrier_qualification_status"] == QUALIFIED:
+    print("Asset QUALIFIED for GAS_ROLE")
+    print(f"Failed axes: {result['v12_role_carrier_failed_axes']}")
+```
+
+**Qualification Schema Fields:**
+
+```python
+{
+    "v12_role_carrier_mode": "ON",
+    "v12_role_carrier_status": "AVAILABLE",
+    "v12_role_carrier_role_type": "GAS_ROLE",
+    "v12_role_carrier_qualification_status": "QUALIFIED",
+    "v12_role_carrier_failed_axes": [],
+    "v12_role_carrier_summary": "asset labeled QUALIFIED for GAS_ROLE...",
+    "v12_role_carrier_basis": ["asset_profile_observability", ...],
+}
+```
+
+**Files:**
+- `python/role/v12_asset_profile_schema.py` - Asset profile definition
+- `python/role/v12_role_requirements_schema.py` - Role requirements
+- `python/role/v12_role_carrier_qualification_schema.py` - Qualification schema
+- `python/role/v12_role_carrier_qualification_engine_v1.py` - Qualification engine
+- `python/role/v12_role_carrier_constitutional_guard.py` - Constitutional validation
+- `python/role/__init__.py` - Package exports
+
+**Integration Points:**
+- **Eligibility (PR128)**: Uses `v12_role_type` from qualification
+- **Distortion (PR129)**: Combines with distortion for eligibility assessment
+- **Future**: Asset profile can be enriched by observation/analytics layers
+
+**Constitutional Guarantees (PR130):**
+- READ-ONLY classification only
+- No token literals (SUI, USDC, BTC, ETH, DEEP, CETUS)
+- No numeric patterns (counts, percentages, scores)
+- No prescriptive language ("should", "must")
+- No role coupling ("QUALIFIED therefore act") ← NEW
+- Warning-only guards (never fail)
+
+**Philosophy (PR130):**
+```
+Asset Profile = Abstract structural descriptor
+Role = Functional carrier classification
+Qualification = Structural fit assessment
+
+Profile describes observable properties.
+Role defines required properties.
+Qualification labels the match.
+
+This is not signal.
+This is not recommendation.
+This is structural classification.
+```
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -3278,10 +3515,12 @@ This is structural alignment detection.
 - **Non-scoric**: No scores, grades, rankings
 - **Non-prescriptive**: No "should" or recommendations
 - **No amounts**: Numeric patterns prohibited
-- **No token literals**: SUI, USDC, BTC, ETH prohibited
+- **No token literals**: SUI, USDC, BTC, ETH, DEEP, CETUS prohibited
 - **No addresses**: 0x... patterns prohibited
 - **No trading vocabulary**: swap, buy, sell, execute, sign, transfer prohibited
-- **No trajectory coupling** (NEW): "permission improved therefore act" patterns prohibited
+- **No trajectory coupling**: "permission improved therefore act" patterns prohibited (PR127)
+- **No distortion coupling** (NEW): "D1 therefore act" patterns prohibited (PR129)
+- **No role coupling** (NEW): "QUALIFIED therefore act" patterns prohibited (PR130)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -3293,6 +3532,8 @@ source .venv/bin/activate
 python3 python/validation/pr126_continuous_permission_monitor_v1_smoke.py
 python3 python/validation/pr127_permission_trajectory_binding_v1_smoke.py
 python3 python/validation/pr128_role_distortion_eligibility_v1_smoke.py
+python3 python/validation/pr129_distortion_detector_v1_smoke.py
+python3 python/validation/pr130_role_carrier_qualification_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
