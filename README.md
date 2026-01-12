@@ -3747,6 +3747,151 @@ This is label propagation for human interface and artifact chain-of-custody.
 
 ---
 
+### v1.2 Role Rescue Relation v1 (PR133)
+
+**Purpose:** Classify ROLE→ROLE structural rescue relations as dependency edges (not actions, not recommendations).
+
+**What is Rescue?**
+
+Rescue ≠ Action
+Rescue ≠ Recommendation
+Rescue = Structural dependency edge
+
+**Edge Types:**
+
+```python
+RESCUE_EDGE_BUFFER      # Role provides stability buffer to target
+RESCUE_EDGE_ANCHOR      # Role provides anchoring/reference for target
+RESCUE_EDGE_CONTINUITY  # Role provides continuity/operational support
+RESCUE_EDGE_ESCAPE      # Role provides escape valve for target
+RESCUE_EDGE_DAMPEN      # Role dampens volatility for target
+RESCUE_EDGE_UNCLASSIFIED # Relation exists but type unclear
+```
+
+**Strength Levels:**
+
+```python
+RESCUE_STRENGTH_NONE     # No rescue relation present
+RESCUE_STRENGTH_WEAK     # Minimal structural support
+RESCUE_STRENGTH_MODERATE # Moderate structural support
+RESCUE_STRENGTH_STRONG   # Strong structural support
+```
+
+**Classification Rules (First-match-wins):**
+
+1. **Hard stops → NONE**:
+   - `REGIME_CRITICAL`
+   - `SCHEMA_BOUNDARY`, `DATA_BOUNDARY`, `ENGINE_BOUNDARY`
+   - `SUPPRESSED` (PR126)
+   - `INELIGIBLE` (PR128)
+2. **REGIME_HIGH or LOW** → max strength `WEAK` (capped)
+3. **REGIME_MEDIUM** → Use distortion × role mapping:
+   - `STABILITY → VOLATILITY` (D1/D5) → `BUFFER`/`ANCHOR`, `MODERATE`
+   - `LIQUIDITY → VOLATILITY` (D2/D3) → `DAMPEN`, `MODERATE`
+   - `HEDGE → VOLATILITY` (D4/D5) → `BUFFER`, `WEAK`
+   - `GAS → VOLATILITY` (any) → `CONTINUITY`, `WEAK`
+   - `LIQUIDITY → STABILITY` (D2/D3) → `DAMPEN`, `WEAK`
+   - `STABILITY → LIQUIDITY` (D2/D3) → `ANCHOR`, `WEAK`
+4. **Default** → `UNCLASSIFIED`, `WEAK`
+
+**Example:**
+
+```python
+from rescue import (
+    classify_role_rescue_relation_v1,
+    RESCUE_EDGE_BUFFER,
+    RESCUE_STRENGTH_MODERATE,
+    ROLE_STABILITY,
+    ROLE_VOLATILITY,
+)
+
+# Classify rescue relation
+result = classify_role_rescue_relation_v1(
+    regime_record={"v11_regime_level": "REGIME_MEDIUM"},
+    distortion_record={"v12_distortion_type": "D1_LIQUIDATION"},
+    role_from=ROLE_STABILITY,
+    role_to=ROLE_VOLATILITY,
+)
+
+# Check rescue edge
+if result["v12_rescue_strength"] != "NONE":
+    print(f"Rescue edge: {result['v12_rescue_edge_type']}")
+    print(f"Strength: {result['v12_rescue_strength']}")
+    # Output: BUFFER, MODERATE
+```
+
+**Rescue Relation Schema Fields:**
+
+```python
+{
+    "v12_rescue_mode": "READ_ONLY",
+    "v12_rescue_status": "AVAILABLE",
+    "v12_rescue_relation_type": "ROLE_RESCUE_RELATION",
+    "v12_rescue_role_from": "STABILITY_ROLE",
+    "v12_rescue_role_to": "VOLATILITY_ROLE",
+    "v12_rescue_edge_type": "BUFFER",
+    "v12_rescue_strength": "MODERATE",
+    "v12_rescue_summary": "Role rescue relation from STABILITY_ROLE to VOLATILITY_ROLE may provide edge type BUFFER with strength MODERATE.",
+    "v12_rescue_basis": ["v11_regime_level", "v12_distortion_type"],
+    "v12_rescue_regime_level": "REGIME_MEDIUM",
+    "v12_rescue_distortion_type": "D1_LIQUIDATION",
+}
+```
+
+**Files:**
+- `python/rescue/v12_role_rescue_relation_schema.py` - Schema definition with edge types and strength levels
+- `python/rescue/v12_role_rescue_relation_engine_v1.py` - Classification engine with first-match-wins rules
+- `python/rescue/v12_rescue_constitutional_guard.py` - Constitutional validation with rescue coupling guard
+- `python/rescue/__init__.py` - Package exports
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` → strength caps and hard stops
+- **Distortion (PR129)**: `v12_distortion_type` → edge type classification
+- **Role (PR130)**: `role_from` × `role_to` → structural rescue mapping
+- **Eligibility (PR128)**: `v12_eligibility_status` → INELIGIBLE blocks rescue
+- **Permission Monitor (PR126)**: `v12_monitor_suppression_state` → SUPPRESSED blocks rescue
+- **Boundary (PR111)**: Hard boundaries → rescue blocked
+
+**Constitutional Guarantees (PR133):**
+- READ-ONLY classification (no execution)
+- No numeric patterns
+- No token literals
+- No trading vocabulary
+- No prescriptive language
+- No rescue coupling ("rescue therefore act", "buffer so trade") ← NEW
+- Warning-only guards (never fail)
+
+**Philosophy (PR133):**
+```
+Rescue = Structural dependency edge (not action)
+Edge = Label propagation (not recommendation)
+Strength = Structural support level (not priority)
+
+BUFFER edge = Stability buffer observed
+ANCHOR edge = Anchoring reference observed
+CONTINUITY edge = Operational support observed
+ESCAPE edge = Escape valve observed
+DAMPEN edge = Volatility dampening observed
+
+Rescue does NOT instruct action.
+Rescue does NOT change behavior.
+Rescue ONLY classifies structural dependency as labeled edge.
+
+This is NOT decision logic.
+This is NOT instruction.
+This is label propagation for structural dependency graph.
+```
+
+**Use Cases:**
+
+1. **Role graph construction**: Build ROLE→ROLE dependency graph for visualization
+2. **Structural analysis**: Understand which roles support which other roles
+3. **Explain context**: Add rescue edges to PR122 explanation context
+4. **Plan artifact**: Include rescue relations in planning artifacts
+5. **Human review**: Present structural dependencies to human operators
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -3762,7 +3907,8 @@ This is label propagation for human interface and artifact chain-of-custody.
 - **No role coupling**: "QUALIFIED therefore act" patterns prohibited (PR130)
 - **No contribution coupling**: "++ therefore trade", "-- therefore stop" patterns prohibited (PR131)
 - **No return guarantee language**: "annual return", "backtest", "assured" prohibited (PR131)
-- **No contribution zone coupling** (NEW): "primary therefore trade", "blocked so stop" patterns prohibited (PR132)
+- **No contribution zone coupling**: "primary therefore trade", "blocked so stop" patterns prohibited (PR132)
+- **No rescue coupling** (NEW): "rescue therefore act", "buffer so trade", "救えるので触ってよい" patterns prohibited (PR133)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -3778,6 +3924,7 @@ python3 python/validation/pr129_distortion_detector_v1_smoke.py
 python3 python/validation/pr130_role_carrier_qualification_v1_smoke.py
 python3 python/validation/pr131_contribution_model_v1_smoke.py
 python3 python/validation/pr132_contribution_constraint_binding_v1_smoke.py
+python3 python/validation/pr133_role_rescue_relation_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
