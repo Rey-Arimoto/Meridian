@@ -3508,6 +3508,133 @@ This is structural classification.
 
 ---
 
+### v1.2 Role × Distortion × Regime Contribution Model v1 (PR131)
+
+**Purpose:** Classify structural return contribution from regime × role × distortion combinations.
+
+**What is Contribution?**
+
+Contribution ≠ Performance
+Contribution ≠ Return guarantee
+Contribution = Structural side-effect label
+
+**Core Thesis:**
+Returns emerge not from "trading skill" but from market design constraints:
+1. Structure is intelligible (MEDIUM regime)
+2. Touchability is constrained (eligibility gates)
+3. Distortion is present (failure mode exists)
+
+Meridian creates a market that suppresses action in non-intelligible regimes. Returns exist only where structure is intelligible and touchability is constrained.
+
+**Contribution Labels:**
+
+```python
+CONTRIB_STRONGLY_POSITIVE  # ++ (primary alpha zone)
+CONTRIB_POSITIVE           # + (secondary zone)
+CONTRIB_NEUTRAL            # 0 (no contribution by design)
+CONTRIB_NEGATIVE           # - (structure breakdown risk)
+CONTRIB_STRONGLY_NEGATIVE  # -- (critical regime)
+CONTRIB_UNKNOWN            # ? (unclassified)
+```
+
+**Classification Rules (First-match-wins):**
+
+1. **REGIME_CRITICAL** → CONTRIB_STRONGLY_NEGATIVE (always)
+2. **INELIGIBLE** → CONTRIB_NEUTRAL (no touchability by design)
+3. **REGIME_HIGH** → CONTRIB_NEGATIVE (mostly), CONTRIB_NEUTRAL for VOLATILITY × D1/D3/D4
+4. **REGIME_LOW** → CONTRIB_NEUTRAL (thin opportunity)
+5. **REGIME_MEDIUM** → Primary alpha zone:
+   - VOLATILITY × D1-D5 × ELIGIBLE_CONSIDERATION_ONLY → **CONTRIB_STRONGLY_POSITIVE**
+   - VOLATILITY × D1-D5 (other) → CONTRIB_POSITIVE
+   - LIQUIDITY × D1/D3 → CONTRIB_POSITIVE
+   - STABILITY → CONTRIB_NEUTRAL
+   - HEDGE × D5 → CONTRIB_POSITIVE
+   - GAS → CONTRIB_NEUTRAL
+
+**Example:**
+
+```python
+from contribution import classify_contribution_v1, CONTRIB_STRONGLY_POSITIVE
+
+# Primary alpha zone: MEDIUM × VOLATILITY × D1 × ELIGIBLE_CONSIDERATION_ONLY
+result = classify_contribution_v1(
+    regime_level="REGIME_MEDIUM",
+    role_type="VOLATILITY_ROLE",
+    distortion_type="D1_LIQUIDATION",
+    eligibility_label="ELIGIBLE_CONSIDERATION_ONLY",
+)
+
+# Check contribution
+if result["v12_contrib_contribution_label"] == CONTRIB_STRONGLY_POSITIVE:
+    print("Primary alpha zone detected")
+    print(f"Rationale: {result['v12_contrib_contribution_rationale']}")
+    # Output: ['DISTORTION_CAPTURE_ZONE', 'STRUCTURE_INTELLIGIBLE']
+```
+
+**Contribution Schema Fields:**
+
+```python
+{
+    "v12_contrib_mode": "ON",
+    "v12_contrib_status": "AVAILABLE",
+    "v12_contrib_regime_level": "REGIME_MEDIUM",
+    "v12_contrib_role_type": "VOLATILITY_ROLE",
+    "v12_contrib_distortion_type": "D1_LIQUIDATION",
+    "v12_contrib_eligibility_label": "ELIGIBLE_CONSIDERATION_ONLY",
+    "v12_contrib_contribution_label": "CONTRIB_STRONGLY_POSITIVE",
+    "v12_contrib_contribution_rationale": [
+        "DISTORTION_CAPTURE_ZONE",
+        "STRUCTURE_INTELLIGIBLE"
+    ],
+    "v12_contrib_summary": "contribution labeled CONTRIB_STRONGLY_POSITIVE...",
+    "v12_contrib_basis": ["regime_level", "role_type", "distortion_type", "eligibility_label"],
+}
+```
+
+**Files:**
+- `python/contribution/v12_contribution_schema.py` - Schema definition
+- `python/contribution/v12_role_distortion_regime_contribution_engine_v1.py` - Classification engine
+- `python/contribution/v12_contribution_constitutional_guard.py` - Constitutional validation
+- `python/contribution/__init__.py` - Package exports
+- `python/explain/v12_explain_context_contribution_extension.py` - PR122 integration
+
+**Integration Points:**
+- **Regime (PR110)**: `v11_regime_level` for entropy classification
+- **Role (PR130)**: `v12_role_type` for asset role
+- **Distortion (PR129)**: `v12_distortion_type` for market structure aberration
+- **Eligibility (PR128)**: `v12_eligibility_label` for touchability gate
+- **Explanation (PR122)**: Append-only signal extension
+
+**Constitutional Guarantees (PR131):**
+- READ-ONLY classification only
+- No numeric patterns whatsoever (digits, %, decimals, time periods)
+- No token literals (SUI, USDC, BTC, ETH, DEEP, CETUS)
+- No return guarantee language ("assured", "annual return", "backtest")
+- No prescriptive language ("should", "must")
+- No contribution coupling ("++ therefore trade", "-- therefore stop") ← NEW
+- Warning-only guards (never fail)
+
+**Philosophy (PR131):**
+```
+Contribution = Where returns can exist as structural side-effect
+Market Design = Restrict touchability to intelligible regimes
+Alpha = Side-effect of constraint, not skill
+
+MEDIUM regime = Primary alpha zone (structure intelligible)
+HIGH regime = Structure breaking down (negative contribution)
+CRITICAL regime = Structure broken (strongly negative)
+LOW regime = Opportunity thin (neutral contribution)
+
+This is not performance model.
+This is not return guarantee.
+This is structural constraint model.
+
+"年利30%" comes from design (restricting where you touch),
+not from trading skill.
+```
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -3519,8 +3646,10 @@ This is structural classification.
 - **No addresses**: 0x... patterns prohibited
 - **No trading vocabulary**: swap, buy, sell, execute, sign, transfer prohibited
 - **No trajectory coupling**: "permission improved therefore act" patterns prohibited (PR127)
-- **No distortion coupling** (NEW): "D1 therefore act" patterns prohibited (PR129)
-- **No role coupling** (NEW): "QUALIFIED therefore act" patterns prohibited (PR130)
+- **No distortion coupling**: "D1 therefore act" patterns prohibited (PR129)
+- **No role coupling**: "QUALIFIED therefore act" patterns prohibited (PR130)
+- **No contribution coupling** (NEW): "++ therefore trade", "-- therefore stop" patterns prohibited (PR131)
+- **No return guarantee language** (NEW): "annual return", "backtest", "assured" prohibited (PR131)
 - **Defensive**: Never raises exceptions
 - **Warning-only**: Exit code always 0
 
@@ -3534,6 +3663,7 @@ python3 python/validation/pr127_permission_trajectory_binding_v1_smoke.py
 python3 python/validation/pr128_role_distortion_eligibility_v1_smoke.py
 python3 python/validation/pr129_distortion_detector_v1_smoke.py
 python3 python/validation/pr130_role_carrier_qualification_v1_smoke.py
+python3 python/validation/pr131_contribution_model_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
