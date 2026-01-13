@@ -17,6 +17,10 @@ Exports:
     - DRAFT_MODE_READ_ONLY: Mode constant
     - ACTION_CLASS_NONE: Action class constant
     - ACTION_CLASS_DRAFT_ONLY: Action class constant
+    - ACTION_CLASS_NO_ACTION: Action class constant (PR142)
+    - ACTION_CLASS_HUMAN_REVIEW_REQUIRED: Action class constant (PR142)
+    - ACTION_CLASS_SIMULATION_ONLY: Action class constant (PR142)
+    - ACTION_CLASS_CONSIDERATION_ONLY: Action class constant (PR142)
 
     Constitutional Guard:
     - check_draft_record: Draft record guard
@@ -42,6 +46,10 @@ from .v13_execution_draft_schema import (
     DRAFT_MODE_READ_ONLY,
     ACTION_CLASS_NONE,
     ACTION_CLASS_DRAFT_ONLY,
+    ACTION_CLASS_NO_ACTION,
+    ACTION_CLASS_HUMAN_REVIEW_REQUIRED,
+    ACTION_CLASS_SIMULATION_ONLY,
+    ACTION_CLASS_CONSIDERATION_ONLY,
 )
 from .v13_draft_constitutional_guard import (
     check_draft_record,
@@ -66,6 +74,10 @@ __all__ = [
     "DRAFT_MODE_READ_ONLY",
     "ACTION_CLASS_NONE",
     "ACTION_CLASS_DRAFT_ONLY",
+    "ACTION_CLASS_NO_ACTION",
+    "ACTION_CLASS_HUMAN_REVIEW_REQUIRED",
+    "ACTION_CLASS_SIMULATION_ONLY",
+    "ACTION_CLASS_CONSIDERATION_ONLY",
     # Constitutional Guard
     "check_draft_record",
     "check_token_literals",

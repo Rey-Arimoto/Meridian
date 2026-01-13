@@ -5069,6 +5069,131 @@ Relationship to v1.2:
 
 ---
 
+### v1.3 Approval Packet → Execution Draft Binding Engine v1 (PR142)
+
+**Purpose:** Map v1.2 Approval Packet (PR124/PR140) or Artifact Bundle (PR115/PR116) to PR141 Execution Draft Schema (v13_draft_) with labels and constraints only.
+
+**⚠️ Constitutional Notice - Binding Only:**
+
+```
+This binding engine does NOT:
+- Recommend actions
+- Provide instructions
+- Build transactions
+- Make trading decisions
+- Suggest execution strategies
+
+This binding engine ONLY:
+- Maps labels from packet to draft
+- Extracts constraints (labels only, no values)
+- Projects source presence (flags only, no data)
+- Determines structural shape (not recommendation)
+- Maintains READ-ONLY guarantees
+```
+
+**What is Binding?**
+
+Binding = Label projection (not recommendation, not instruction)
+Draft Binding = Structural mapping (not decision)
+
+**API:**
+
+```python
+from bind import build_execution_draft_from_bundle_v1, build_execution_draft_from_packet_v1
+
+# From artifact bundle
+result = build_execution_draft_from_bundle_v1(artifact_bundle, mode="DRAFT_ONLY")
+
+# From approval packet
+result = build_execution_draft_from_packet_v1(approval_packet, mode="DRAFT_ONLY")
+
+# Result structure:
+{
+    "execution_draft": {
+        "v13_draft_status": "AVAILABLE",
+        "v13_draft_inputs": {...},      # Source presence only
+        "v13_draft_constraints": {...},  # Labels only
+        "v13_draft_intended_shape": {...}, # Structural label
+        ...
+    },
+    "warnings": [...]
+}
+```
+
+**Intended Shape Mapping (structural binding, not recommendation):**
+
+| Input Constraint | Intended Shape Output |
+|------------------|----------------------|
+| INELIGIBLE | NO_ACTION |
+| SUPPRESSED | NO_ACTION |
+| REQUIRED | HUMAN_REVIEW_REQUIRED |
+| DRY_RUN_ONLY | SIMULATION_ONLY |
+| CONSIDERATION_ONLY | CONSIDERATION_ONLY |
+| (default) | SIMULATION_ONLY |
+
+**Label Projection Rules:**
+
+1. **Inputs**: Source presence only (no values)
+   - ✓ `{"regime_record_present": "true"}`
+   - ✗ `{"sui_amount": "1000000000"}`
+
+2. **Constraints**: Labels only (no numeric values)
+   - ✓ `{"permission": "PERMISSION_ALLOWED"}`
+   - ✗ `{"token_pair": "SUI/USDC"}`
+
+3. **Intended Shape**: Structural label (not prescriptive)
+   - ✓ `{"action_class": "SIMULATION_ONLY"}`
+   - ✗ `{"action_class": "YOU_SHOULD_EXECUTE_THIS"}`
+
+**Files:**
+- `python/bind/v13_packet_to_draft_binding_engine_v1.py` - Binding engine
+- `python/bind/v13_bind_constitutional_guard.py` - Constitutional guards
+- `python/bind/__init__.py` - Package exports
+- `python/validation/pr142_packet_to_draft_binding_v1_smoke.py` - 10 smoke tests
+
+**Constitutional Guarantees (PR142):**
+- READ-ONLY: No execution logic or transaction building
+- Label projection only: No numeric values, no token literals
+- Source presence only: Inputs are flags, not data
+- Structural binding: Intended shape is label, not recommendation
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR142):**
+```
+Binding = Label projection (not recommendation)
+Structural mapping = Constraint extraction (not decision)
+
+The binding engine:
+  - Maps labels from packet to draft
+  - Extracts constraint labels (no values)
+  - Projects source presence (no data)
+  - Determines structural shape (no action recommendation)
+
+The binding engine does NOT:
+  - Recommend actions
+  - Provide instructions
+  - Build transactions
+  - Make trading decisions
+  - Suggest execution strategies
+
+Relationship to v1.2:
+  - Input: v1.2 approval packet (PR140) OR artifact bundle (PR115)
+  - Process: Label projection + constraint extraction
+  - Output: v1.3 execution draft (PR141)
+  - Bridge: v1.2 (human review) → v1.3 (execution shape)
+```
+
+**Use Cases:**
+
+1. **Packet → Draft mapping**: Convert approval packets to execution drafts
+2. **Label-only projection**: Extract labels without numeric values
+3. **Source presence tracking**: Record artifact presence without data
+4. **Structural shape binding**: Determine intended shape without recommendation
+5. **Constitutional validation**: Enforce READ-ONLY guarantees across binding
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -5125,6 +5250,7 @@ All scripts exit 0 (warning-only, never fails).
 cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr141_execution_draft_schema_v1_smoke.py
+python3 python/validation/pr142_packet_to_draft_binding_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).

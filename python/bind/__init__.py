@@ -1,79 +1,50 @@
 #!/usr/bin/env python3
 """
-PR132: v1.2 Contribution → Constraint Binding v1 (READ-ONLY)
+PR142: v1.3 Approval Packet → Execution Draft Binding Engine v1 (READ-ONLY)
 
 Purpose:
-    Bind contribution model (PR131) to existing pipeline as non-prescriptive constraint labels.
-    Binding = Label propagation (not evaluation, not decision, not instruction).
+    Map v1.2 Approval Packet (PR124/PR140) or Artifact Bundle (PR115/PR116)
+    to PR141 Execution Draft Schema (v13_draft_) with labels and constraints only.
 
 Exports:
-    Schema:
-    - V12ContributionConstraintSchema: Constraint binding schema class
-    - get_contribution_constraint_schema_info: Schema metadata
-    - Zone label constants: CONTRIB_ZONE_NONE, CONTRIB_ZONE_SECONDARY,
-                           CONTRIB_ZONE_PRIMARY, CONTRIB_ZONE_BLOCKED
-    - Constraint label constants: CONSTRAINT_CONTRIB_*
+    Binding Engine:
+    - build_execution_draft_from_bundle_v1: Bind from artifact bundle
+    - build_execution_draft_from_packet_v1: Bind from approval packet
+    - get_binding_engine_v1_info: Binding engine metadata
 
-    Engine:
-    - bind_contribution_constraints_v1: Constraint binding function
-    - get_contribution_binding_engine_v1_info: Engine metadata
+    Constitutional Guard:
+    - check_binding_output: Binding output guard
+    - check_label_only_constraints: Label-only constraint guard
+    - check_source_presence_only_inputs: Source presence guard
+    - check_intended_shape_structural: Intended shape guard
 
-    Guards:
-    - check_contribution_binding_record: Constitutional guard
-    - check_contribution_zone_coupling: Zone coupling guard
-    - FORBIDDEN_VOCABULARY: Forbidden vocabulary list
+    Constants:
+    - VALID_ACTION_CLASSES: Valid action class labels
 """
 
-# Schema
-from .v12_contribution_constraint_schema import (
-    V12ContributionConstraintSchema,
-    get_contribution_constraint_schema_info,
-    CONTRIB_ZONE_NONE,
-    CONTRIB_ZONE_SECONDARY,
-    CONTRIB_ZONE_PRIMARY,
-    CONTRIB_ZONE_BLOCKED,
-    VALID_ZONE_LABELS,
-    CONSTRAINT_CONTRIB_BLOCKED_REGIME_CRITICAL,
-    CONSTRAINT_CONTRIB_BLOCKED_INELIGIBLE,
-    CONSTRAINT_CONTRIB_BLOCKED_SUPPRESSED,
-    CONSTRAINT_CONTRIB_SECONDARY_REGIME_NON_MEDIUM,
-    CONSTRAINT_CONTRIB_PRIMARY_MEDIUM_VOLATILITY_DISTORTION,
-    CONSTRAINT_CONTRIB_NONE_DEFAULT,
+from .v13_packet_to_draft_binding_engine_v1 import (
+    build_execution_draft_from_bundle_v1,
+    build_execution_draft_from_packet_v1,
+    get_binding_engine_v1_info,
 )
-
-# Engine
-from .v12_contribution_constraint_binding_engine_v1 import (
-    bind_contribution_constraints_v1,
-    get_contribution_binding_engine_v1_info,
-)
-
-# Guards
-from .v12_contribution_binding_constitutional_guard import (
-    check_contribution_binding_record,
-    check_contribution_zone_coupling,
-    FORBIDDEN_VOCABULARY,
+from .v13_bind_constitutional_guard import (
+    check_binding_output,
+    check_label_only_constraints,
+    check_source_presence_only_inputs,
+    check_intended_shape_structural,
+    VALID_ACTION_CLASSES,
 )
 
 __all__ = [
-    # Schema
-    "V12ContributionConstraintSchema",
-    "get_contribution_constraint_schema_info",
-    "CONTRIB_ZONE_NONE",
-    "CONTRIB_ZONE_SECONDARY",
-    "CONTRIB_ZONE_PRIMARY",
-    "CONTRIB_ZONE_BLOCKED",
-    "VALID_ZONE_LABELS",
-    "CONSTRAINT_CONTRIB_BLOCKED_REGIME_CRITICAL",
-    "CONSTRAINT_CONTRIB_BLOCKED_INELIGIBLE",
-    "CONSTRAINT_CONTRIB_BLOCKED_SUPPRESSED",
-    "CONSTRAINT_CONTRIB_SECONDARY_REGIME_NON_MEDIUM",
-    "CONSTRAINT_CONTRIB_PRIMARY_MEDIUM_VOLATILITY_DISTORTION",
-    "CONSTRAINT_CONTRIB_NONE_DEFAULT",
-    # Engine
-    "bind_contribution_constraints_v1",
-    "get_contribution_binding_engine_v1_info",
-    # Guards
-    "check_contribution_binding_record",
-    "check_contribution_zone_coupling",
-    "FORBIDDEN_VOCABULARY",
+    # Binding Engine
+    "build_execution_draft_from_bundle_v1",
+    "build_execution_draft_from_packet_v1",
+    "get_binding_engine_v1_info",
+    # Constitutional Guard
+    "check_binding_output",
+    "check_label_only_constraints",
+    "check_source_presence_only_inputs",
+    "check_intended_shape_structural",
+    # Constants
+    "VALID_ACTION_CLASSES",
 ]
