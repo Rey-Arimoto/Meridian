@@ -5194,6 +5194,169 @@ Relationship to v1.2:
 
 ---
 
+### v1.3 Execution Gate (Always-Blocked) v1 (PR143)
+
+**Purpose:** Build execution gate from execution draft (PR141/PR142). ALWAYS returns BLOCKED with structural block reasons. This gate explains why execution is not reachable.
+
+**⚠️ Constitutional Notice - Always Blocked:**
+
+```
+This gate does NOT:
+- Allow execution
+- Permit transactions
+- Provide "ready to execute" signals
+- Recommend actions
+- Make decisions
+
+This gate ONLY:
+- Returns BLOCKED state (always)
+- Enumerates block reasons (structural labels)
+- Explains why execution is not reachable
+- Maintains READ-ONLY guarantees
+```
+
+**What is an Execution Gate?**
+
+Gate ≠ Allow
+Gate = Explain why execution is not reachable (yet)
+Execution is defined by prohibition first.
+
+**Gate Behavior:**
+
+The execution gate ALWAYS returns:
+- `gate_state: "BLOCKED"` (constant, never ALLOW)
+- Block reasons (list of structural labels)
+- Reason details (label-only context)
+
+**API:**
+
+```python
+from gate import build_execution_gate_from_draft_v1, build_execution_gate_from_bundle_v1
+
+# From execution draft
+result = build_execution_gate_from_draft_v1(draft_record)
+
+# From artifact bundle
+result = build_execution_gate_from_bundle_v1(artifact_bundle)
+
+# Result structure:
+{
+    "execution_gate": {
+        "v13_gate_status": "AVAILABLE",
+        "v13_gate_gate_state": "BLOCKED",  # ALWAYS
+        "v13_gate_block_reasons": [...],   # Structural labels
+        "v13_gate_reason_details": [...],  # Label-only context
+        ...
+    },
+    "warnings": [...]
+}
+```
+
+**Block Reason Mapping (structural, label-only):**
+
+| Draft Condition | Block Reason |
+|----------------|--------------|
+| draft.status == "ERROR" | REASON_INVALID_DRAFT |
+| ACTION_CLASS_NO_ACTION | REASON_NO_ACTION_SHAPE |
+| ACTION_CLASS_HUMAN_REVIEW_REQUIRED | REASON_HUMAN_REVIEW_REQUIRED |
+| ACTION_CLASS_SIMULATION_ONLY | REASON_SIMULATION_ONLY |
+| ACTION_CLASS_CONSIDERATION_ONLY | REASON_CONSIDERATION_ONLY |
+| HARD_* constraints | REASON_HARD_CONSTRAINT |
+| SUPPRESSED | REASON_SUPPRESSED |
+| Missing inputs | REASON_MISSING_INPUTS |
+| Draft warnings present | REASON_DRAFT_WARNINGS |
+| (always included) | REASON_NO_EXECUTION_LOGIC |
+
+**Example Output:**
+
+```python
+{
+    "v13_gate_version": "v1.3",
+    "v13_gate_status": "AVAILABLE",
+    "v13_gate_mode": "READ_ONLY",
+    "v13_gate_summary": "execution gate produced. state blocked. reasons enumerated.",
+    "v13_gate_gate_state": "BLOCKED",  # ALWAYS
+    "v13_gate_block_reasons": [
+        "REASON_SIMULATION_ONLY",
+        "REASON_NO_EXECUTION_LOGIC"
+    ],
+    "v13_gate_reason_details": [
+        {
+            "reason": "REASON_SIMULATION_ONLY",
+            "source": "execution_draft",
+            "action_class": "SIMULATION_ONLY"
+        },
+        {
+            "reason": "REASON_NO_EXECUTION_LOGIC",
+            "source": "execution_draft"
+        }
+    ],
+    "v13_gate_basis": ["v13_execution_draft"],
+    "v13_gate_artifacts": ["v13_execution_draft"],
+    "v13_gate_warnings": []
+}
+```
+
+**Files:**
+- `python/gate/v13_execution_gate_schema.py` - Gate schema
+- `python/gate/v13_execution_gate_engine_v1.py` - Gate engine
+- `python/gate/v13_gate_constitutional_guard.py` - Constitutional guards
+- `python/gate/__init__.py` - Package exports
+- `python/validation/pr143_execution_gate_v1_smoke.py` - 12 smoke tests
+
+**Constitutional Guarantees (PR143):**
+- READ-ONLY: No execution logic
+- Always BLOCKED: Never produces ALLOW/PERMITTED/READY states
+- No execution: Gate never allows transactions
+- Label-only: No numeric values, no token literals
+- No prescriptive language: No should/must/need to
+- No action vocabulary: No execute/sign/transfer/swap/buy/sell
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR143):**
+```
+Gate = Prohibition enumeration (not permission)
+Execution Gate = Structural block reasons (not recommendation)
+
+The execution gate:
+  - ALWAYS returns BLOCKED state
+  - Enumerates structural reasons why execution is not reachable
+  - Maps draft labels to block reason labels
+  - Maintains READ-ONLY guarantees
+
+The execution gate does NOT:
+  - Allow execution
+  - Provide permission
+  - Recommend actions
+  - Make decisions
+  - Build transactions
+
+Relationship to v1.3:
+  - Input: v1.3 execution draft (PR141/PR142)
+  - Process: Block reason enumeration
+  - Output: v1.3 execution gate (always BLOCKED)
+  - Purpose: Explain why execution is not reachable (yet)
+```
+
+**Use Cases:**
+
+1. **Block reason enumeration**: Explain why execution is not reachable
+2. **Structural prohibition**: Map draft labels to block reasons
+3. **Constitutional validation**: Enforce always-blocked guarantees
+4. **Defensive error handling**: Graceful degradation on invalid input
+5. **Execution bridge**: Connect v1.3 draft to prohibition layer
+
+**Explicit Non-Claims:**
+- This gate does NOT allow execution
+- This gate does NOT permit transactions
+- This gate does NOT provide "ready to execute" signals
+- This gate does NOT recommend actions
+- This gate does NOT make decisions
+- Gate state is ALWAYS "BLOCKED" (never ALLOW/PERMITTED/READY)
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -5251,6 +5414,7 @@ cd ~/Meridian
 source .venv/bin/activate
 python3 python/validation/pr141_execution_draft_schema_v1_smoke.py
 python3 python/validation/pr142_packet_to_draft_binding_v1_smoke.py
+python3 python/validation/pr143_execution_gate_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
