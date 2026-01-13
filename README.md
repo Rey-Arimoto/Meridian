@@ -5746,6 +5746,165 @@ Relationship to v1.4:
 
 ---
 
+### v1.4 Stress Rule Table v1 (PR146)
+
+**Purpose:** Fixed table mapping (regime × band_bucket × distortion_presence) → stress_label. Stress = structural load state (not action, not instruction). Table-first approach with deterministic lookups.
+
+**⚠️ Constitutional Notice - Stress ≠ Action:**
+
+```
+This stress label does NOT:
+- Recommend actions
+- Provide trading advice
+- Instruct what to do
+- Make decisions
+- Suggest trades
+
+This stress label ONLY:
+- Describes structural load state (CALM/TENSE/STRESSED/UNKNOWN)
+- Uses fixed table lookup (deterministic)
+- Outputs label-only (no numeric values)
+- Maintains READ-ONLY guarantees
+```
+
+**What is Stress?**
+
+Stress = Structural load state (not action directive)
+- CALM: Safe band + no distortion (stable)
+- TENSE: Moderate stress (regime constraints or distortion present)
+- STRESSED: High stress (critical regime or outside band or both)
+- UNKNOWN: Cannot determine from available inputs
+
+**API:**
+
+```python
+from stress import build_stress_label_from_inputs_v1, build_stress_label_from_bundle_v1
+
+# Direct inputs
+result = build_stress_label_from_inputs_v1(
+    regime_label="REGIME_LOW",
+    band_bucket="SAFE",
+    distortion_presence="NONE"
+)
+print(result["stress_record"]["v14_stress_label"])  # CALM
+
+# Artifact bundle
+result = build_stress_label_from_bundle_v1(
+    artifact_bundle={
+        "artifacts": {
+            "regime_record": {"v11_regime_level": "REGIME_MEDIUM"},
+            "role_safe_band_guidance": {
+                "v14_guidance_roles": {
+                    "VOLATILITY_ROLE": {"status": "WITHIN_SAFE"}
+                }
+            },
+            "distortion_catalog_record": {
+                "v12_distortion_records": [{"distortion_subtype": "SUBTYPE_A"}]
+            }
+        }
+    }
+)
+print(result["stress_record"]["v14_stress_label"])  # STRESSED or TENSE
+```
+
+**Stress Rule Table (Fixed, Deterministic):**
+
+Absolute Priority Rules:
+1. band_bucket == OUTSIDE → STRESSED (always)
+2. regime == REGIME_CRITICAL → STRESSED (always)
+3. UNKNOWN inputs → UNKNOWN (but OUTSIDE/CRITICAL override)
+
+Matrix (excluding OUTSIDE/CRITICAL):
+
+| Regime | Band | Distortion NONE | Distortion PRESENT |
+|--------|------|-----------------|-------------------|
+| LOW | SAFE | CALM | TENSE |
+| LOW | EDGE | TENSE | STRESSED |
+| MEDIUM | SAFE | TENSE | STRESSED |
+| MEDIUM | EDGE | STRESSED | STRESSED |
+| HIGH | SAFE | STRESSED | STRESSED |
+| HIGH | EDGE | STRESSED | STRESSED |
+| CRITICAL | ANY | STRESSED | STRESSED |
+
+Band Bucket Mapping (PR144 → simplified):
+- STATUS_BELOW_SAFE → OUTSIDE
+- STATUS_WITHIN_SAFE → SAFE
+- STATUS_ABOVE_SAFE → EDGE
+- STATUS_UNKNOWN → UNKNOWN
+
+Or direct bucket mapping:
+- BAND_ZERO → OUTSIDE (0-1%, most constrained)
+- BAND_MINIMAL → EDGE (1-10%)
+- BAND_LOW/MEDIUM/HIGH → SAFE (10-75%)
+- BAND_MAXIMAL → EDGE (75-100%)
+- BAND_UNKNOWN → UNKNOWN
+
+Worst Bucket Priority (for multiple roles):
+OUTSIDE > EDGE > SAFE > UNKNOWN
+
+**Files:**
+- `python/stress/v14_stress_rule_table_schema.py` - Stress schema
+- `python/stress/v14_stress_rule_table_v1.py` - Fixed mapping table (102 entries)
+- `python/stress/v14_stress_engine_v1.py` - Stress engine
+- `python/stress/v14_stress_constitutional_guard.py` - Constitutional guards
+- `python/stress/__init__.py` - Package exports
+- `python/validation/pr146_stress_rule_table_v1_smoke.py` - 12 smoke tests
+
+**Constitutional Guarantees (PR146):**
+- READ-ONLY: No execution, no trading
+- Non-prescriptive: No should/must/recommend/advise
+- No trading verbs: No buy/sell/swap/execute/sign/transfer
+- No token literals: No SUI/USDC/BTC/ETH
+- Label-only output: No numeric values in text
+- No addresses: No 0x... patterns
+- No causal coupling: No therefore/so/hence
+- Table-first: Deterministic lookup (not inference)
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR146):**
+```
+Stress = Structural load state (not action)
+Table-first approach = Fixed mapping, no inference
+
+The stress engine:
+  - Extracts regime label, band bucket, distortion presence
+  - Looks up stress label from fixed table
+  - Returns label-only result (CALM/TENSE/STRESSED/UNKNOWN)
+  - Uses worst bucket across roles
+  - Defensive: missing key → UNKNOWN + warning
+
+The stress engine does NOT:
+  - Recommend actions
+  - Provide trading advice
+  - Make decisions
+  - Infer stress from other signals
+  - Generate dynamic mappings
+
+Relationship to v1.4:
+  - Input: PR144 safe band guidance + PR129/PR134 distortion signals + v1.2 regime
+  - Process: Fixed table lookup (regime × band × distortion)
+  - Output: Stress label (no action recommendation)
+  - Purpose: Display structural load state for human understanding
+```
+
+**Use Cases:**
+1. **Stress state display**: Show CALM/TENSE/STRESSED for human review
+2. **Fixed table lookup**: Deterministic, predictable results
+3. **Bundle extraction**: Extract from artifact bundle automatically
+4. **Worst bucket logic**: Handle multiple roles safely
+5. **Constitutional validation**: Enforce stress ≠ action
+
+**Explicit Non-Claims:**
+- This is NOT an action recommendation
+- This is NOT trading advice
+- This is NOT a decision
+- This is NOT eligibility determination
+- This is NOT permission granting
+- Stress label is descriptive only (not prescriptive or directive)
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
@@ -5757,6 +5916,9 @@ python3 python/validation/pr144_role_safe_band_guidance_v1_smoke.py
 
 # PR145: Safe Band × Distortion Stress Overlay v1
 python3 python/validation/pr145_safe_band_distortion_overlay_v1_smoke.py
+
+# PR146: Stress Rule Table v1
+python3 python/validation/pr146_stress_rule_table_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
