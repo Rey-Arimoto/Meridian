@@ -4922,6 +4922,153 @@ PR124 Relationship:
 
 ---
 
+## v1.3 Infrastructure — Execution Bridge (READ-ONLY)
+
+### v1.3 Execution Draft Schema v1 (PR141)
+
+**Purpose:** Define strict schema for "execution draft" generated from approval packets. This is NOT an instruction, NOT a recommendation, NOT a transaction. It is a structured, non-custodial, execution-shaped draft record.
+
+**⚠️ Constitutional Notice - Draft ≠ Action:**
+
+```
+This draft schema does NOT:
+- Contain instructions
+- Recommend actions
+- Build transactions
+- Include signing logic
+- Reference addresses
+- Contain token literals or amounts
+
+This draft schema ONLY:
+- Defines structured record format
+- Provides label-only references
+- Records constraints and boundaries
+- Maintains READ-ONLY guarantees
+```
+
+**What is an Execution Draft?**
+
+Draft ≠ Action ≠ Recommendation
+Execution Draft = Structured shape reference (not instruction)
+
+**Schema Design:**
+
+Record prefix: `v13_draft_`
+
+**Required Fields:**
+- `v13_draft_version`: "v1"
+- `v13_draft_status`: AVAILABLE | ERROR
+- `v13_draft_mode`: READ_ONLY
+- `v13_draft_summary`: Non-prescriptive summary
+- `v13_draft_inputs`: References to artifact ids / component presence labels only
+- `v13_draft_constraints`: Labels only (permission/trajectory/eligibility/boundary)
+- `v13_draft_intended_shape`: Labels only (ACTION_CLASS = NONE / DRAFT_ONLY)
+- `v13_draft_basis`: List of strings (no numbers)
+- `v13_draft_artifacts`: List of strings (no numeric pattern ids)
+- `v13_draft_warnings`: List of strings
+
+**Optional Fields:**
+- `v13_draft_components_present`: Dict of booleans
+- `v13_draft_notes`: String (guarded)
+
+**Example Record (labels only):**
+
+```python
+{
+    "v13_draft_version": "v1",
+    "v13_draft_status": "AVAILABLE",
+    "v13_draft_mode": "READ_ONLY",
+    "v13_draft_summary": "execution draft available. inputs present.",
+    "v13_draft_inputs": {
+        "packet_id": "approval_packet_v1",
+        "components_present": ["explain_context", "narrative", "preview"]
+    },
+    "v13_draft_constraints": {
+        "permission": "ALLOWED",
+        "trajectory": "IMPROVING",
+        "eligibility": "ELIGIBLE",
+        "boundary": "WITHIN_LIMITS"
+    },
+    "v13_draft_intended_shape": {
+        "action_class": "DRAFT_ONLY"
+    },
+    "v13_draft_basis": ["v13_approval_packet", "v11_regime_level"],
+    "v13_draft_artifacts": ["approval_packet_v12"],
+    "v13_draft_warnings": []
+}
+```
+
+**Usage:**
+
+```python
+from draft import V13ExecutionDraftSchema, DRAFT_STATUS_AVAILABLE, ACTION_CLASS_DRAFT_ONLY
+
+# Create execution draft record
+draft_record = V13ExecutionDraftSchema.create_draft_record(
+    status=DRAFT_STATUS_AVAILABLE,
+    summary="execution draft available.",
+    inputs={"packet_id": "approval_packet_v1"},
+    constraints={"permission": "ALLOWED", "eligibility": "ELIGIBLE"},
+    intended_shape={"action_class": ACTION_CLASS_DRAFT_ONLY},
+    basis=["v13_approval_packet"],
+)
+
+# Validate draft record
+errors = V13ExecutionDraftSchema.validate_draft_record(draft_record)
+if len(errors) == 0:
+    print("Draft record is valid")
+```
+
+**Files:**
+- `python/draft/v13_execution_draft_schema.py` - Schema definition
+- `python/draft/v13_draft_constitutional_guard.py` - Constitutional guards
+- `python/draft/__init__.py` - Package exports
+- `python/validation/pr141_execution_draft_schema_v1_smoke.py` - 10 smoke tests
+
+**Constitutional Guarantees (PR141):**
+- READ-ONLY: No signing, no sending, no tx building, no calldata, no addresses
+- No token literals, no amounts, no numeric patterns
+- No trading verbs (swap/buy/sell/execute/sign/transfer/bridge)
+- No prescriptive language (should/must/need to)
+- No causal coupling ("approved therefore", "eligible so", "recovered means")
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR141):**
+```
+Draft = Structured shape reference (not instruction)
+Execution Draft = Non-custodial record format (not transaction)
+
+The execution draft schema defines:
+  - Label-only record structure
+  - Non-prescriptive field names
+  - Constitutional constraints enforcement
+  - Defensive error handling
+
+The execution draft schema does NOT:
+  - Contain instructions
+  - Build transactions
+  - Reference addresses or amounts
+  - Include signing logic
+  - Recommend actions
+
+Relationship to v1.2:
+  - Input: v1.2 approval packet (PR140)
+  - Process: Extract labels and constraints
+  - Output: v1.3 execution draft (label-only)
+  - Bridge: v1.2 (human review) → v1.3 (execution shape)
+```
+
+**Use Cases:**
+
+1. **Schema definition**: Strict format for execution draft records
+2. **Label-only projection**: Extract labels from approval packets
+3. **Constitutional validation**: Enforce READ-ONLY guarantees
+4. **Execution bridge**: Connect v1.2 human review to v1.3 execution layer
+5. **Defensive error handling**: Graceful degradation on invalid input
+
+---
+
 ### Constitutional Constraints (v1.2)
 
 - **READ-ONLY**: No execution logic or decision changes
@@ -4968,6 +5115,16 @@ python3 python/validation/pr137_rescue_flow_graph_v1_smoke.py
 python3 python/validation/pr138_rescue_flow_render_extension_smoke.py
 python3 python/validation/pr139_rescue_flow_narrative_extension_v1_smoke.py
 python3 python/validation/pr140_approval_packet_integration_orchestrator_v1_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+### Run Validations (v1.3)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr141_execution_draft_schema_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
