@@ -5421,6 +5421,181 @@ All scripts exit 0 (warning-only, never fails).
 
 ---
 
+## v1.4 Infrastructure — Guidance & Display Shape (READ-ONLY)
+
+### v1.4 Role Safe Band Guidance v1 (PR144)
+
+**Purpose:** Build role safe band guidance from portfolio snapshot and regime record. This describes whether role allocations are BELOW/WITHIN/ABOVE structurally safe bands. This is NOT advice, NOT instruction, NOT recommendation.
+
+**⚠️ Constitutional Notice - Guidance ≠ Instruction:**
+
+```
+This guidance does NOT:
+- Recommend actions
+- Provide trading advice
+- Instruct what to do
+- Make decisions
+- Suggest trades
+
+This guidance ONLY:
+- Describes allocation status (BELOW/WITHIN/ABOVE safe band)
+- Outputs bucket labels (no raw numeric values)
+- Provides non-prescriptive interpretations
+- Maps regime × role to safe band (static table)
+- Maintains READ-ONLY guarantees
+```
+
+**What is Guidance?**
+
+Guidance ≠ Instruction
+Guidance = Describe shape, not recommend action
+
+**API:**
+
+```python
+from guidance import build_role_safe_band_guidance_v1
+
+# Build guidance from portfolio + regime
+result = build_role_safe_band_guidance_v1(
+    portfolio_snapshot={
+        "VOLATILITY_ROLE": 0.30,
+        "LIQUIDITY_ROLE": 0.25,
+        "STABILITY_ROLE": 0.20,
+        "HEDGE_ROLE": 0.15,
+        "GAS_ROLE": 0.10,
+    },
+    regime_record={
+        "v11_regime_level": "REGIME_MEDIUM"
+    }
+)
+
+# Result structure:
+{
+    "guidance_record": {
+        "v14_guidance_status": "AVAILABLE",
+        "v14_guidance_regime_label": "REGIME_MEDIUM",
+        "v14_guidance_roles": {
+            "VOLATILITY_ROLE": {
+                "current_ratio_bucket": "RATIO_MEDIUM",
+                "safe_band_bucket": "BAND_MEDIUM",
+                "status": "WITHIN_SAFE",
+                "interpretation": "allocation appears within the structurally safe band..."
+            },
+            ...
+        }
+    },
+    "warnings": [...]
+}
+```
+
+**Safe Band Table (Static, Deterministic):**
+
+Maps (regime × role) to safe band bucket:
+
+| Regime | VOLATILITY | LIQUIDITY | STABILITY | HEDGE | GAS |
+|--------|-----------|-----------|-----------|-------|-----|
+| CRITICAL | BAND_ZERO | BAND_HIGH | BAND_HIGH | BAND_MEDIUM | BAND_MINIMAL |
+| HIGH | BAND_LOW | BAND_MEDIUM | BAND_MEDIUM | BAND_MEDIUM | BAND_MINIMAL |
+| MEDIUM | BAND_MEDIUM | BAND_MEDIUM | BAND_LOW | BAND_LOW | BAND_MINIMAL |
+| LOW | BAND_MEDIUM | BAND_LOW | BAND_LOW | BAND_MINIMAL | BAND_MINIMAL |
+
+**Bucket Labels:**
+
+Ratio Buckets (current allocation):
+- RATIO_ZERO (0-1%)
+- RATIO_MINIMAL (1-10%)
+- RATIO_LOW (10-25%)
+- RATIO_MEDIUM (25-50%)
+- RATIO_HIGH (50-75%)
+- RATIO_MAXIMAL (75-100%)
+- RATIO_UNKNOWN
+
+Safe Band Buckets (target range):
+- BAND_ZERO (0-1%)
+- BAND_MINIMAL (1-10%)
+- BAND_LOW (10-25%)
+- BAND_MEDIUM (25-50%)
+- BAND_HIGH (50-75%)
+- BAND_MAXIMAL (75-100%)
+- BAND_UNKNOWN
+
+Status Labels:
+- STATUS_BELOW_SAFE: Allocation below safe band
+- STATUS_WITHIN_SAFE: Allocation within safe band
+- STATUS_ABOVE_SAFE: Allocation above safe band
+- STATUS_UNKNOWN: Status cannot be determined
+
+**Files:**
+- `python/guidance/v14_role_safe_band_schema.py` - Guidance schema
+- `python/guidance/v14_role_safe_band_engine_v1.py` - Guidance engine
+- `python/guidance/v14_guidance_constitutional_guard.py` - Constitutional guards
+- `python/guidance/__init__.py` - Package exports
+- `python/validation/pr144_role_safe_band_guidance_v1_smoke.py` - 12 smoke tests
+
+**Constitutional Guarantees (PR144):**
+- READ-ONLY: No execution, no trading
+- Non-prescriptive: No should/must/recommend/advise
+- No trading verbs: No buy/sell/swap/execute/sign/transfer
+- No token literals: No SUI/USDC/BTC/ETH
+- Bucket output only: No raw numeric values in text
+- No addresses: No 0x... patterns
+- Static safe band table: Deterministic (regime × role → band)
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR144):**
+```
+Guidance = Display shape (not instruction)
+Role Safe Band Guidance = Describe status (not recommend action)
+
+The guidance engine:
+  - Maps portfolio snapshot to ratio buckets
+  - Compares to safe band table (static, deterministic)
+  - Determines status: BELOW/WITHIN/ABOVE
+  - Provides non-prescriptive interpretations
+  - Outputs bucket labels only (no raw numbers)
+
+The guidance engine does NOT:
+  - Recommend actions
+  - Provide trading advice
+  - Instruct what to do
+  - Make decisions
+  - Suggest trades
+
+Relationship to v1.2:
+  - Input: v1.2 regime record + portfolio snapshot
+  - Process: Safe band comparison (static table)
+  - Output: v1.4 guidance record (bucket labels + status)
+  - Purpose: Display shape for human review
+```
+
+**Use Cases:**
+
+1. **Allocation status display**: Show BELOW/WITHIN/ABOVE for each role
+2. **Regime-aware guidance**: Safe bands adapt to regime label
+3. **Non-prescriptive interpretation**: Describe without recommending
+4. **Bucket-only output**: No raw numeric values in text
+5. **Constitutional validation**: Enforce guidance ≠ instruction
+
+**Explicit Non-Claims:**
+- This is NOT trading advice
+- This is NOT a recommendation
+- This is NOT an instruction
+- This is NOT a decision
+- Safe band status is descriptive only (not prescriptive)
+
+### Run Validations (v1.4)
+
+```bash
+cd ~/Meridian
+source .venv/bin/activate
+python3 python/validation/pr144_role_safe_band_guidance_v1_smoke.py
+```
+
+All scripts exit 0 (warning-only, never fails).
+
+---
+
 ## v1.0 Infrastructure — Market Structure Intelligence Pipeline (READ-ONLY)
 
 ### v1.0 Philosophy: Intelligence Native Market Architecture
