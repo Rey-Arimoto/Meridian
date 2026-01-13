@@ -5584,12 +5584,179 @@ Relationship to v1.2:
 - This is NOT a decision
 - Safe band status is descriptive only (not prescriptive)
 
+---
+
+### v1.4 Safe Band × Distortion Stress Overlay v1 (PR145)
+
+**Purpose:** Overlay static safe band guidance (PR144) with dynamic distortion signals (PR129/PR134) to produce a structural stress label for human understanding. This is NOT eligibility, NOT permission, NOT recommendation, NOT instruction.
+
+**⚠️ Constitutional Notice - Stress State ≠ Permission:**
+
+```
+This overlay does NOT:
+- Grant permission to act
+- Determine eligibility
+- Recommend actions
+- Provide trading advice
+- Make decisions
+- Suggest trades
+
+This overlay ONLY:
+- Describes structural stress state (CALM/TENSE/STRESSED/UNKNOWN)
+- Overlays static safe band with dynamic distortion signals
+- Outputs stress label for human review
+- Maintains READ-ONLY guarantees
+- Uses deterministic rules
+```
+
+**What is Stress State?**
+
+Stress State = Structural tension indicator (not action permission)
+- CALM: Safe band + no distortion
+- TENSE: Safe band + distortion present (moderate regime)
+- STRESSED: Constrained regime/bucket + distortion present
+- UNKNOWN: Cannot determine from available inputs
+
+**API:**
+
+```python
+from guidance import build_safe_band_distortion_overlay_v1
+
+# Build overlay from artifact bundle
+result = build_safe_band_distortion_overlay_v1(
+    artifact_bundle={
+        "artifacts": {
+            "regime_record": {
+                "v11_regime_level": "REGIME_MEDIUM"
+            },
+            "role_safe_band_guidance": {
+                "v14_guidance_roles": {
+                    "VOLATILITY_ROLE": {
+                        "safe_band_bucket": "BAND_MEDIUM"
+                    }
+                }
+            },
+            "distortion_catalog_record": {
+                "v12_distortion_records": [
+                    {"distortion_subtype": "SUBTYPE_A"}
+                ]
+            }
+        }
+    }
+)
+
+# Result structure:
+{
+    "overlay_record": {
+        "v14_overlay_status": "AVAILABLE",
+        "v14_overlay_regime_label": "REGIME_MEDIUM",
+        "v14_overlay_role_type": "VOLATILITY_ROLE",
+        "v14_overlay_safe_band_bucket": "BAND_MEDIUM",
+        "v14_overlay_distortion_presence": "PRESENT",
+        "v14_overlay_distortion_subtypes": ["SUBTYPE_A"],
+        "v14_overlay_band_stress_label": "TENSE",
+        "v14_overlay_notes": [
+            "allocation within safe band but distortion signal present indicates structural tension."
+        ],
+        ...
+    },
+    "warnings": [...]
+}
+```
+
+**Deterministic Stress Rules:**
+
+Distortion Presence:
+- NONE: No distortion detected
+- PRESENT: One distortion detected
+- MULTIPLE: Multiple distortions detected
+- UNKNOWN: Cannot determine
+
+Band Stress Label (structural only, NOT action):
+- Regime CRITICAL → STRESSED (always)
+- Distortion NONE → CALM (after checking regime)
+- Safe band bucket BAND_ZERO + distortion → STRESSED
+- Regime HIGH + distortion → STRESSED
+- Regime MEDIUM + distortion → TENSE
+- Regime LOW + distortion → TENSE
+- Invalid inputs → ERROR or UNKNOWN (defensive)
+
+**Files:**
+- `python/guidance/v14_safe_band_distortion_overlay_schema.py` - Overlay schema
+- `python/guidance/v14_safe_band_distortion_overlay_engine_v1.py` - Overlay engine
+- `python/guidance/v14_overlay_constitutional_guard.py` - Overlay guards
+- `python/guidance/__init__.py` - Package exports (updated)
+- `python/validation/pr145_safe_band_distortion_overlay_v1_smoke.py` - 12 smoke tests
+
+**Constitutional Guarantees (PR145):**
+- READ-ONLY: No execution, no trading
+- Non-prescriptive: No should/must/recommend/advise
+- No trading verbs: No buy/sell/swap/execute/sign/transfer
+- No token literals: No SUI/USDC/BTC/ETH
+- No numeric values in text: Bucket/stress labels only
+- No addresses: No 0x... patterns
+- No causal coupling: No therefore/so/hence
+- No eligibility coupling: No "eligible therefore", "permission improved so"
+- Deterministic rules: Stress label is predictable
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR145):**
+```
+Stress State = Display structural tension (not permission)
+Overlay = Combine static guidance + dynamic distortion signals
+
+The overlay engine:
+  - Extracts regime label, safe band bucket, distortion signals
+  - Determines distortion presence (NONE/PRESENT/MULTIPLE/UNKNOWN)
+  - Applies deterministic stress rules
+  - Outputs stress label (CALM/TENSE/STRESSED/UNKNOWN)
+  - Provides non-prescriptive overlay notes
+
+The overlay engine does NOT:
+  - Grant permission to act
+  - Determine eligibility
+  - Recommend actions
+  - Provide trading advice
+  - Make decisions
+  - Link stress state to permission
+
+Relationship to v1.4:
+  - Input: PR144 safe band guidance + PR129/PR134 distortion signals
+  - Process: Overlay static + dynamic (deterministic rules)
+  - Output: Structural stress label (no eligibility/permission)
+  - Purpose: Display stress state for human understanding
+```
+
+**Use Cases:**
+1. **Stress state display**: Show CALM/TENSE/STRESSED for human review
+2. **Static + dynamic overlay**: Combine safe band guidance with distortion signals
+3. **Non-prescriptive interpretation**: Describe tension without recommending action
+4. **Stress label only**: No raw numeric values or eligibility claims
+5. **Constitutional validation**: Enforce stress state ≠ permission
+
+**Explicit Non-Claims:**
+- This is NOT eligibility determination
+- This is NOT permission granting
+- This is NOT trading advice
+- This is NOT a recommendation
+- This is NOT an instruction
+- This is NOT a decision
+- Stress state is descriptive only (not prescriptive or permissive)
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
 cd ~/Meridian
 source .venv/bin/activate
+
+# PR144: Role Safe Band Guidance v1
 python3 python/validation/pr144_role_safe_band_guidance_v1_smoke.py
+
+# PR145: Safe Band × Distortion Stress Overlay v1
+python3 python/validation/pr145_safe_band_distortion_overlay_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
