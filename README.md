@@ -6041,6 +6041,178 @@ Relationship to v1.4:
 
 ---
 
+### v1.4 Watchlist + Observation Profile v1 (PR148)
+
+**Purpose:** Define monitoring targets by pair_ref (= pair×source) and separate observation profiles. Watchlist = "What to observe" (pair_ref × source × profile_ref). Profile = "How to observe" (windows / cadence / featureset). Windows are NOT in watchlist, but in observation profiles to avoid combinatorial explosion.
+
+**⚠️ Constitutional Notice - Watchlist ≠ Instruction:**
+
+```
+This watchlist does NOT:
+- Recommend actions
+- Provide trading advice
+- Instruct what to do
+- Make decisions
+- Suggest trades
+- Grant permission
+
+This watchlist ONLY:
+- Declares observation targets (pair_ref × source × profile_ref)
+- References observation profiles for window configuration
+- Maintains READ-ONLY guarantees
+- Provides structure for observation planning
+```
+
+**What is Watchlist vs Profile?**
+
+Watchlist = "What to observe"
+- pair_ref: Unique identifier (e.g., "deep:SUI/USDC", treated as anonymous ID)
+- source: Source label (e.g., "deep", "cetus")
+- profile_ref: Observation profile reference (e.g., "CORE_3W")
+- priority: CORE | EXTENDED | EXPERIMENTAL
+- enabled: ON | OFF
+- NO windows in watchlist items
+
+Profile = "How to observe"
+- windows_enabled: List of windows (SHORT/MEDIUM/LONG)
+- cadence_label: Cadence (FAST/NORMAL/SLOW)
+- featureset_ref: Featureset (FULL_MINIMAL/ALERT_MINIMAL/RESEARCH_MINIMAL)
+
+**Why Separate Windows from Watchlist?**
+
+Reason: Avoid combinatorial explosion and improve operational safety
+- Without separation: N pairs × M windows = N×M items (explosion)
+- With separation: N pairs + M profiles (manageable)
+- Profiles are fixed, reusable templates
+- Window changes affect all items using that profile
+
+**API:**
+
+```python
+from watchlist import (
+    build_watchlist_record_v1,
+    expand_watchlist_to_observation_plan_v1,
+    extract_pair_refs_v1,
+    get_default_profiles,
+)
+
+# Build watchlist
+items = [
+    {
+        "pair_ref": "deep:SUI/USDC",
+        "source": "deep",
+        "profile_ref": "CORE_3W",
+        "priority": "CORE",
+        "enabled": "ON",
+    },
+    {
+        "pair_ref": "deep:DEEP/USDC",
+        "source": "deep",
+        "profile_ref": "ALERT_ONLY",
+        "priority": "EXTENDED",
+        "enabled": "ON",
+    },
+]
+result = build_watchlist_record_v1(items)
+watchlist_record = result["watchlist_record"]
+
+# Expand to observation plan (adds windows from profiles)
+plan_result = expand_watchlist_to_observation_plan_v1(watchlist_record)
+observation_plan = plan_result["observation_plan"]
+
+# deep:SUI/USDC → windows [SHORT, MEDIUM, LONG] (from CORE_3W)
+# deep:DEEP/USDC → windows [SHORT] (from ALERT_ONLY)
+
+# Extract pair_refs for TS-side data fetch bridge
+pair_refs = extract_pair_refs_v1(watchlist_record, enabled_only=True)
+# Returns: ["deep:SUI/USDC", "deep:DEEP/USDC"]
+```
+
+**Default Profiles (Built-in):**
+
+- **CORE_3W**: SHORT/MEDIUM/LONG, NORMAL cadence, FULL_MINIMAL features
+- **CORE_2W**: SHORT/MEDIUM, NORMAL cadence, FULL_MINIMAL features
+- **ALERT_ONLY**: SHORT, FAST cadence, ALERT_MINIMAL features
+- **RESEARCH**: MEDIUM/LONG, SLOW cadence, RESEARCH_MINIMAL features
+
+**Engine Functions:**
+
+1. `build_watchlist_record_v1(items, profiles=None)` - Build watchlist from items
+2. `expand_watchlist_to_observation_plan_v1(watchlist_record, profiles_record=None)` - Expand watchlist with profile windows
+3. `extract_pair_refs_v1(watchlist_record, enabled_only=True)` - Extract pair_refs for TS bridge
+
+**Rules:**
+- Watchlist items do NOT contain windows (windows come from profiles)
+- Unknown profile_ref → UNKNOWN + warning (watchlist stays AVAILABLE)
+- enabled=OFF excluded from observation plan
+- Defensive: Invalid input → valid ERROR record
+- Warning-only: Never raises exceptions
+
+**Files:**
+- `python/watchlist/v14_watchlist_schema.py` - Watchlist schema
+- `python/watchlist/v14_observation_profile_schema.py` - Profile schema + default profiles
+- `python/watchlist/v14_watchlist_engine_v1.py` - Engine (build/expand/extract)
+- `python/watchlist/v14_watchlist_constitutional_guard.py` - Constitutional guards
+- `python/watchlist/__init__.py` - Package exports
+- `python/validation/pr148_watchlist_profile_v1_smoke.py` - 14 smoke tests
+
+**Constitutional Guarantees (PR148):**
+- READ-ONLY: No execution, no trading
+- Non-prescriptive: No should/must/recommend/advise
+- No trading verbs: No buy/sell/swap/execute/sign/transfer
+- No token literals: No SUI/USDC/BTC/ETH in text fields
+- Label-only output: No numeric values in text
+- No addresses: No 0x... patterns
+- No causal coupling: No therefore/so/hence
+- No windows in watchlist: Windows belong in profiles
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR148):**
+```
+Watchlist = "What to observe" (pair_ref × source × profile_ref)
+Profile = "How to observe" (windows / cadence / featureset)
+
+The watchlist engine:
+  - Builds watchlist from items (pair_ref × source × profile_ref)
+  - Expands watchlist to observation plan by adding windows from profiles
+  - Extracts pair_refs for TS-side data fetch bridge
+  - Does NOT contain windows in watchlist items
+
+The watchlist engine does NOT:
+  - Recommend actions
+  - Provide trading advice
+  - Make decisions
+  - Grant permission
+  - Instruct what to do
+  - Store windows in watchlist items (windows are in profiles)
+
+Relationship to v1.4:
+  - Input: Watchlist items (pair_ref × source × profile_ref)
+  - Process: Expand with observation profiles
+  - Output: Observation plan (items + windows)
+  - Purpose: Declaration of observation targets and methodology
+```
+
+**Use Cases:**
+1. **Watchlist declaration**: Define what to observe (pair_ref × source)
+2. **Profile reuse**: Use fixed observation profiles across multiple pairs
+3. **Observation plan generation**: Expand watchlist with profile windows
+4. **TS bridge integration**: Extract pair_refs for data fetch
+5. **Constitutional validation**: Enforce watchlist ≠ instruction
+
+**Explicit Non-Claims:**
+- This is NOT an action recommendation
+- This is NOT trading advice
+- This is NOT a decision
+- This is NOT an instruction
+- This is NOT permission granting
+- This is NOT a suggestion
+- Watchlist is declaration-only (not prescriptive, not directive, not permissive)
+- pair_ref is treated as anonymous ID (Python does NOT interpret token names)
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
@@ -6058,6 +6230,9 @@ python3 python/validation/pr146_stress_rule_table_v1_smoke.py
 
 # PR147: Action Shape Guidance v1
 python3 python/validation/pr147_action_shape_guidance_v1_smoke.py
+
+# PR148: Watchlist + Observation Profile v1
+python3 python/validation/pr148_watchlist_profile_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
