@@ -5905,6 +5905,142 @@ Relationship to v1.4:
 
 ---
 
+### v1.4 Action Shape Guidance v1 (PR147)
+
+**Purpose:** Bundles PR144 (safe band) + PR146 (stress) + PR145 (overlay) + PR128 (eligibility) and returns label-only action shape. Action Shape = Display shape for user's own decision-making (not instruction, not recommendation). Table-first approach with fixed priority rules.
+
+**⚠️ Constitutional Notice - Action Shape ≠ Instruction:**
+
+```
+This action shape does NOT:
+- Recommend actions
+- Provide trading advice
+- Instruct what to do
+- Make decisions
+- Suggest trades
+- Grant permission
+
+This action shape ONLY:
+- Describes action display shape (OBSERVE_ONLY/SIMULATION_ONLY/etc.)
+- Uses fixed rule table (deterministic)
+- Outputs label-only (no numeric values)
+- Maintains READ-ONLY guarantees
+- Displays shape for user's own decision-making
+```
+
+**What is Action Shape?**
+
+Action Shape = Display shape label for user review (not action directive)
+- UNKNOWN: Cannot determine from available inputs
+- NO_ACTION: Ineligible state (no action consideration)
+- OBSERVE_ONLY: Calm state, observe-only display (DRY_RUN_ONLY eligibility)
+- SIMULATION_ONLY: Tense state, simulation display (DRY_RUN_ONLY eligibility)
+- CONSIDER_ONLY: Consideration display (CONSIDERATION_ONLY eligibility)
+- FREEZE_STATE: Elevated stress, freeze state display
+- CONSTRAINED_STATE: Constrained state display
+
+**API:**
+
+```python
+from action import build_action_shape_from_bundle_v1
+
+# Artifact bundle
+result = build_action_shape_from_bundle_v1(
+    artifact_bundle={
+        "artifacts": {
+            "stress_rule": {"v14_stress_label": "CALM"},
+            "eligibility": {"v12_eligibility_label": "ELIGIBLE_DRY_RUN_ONLY"},
+        }
+    }
+)
+print(result["action_record"]["v14_action_action_shape"])  # OBSERVE_ONLY
+print(result["action_record"]["v14_action_summary"])  # Non-prescriptive summary
+```
+
+**Action Shape Rule Table (Fixed, Deterministic):**
+
+Priority Rules (first-match-wins):
+1. stress == UNKNOWN → UNKNOWN
+2. eligibility == INELIGIBLE → NO_ACTION
+3. stress == STRESSED → FREEZE_STATE
+4. stress == TENSE:
+   - eligibility == CONSIDERATION_ONLY → CONSIDER_ONLY
+   - else → SIMULATION_ONLY
+5. stress == CALM:
+   - eligibility == CONSIDERATION_ONLY → CONSIDER_ONLY
+   - else → OBSERVE_ONLY
+6. default → UNKNOWN
+
+**Stress Conflict Detection:**
+- PR146 stress_rule (priority) vs PR145 stress_overlay (fallback)
+- Conflict detected → warning + use PR146
+
+**Files:**
+- `python/action/v14_action_shape_schema.py` - Action shape schema
+- `python/action/v14_action_shape_engine_v1.py` - Action shape engine
+- `python/action/v14_action_constitutional_guard.py` - Constitutional guards
+- `python/action/__init__.py` - Package exports
+- `python/validation/pr147_action_shape_guidance_v1_smoke.py` - 14 smoke tests
+
+**Constitutional Guarantees (PR147):**
+- READ-ONLY: No execution, no trading
+- Non-prescriptive: No should/must/recommend/advise
+- No trading verbs: No buy/sell/swap/execute/sign/transfer
+- No token literals: No SUI/USDC/BTC/ETH
+- Label-only output: No numeric values in text
+- No addresses: No 0x... patterns
+- No causal coupling: No therefore/so/hence
+- No action coupling: No "stressed so exit", "eligible therefore act"
+- Table-first: Deterministic lookup (not inference)
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR147):**
+```
+Action Shape ≠ Instruction
+Action Shape = Display shape for user's own decision-making
+
+The action engine:
+  - Extracts stress label (PR146) and eligibility label (PR128)
+  - Checks for stress conflicts (PR146 vs PR145)
+  - Looks up action shape from fixed rule table
+  - Returns label-only result (no numeric values)
+  - Creates non-prescriptive summary
+
+The action engine does NOT:
+  - Recommend actions
+  - Provide trading advice
+  - Make decisions
+  - Grant permission
+  - Instruct what to do
+  - Infer action shape from other signals
+  - Generate dynamic mappings
+
+Relationship to v1.4:
+  - Input: PR144 safe band + PR146 stress + PR145 overlay + PR128 eligibility
+  - Process: Fixed rule table (stress × eligibility)
+  - Output: Action shape label (no instruction)
+  - Purpose: Display shape for user's own decision-making
+```
+
+**Use Cases:**
+1. **Action shape display**: Show OBSERVE_ONLY/SIMULATION_ONLY/etc. for human review
+2. **Fixed table lookup**: Deterministic, predictable results
+3. **Bundle extraction**: Extract from artifact bundle automatically
+4. **Stress conflict detection**: Detect and warn on PR146 vs PR145 conflicts
+5. **Constitutional validation**: Enforce action shape ≠ instruction
+
+**Explicit Non-Claims:**
+- This is NOT an action recommendation
+- This is NOT trading advice
+- This is NOT a decision
+- This is NOT an instruction
+- This is NOT permission granting
+- This is NOT a suggestion
+- Action shape is display-only (not prescriptive, not directive, not permissive)
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
@@ -5919,6 +6055,9 @@ python3 python/validation/pr145_safe_band_distortion_overlay_v1_smoke.py
 
 # PR146: Stress Rule Table v1
 python3 python/validation/pr146_stress_rule_table_v1_smoke.py
+
+# PR147: Action Shape Guidance v1
+python3 python/validation/pr147_action_shape_guidance_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
