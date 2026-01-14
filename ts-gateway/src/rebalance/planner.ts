@@ -45,6 +45,30 @@ export function buildRebalancePlan(
   // Step 1: Resolve template to target weights
   const targetWeights = resolveTemplate(templateId);
 
+  // Step 1.5: Check if weights/totalUsd available (PR155 - oracle-based)
+  if (!snapshot.weights || snapshot.totalUsd === undefined) {
+    reasonCodes.push("ORACLE_VALUATION_UNAVAILABLE");
+
+    return {
+      templateId,
+      targetWeights: {
+        WBTC: targetWeights.wbtcWeight,
+        USDC: targetWeights.usdcWeight,
+      },
+      currentWeights: {
+        WBTC: 0,
+        USDC: 0,
+      },
+      deltaWeights: {
+        WBTC: 0,
+        USDC: 0,
+      },
+      intent: "NOOP",
+      notionalUsd: 0,
+      reasonCodes,
+    };
+  }
+
   // Step 2: Calculate weight deltas (target - current)
   const deltaWbtc = targetWeights.wbtcWeight - snapshot.weights.WBTC;
   const deltaUsdc = targetWeights.usdcWeight - snapshot.weights.USDC;

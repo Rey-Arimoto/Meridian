@@ -19,6 +19,9 @@ export type TokenSymbol = "WBTC" | "USDC" | "SUI";
 
 /**
  * Portfolio snapshot (wallet balances + prices + weights)
+ *
+ * PR155: Oracle-based pricing support added.
+ * Prices now come from oracle, and may be unavailable.
  */
 export interface PortfolioSnapshot {
   // Token balances (as strings to avoid precision loss)
@@ -28,26 +31,29 @@ export interface PortfolioSnapshot {
     SUI: string;
   };
 
-  // Token prices in USD
+  // Token prices in USD (PR155: now optional, from oracle)
   pricesUsd: {
-    WBTC: number;
-    USDC: number; // Always 1.0 for stablecoin
+    WBTC?: number; // Optional: may be unavailable if oracle fails
+    USDC?: number; // Optional: typically 1.0 (stablecoin)
   };
 
-  // Token values in USD
-  valuesUsd: {
+  // Token values in USD (optional if prices unavailable)
+  valuesUsd?: {
     WBTC: number;
     USDC: number;
   };
 
-  // Current weights (normalized to 1.0, excluding SUI)
-  weights: {
+  // Current weights (optional if prices unavailable)
+  weights?: {
     WBTC: number; // wBTC weight (0.0 - 1.0)
     USDC: number; // USDC weight (0.0 - 1.0)
   };
 
-  // Total portfolio value in USD (wBTC + USDC, excluding SUI)
-  totalUsd: number;
+  // Total portfolio value in USD (optional if prices unavailable)
+  totalUsd?: number;
+
+  // Oracle status (PR155)
+  oracleStatus?: "AVAILABLE" | "STALE" | "ERROR";
 
   // Timestamp of snapshot
   timestamp: number;

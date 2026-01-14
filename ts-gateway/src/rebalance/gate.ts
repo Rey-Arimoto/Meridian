@@ -1,5 +1,6 @@
 /**
  * PR153: v1.4 Quote/Safety Gate (READ-ONLY)
+ * PR155: Oracle status checks added
  *
  * Purpose:
  *   Validate rebalance plan against safety constraints.
@@ -10,6 +11,7 @@
  *   - Conservative: When in doubt, BLOCK
  *   - Fixed rules: No learning, no optimization
  *   - Double guard: TS-side checks Python-side constraints
+ *   - Safe defaults: Oracle unavailable → BLOCK (PR155)
  *
  * Gate Rules (BLOCK conditions - first-match-wins):
  *   A) Upper-level prohibitions (from Python):
@@ -124,6 +126,16 @@ export function runSafetyGate(
     blockReasons.push("BLOCK_NO_ROUTE");
   }
 
+  // B2: Oracle unavailable (PR155)
+  if (portfolio.oracleStatus === "ERROR") {
+    blockReasons.push("BLOCK_ORACLE_UNAVAILABLE");
+  }
+
+  // B3: Oracle stale (PR155)
+  if (portfolio.oracleStatus === "STALE") {
+    blockReasons.push("BLOCK_ORACLE_STALE");
+  }
+
   // ===== C) Trade safety =====
 
   // C1: Gas insufficient (SUI)
@@ -138,8 +150,17 @@ export function runSafetyGate(
     blockReasons.push("BLOCK_DELTA_TOO_SMALL");
   }
 
-  // C3: Notional cap exceeded
-  // Default cap: 200,000 USD
+  // C3: Notional unavailable (PR155 - oracle failed to provide valuation)
+  if (
+    plan.notionalUsd === undefined ||
+    plan.notionalUsd === null ||
+    isNaN(plan.notionalUsd)
+  ) {
+    blockReasons.push("BLOCK_NOTIONAL_UNAVAILABLE");
+  }
+
+  // C4: Notional cap exceeded
+  // Default cap: 200,000 USD (PR153 update)
   const maxNotional = constraints.maxNotionalUsd ?? 200000;
   if (plan.notionalUsd > maxNotional) {
     blockReasons.push("BLOCK_NOTIONAL_CAP");

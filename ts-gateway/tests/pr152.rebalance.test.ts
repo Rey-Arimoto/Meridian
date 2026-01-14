@@ -57,6 +57,7 @@ async function test2_planner_increase() {
   );
 
   // Verify current weight is ~0.5
+  assert.ok(snapshot.weights, "Weights should be present");
   assert.ok(
     Math.abs(snapshot.weights.WBTC - 0.5) < 0.01,
     "Current wBTC weight should be ~0.5"
@@ -96,6 +97,7 @@ async function test3_planner_noop_delta() {
   );
 
   // Verify current weight is ~0.9
+  assert.ok(snapshot.weights, "Weights should be present");
   assert.ok(
     Math.abs(snapshot.weights.WBTC - 0.9) < 0.05,
     "Current wBTC weight should be ~0.9"

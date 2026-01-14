@@ -1,17 +1,20 @@
 /**
  * PR152: v1.4 TS Portfolio Snapshot (READ-ONLY)
+ * PR155: Oracle integration for USD pricing
  *
  * Purpose:
  *   Observe wallet balances and calculate current portfolio weights.
- *   This is a stub implementation - actual wallet integration in future PR.
+ *   Prices now come from oracle (PR155).
  *
  * Constitutional Constraints:
  *   - READ-ONLY: No mutations, no trades
  *   - Privacy: Never log private keys or sensitive data
  *   - Defensive: Handle errors gracefully
+ *   - Safe defaults: Oracle unavailable → valuation ERROR
  */
 
 import { PortfolioSnapshot, TokenSymbol } from "./types";
+import type { OracleResult } from "../oracle/types";
 
 /**
  * Portfolio dependencies (abstracted for testing)
@@ -133,4 +136,76 @@ export function createStubPortfolioDeps(
     },
     ...overrides,
   };
+}
+
+/**
+ * Get portfolio snapshot with oracle pricing (PR155)
+ *
+ * @param balances - Token balances
+ * @param oracle - Oracle result
+ * @returns Portfolio snapshot
+ *
+ * Logic:
+ *   - If oracle AVAILABLE → calculate valuation normally
+ *   - If oracle STALE/ERROR → valuation unavailable, status reflects oracle
+ *
+ * Safe defaults: Oracle unavailable → valuesUsd/weights/totalUsd undefined
+ */
+export function getPortfolioSnapshotWithOracle(
+  balances: { WBTC: string; USDC: string; SUI: string },
+  oracle: OracleResult
+): PortfolioSnapshot {
+  const snapshot: PortfolioSnapshot = {
+    balances,
+    pricesUsd: {},
+    oracleStatus: oracle.status,
+    timestamp: Date.now(),
+  };
+
+  // Extract prices from oracle
+  if (oracle.wbtcUsd) {
+    snapshot.pricesUsd.WBTC = oracle.wbtcUsd.priceUsd;
+  }
+
+  if (oracle.usdcUsd) {
+    snapshot.pricesUsd.USDC = oracle.usdcUsd.priceUsd;
+  }
+
+  // Calculate valuation if prices available
+  if (
+    oracle.status === "AVAILABLE" &&
+    snapshot.pricesUsd.WBTC !== undefined &&
+    snapshot.pricesUsd.USDC !== undefined
+  ) {
+    const wbtcAmount = parseFloat(balances.WBTC);
+    const usdcAmount = parseFloat(balances.USDC);
+
+    const wbtcValueUsd = wbtcAmount * snapshot.pricesUsd.WBTC;
+    const usdcValueUsd = usdcAmount * snapshot.pricesUsd.USDC;
+
+    const totalUsd = wbtcValueUsd + usdcValueUsd;
+
+    snapshot.valuesUsd = {
+      WBTC: wbtcValueUsd,
+      USDC: usdcValueUsd,
+    };
+
+    snapshot.totalUsd = totalUsd;
+
+    // Calculate weights
+    if (totalUsd > 0) {
+      snapshot.weights = {
+        WBTC: wbtcValueUsd / totalUsd,
+        USDC: usdcValueUsd / totalUsd,
+      };
+    } else {
+      // Edge case: empty portfolio
+      snapshot.weights = {
+        WBTC: 0.5,
+        USDC: 0.5,
+      };
+    }
+  }
+
+  return snapshot;
 }
