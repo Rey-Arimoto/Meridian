@@ -6370,6 +6370,236 @@ Relationship to v1.4:
 
 ---
 
+### v1.4 Shock Phase → Stress Escalation Binding v1 (PR150)
+
+**Purpose:** Bind Shock Phase (PR149) to Stress (PR146) with escalate-only logic. Escalation = max(current_stress, min_required_by_phase). Never lower stress (no de-escalation). Maps shock phase to minimum required stress using fixed escalation table.
+
+**Core Philosophy: Escalate-Only (No De-Escalation)**
+
+PR150 implements escalate-only logic:
+- `output_stress = max(current_stress, min_required_by_phase)`
+- Never lower stress (de-escalation is out of scope)
+- Stress priority: STRESSED > TENSE > CALM > UNKNOWN
+- UNKNOWN stress is immutable (cannot escalate)
+
+**Fixed Escalation Table (Phase → Minimum Stress):**
+
+| Phase Label | Minimum Required Stress | Escalation Behavior |
+|-------------|------------------------|---------------------|
+| PHASE_UNKNOWN | STRESS_UNKNOWN | Immutable (current maintained) |
+| PHASE_ERROR | STRESS_UNKNOWN | Immutable (current maintained) |
+| PHASE_NORMAL | NO_CHANGE | No escalation |
+| PHASE_PRE_SHOCK | STRESS_TENSE | Escalate CALM → TENSE |
+| PHASE_UP_SHOCK | STRESS_STRESSED | Escalate CALM/TENSE → STRESSED |
+| PHASE_DOWN_SHOCK | STRESS_STRESSED | Escalate CALM/TENSE → STRESSED |
+| PHASE_UP_REVERSAL | STRESS_TENSE | Escalate CALM → TENSE |
+| PHASE_DOWN_REVERSAL | STRESS_TENSE | Escalate CALM → TENSE |
+| PHASE_RECOVERY | NO_CHANGE | No escalation (no de-escalation) |
+
+**Key Concepts:**
+
+1. **Escalate-Only Logic**
+   - max(current_stress, min_required_by_phase)
+   - Never lower stress (de-escalation is not implemented in PR150)
+   - If current >= min_required, keep current (no escalation needed)
+   - If current < min_required, escalate to min_required
+
+2. **Immutable States**
+   - STRESS_UNKNOWN cannot escalate (stays UNKNOWN, flag=UNKNOWN)
+   - PHASE_UNKNOWN/ERROR maintain current stress (no change enforced)
+
+3. **Stress Priority**
+   - STRESS_STRESSED (priority 3) > STRESS_TENSE (priority 2) > STRESS_CALM (priority 1) > STRESS_UNKNOWN (priority 0)
+
+4. **Escalated Flag**
+   - ON: Stress was escalated (output > input)
+   - OFF: Stress unchanged (output == input)
+   - UNKNOWN: Cannot escalate (input=UNKNOWN)
+
+**Schema (v14_escalation_ prefix):**
+
+Required fields:
+```python
+{
+    "v14_escalation_version": "v1",
+    "v14_escalation_status": "AVAILABLE | UNKNOWN | ERROR",
+    "v14_escalation_mode": "READ_ONLY",
+    "v14_escalation_phase_label": "PHASE_PRE_SHOCK",  # from PR149
+    "v14_escalation_input_stress_label": "STRESS_CALM",  # from PR146
+    "v14_escalation_min_required_stress_label": "STRESS_TENSE",  # from table
+    "v14_escalation_output_stress_label": "STRESS_TENSE",  # escalated result
+    "v14_escalation_escalated_flag": "ON | OFF | UNKNOWN",
+    "v14_escalation_inputs_present": {"phase": true, "stress": true},
+    "v14_escalation_warnings": []
+}
+```
+
+**API:**
+
+```python
+from escalation import (
+    build_stress_escalation_record_v1,
+    build_stress_escalation_from_bundle_v1,
+    get_stress_escalation_info,
+)
+
+# Build from phase + stress records
+phase_record = {"v14_shock_phase_label": "PHASE_PRE_SHOCK"}
+stress_record = {"v14_stress_label": "STRESS_CALM"}
+result = build_stress_escalation_record_v1(phase_record, stress_record)
+escalation_record = result["escalation_record"]
+warnings = result["warnings"]
+
+# Build from artifact bundle
+artifact_bundle = {
+    "artifacts": {
+        "shock_phase_record": phase_record,
+        "stress_record": stress_record,
+    }
+}
+result = build_stress_escalation_from_bundle_v1(artifact_bundle)
+```
+
+**Escalation Examples:**
+
+```python
+# Example 1: PRE_SHOCK escalates CALM → TENSE
+input: PHASE_PRE_SHOCK + STRESS_CALM
+output: STRESS_TENSE (escalated_flag=ON)
+
+# Example 2: PRE_SHOCK keeps STRESSED (no de-escalation)
+input: PHASE_PRE_SHOCK + STRESS_STRESSED
+output: STRESS_STRESSED (escalated_flag=OFF, no de-escalation)
+
+# Example 3: UP_SHOCK escalates TENSE → STRESSED
+input: PHASE_UP_SHOCK + STRESS_TENSE
+output: STRESS_STRESSED (escalated_flag=ON)
+
+# Example 4: RECOVERY keeps STRESSED (no de-escalation)
+input: PHASE_RECOVERY + STRESS_STRESSED
+output: STRESS_STRESSED (escalated_flag=OFF, NO_CHANGE)
+
+# Example 5: UNKNOWN stress is immutable
+input: PHASE_UP_SHOCK + STRESS_UNKNOWN
+output: STRESS_UNKNOWN (escalated_flag=UNKNOWN)
+```
+
+**Constitutional Guarantees (PR150):**
+
+1. **READ-ONLY:** No execution, no trading, no mutations
+2. **Escalate-only:** Never lower stress (no de-escalation)
+3. **Non-prescriptive:** No should/must/recommend/advise
+4. **No trading verbs:** No buy/sell/swap/execute/sign/transfer
+5. **No token literals:** No BTC/USDC/SUI/ETH in text
+6. **No addresses:** No 0x... patterns in text
+7. **No causal coupling:** No therefore/so/hence/means you should
+8. **No escalation coupling:** No "stress escalated therefore act"
+9. **Label-only output:** No numeric values in text
+10. **Defensive:** Invalid input → valid ERROR record (never raises)
+11. **Warning-only guards:** Constitutional guards always exit 0
+
+**Philosophy (PR150):**
+
+```
+Escalation ≠ Action
+Escalation = Binding structural phase to stress floor
+
+Escalate-only means:
+  - Stress can rise with phase severity
+  - Stress never falls (de-escalation out of scope)
+  - STRESSED state persists until explicitly cleared
+
+De-escalation is NOT implemented in PR150.
+De-escalation requires separate decay/cooling logic (future PR).
+
+PR150 binds shock phase to stress with escalate-only constraint.
+It does NOT prescribe action.
+It does NOT suggest trades.
+It does NOT recommend exits.
+```
+
+**Smoke Tests:**
+
+Location: `python/validation/pr150_stress_escalation_binding_v1_smoke.py`
+
+14 test cases:
+1. PHASE_NORMAL + STRESS_CALM → STRESS_CALM (NO_CHANGE)
+2. PHASE_NORMAL + STRESS_TENSE → STRESS_TENSE (NO_CHANGE)
+3. PHASE_PRE_SHOCK + STRESS_CALM → STRESS_TENSE (escalate)
+4. PHASE_PRE_SHOCK + STRESS_TENSE → STRESS_TENSE (no escalation)
+5. PHASE_PRE_SHOCK + STRESS_STRESSED → STRESS_STRESSED (no de-escalation)
+6. PHASE_UP_SHOCK + STRESS_CALM → STRESS_STRESSED (escalate)
+7. PHASE_UP_SHOCK + STRESS_TENSE → STRESS_STRESSED (escalate)
+8. PHASE_UP_SHOCK + STRESS_STRESSED → STRESS_STRESSED (no escalation)
+9. PHASE_DOWN_SHOCK + STRESS_CALM → STRESS_STRESSED (escalate)
+10. PHASE_UP_REVERSAL + STRESS_CALM → STRESS_TENSE (escalate)
+11. PHASE_DOWN_REVERSAL + STRESS_CALM → STRESS_TENSE (escalate)
+12. PHASE_RECOVERY + STRESS_STRESSED → STRESS_STRESSED (NO_CHANGE)
+13. PHASE_UNKNOWN + STRESS_CALM → STRESS_CALM (current maintained)
+14. STRESS_UNKNOWN is immutable (stays UNKNOWN)
+
+Expected: 14/14 tests passed
+
+**Files (PR150):**
+
+```
+python/escalation/
+├── __init__.py                                   # Package exports
+├── v14_stress_escalation_schema.py              # Escalation record schema
+├── v14_stress_escalation_engine_v1.py           # Escalation binding engine
+└── v14_escalation_constitutional_guard.py       # Constitutional guards
+
+python/validation/
+└── pr150_stress_escalation_binding_v1_smoke.py  # 14 smoke tests
+```
+
+**Integration with v1.4:**
+
+```
+Workflow:
+  1. PR149 (Shock Phase) detects phase from observations
+  2. PR146 (Stress) calculates current stress
+  3. PR150 (Escalation) binds phase → stress with escalate-only logic
+  4. PR147 (Action Shape) uses escalated stress for guidance
+  5. TS Executor uses action shape for execution constraints
+
+Data Flow:
+  observations → shock_phase (PR149)
+  distortion → stress (PR146)
+  (shock_phase, stress) → escalation (PR150)
+  escalation → action_shape (PR147)
+  action_shape → executor constraints
+```
+
+Relationship to v1.4:
+```
+  - Input: Shock phase record (PR149) + Stress record (PR146)
+  - Output: v1.4 escalation record (escalated stress + flag)
+  - Purpose: Structural escalation binding for integration with Action Shape / TS Executor
+```
+
+**Use Cases:**
+
+1. **Escalate stress during shock phases**: PRE_SHOCK → TENSE, UP_SHOCK → STRESSED
+2. **Fixed escalation table**: Deterministic, predictable escalation
+3. **Bundle integration**: Extract from artifact bundle automatically
+4. **Escalate-only enforcement**: Never lower stress (no de-escalation)
+5. **Constitutional validation**: Enforce escalation ≠ instruction
+
+**Explicit Non-Claims:**
+
+- This is NOT an action recommendation
+- This is NOT trading advice
+- This is NOT a decision
+- This is NOT an instruction
+- This is NOT permission granting
+- This is NOT a suggestion
+- This is NOT a prediction of future stress
+- Escalation is label-only (not prescriptive, not directive, not predictive)
+- Escalation does NOT mean "you should exit" or "you should act"
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
@@ -6393,6 +6623,9 @@ python3 python/validation/pr148_watchlist_profile_v1_smoke.py
 
 # PR149: Shock Phase Detection Engine v1
 python3 python/validation/pr149_shock_phase_engine_v1_smoke.py
+
+# PR150: Shock Phase → Stress Escalation Binding v1
+python3 python/validation/pr150_stress_escalation_binding_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
