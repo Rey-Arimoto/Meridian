@@ -2,10 +2,11 @@
  * PR152: v1.4 TS Rebalance Executor Skeleton (READ-ONLY)
  * PR153: v1.4 Gate Integration (READ-ONLY)
  * PR156: v1.4 Simulation Pipeline Integration (READ-ONLY)
+ * PR156: v1.4 Auto Execution Policy Integration (READ-ONLY)
  *
  * Purpose:
  *   Build transaction drafts and execute rebalances.
- *   Execution is DISABLED by default (safety first).
+ *   Execution controlled by double-key policy (env + HardStop).
  *
  * PR153 Updates:
  *   - Integrate GateResult for safety checks
@@ -13,14 +14,19 @@
  *   - PASS → status=EXECUTABLE_DRAFT
  *   - Execution still requires allowExecution=true
  *
- * PR156 Updates:
+ * PR156 Updates (Simulation):
  *   - Integrate execution simulation into pipeline
  *   - Pipeline: planner → router → quote → simulation → gate → txDraft
  *   - Execution still disabled (allowExecution=false)
  *
+ * PR156 Updates (Policy):
+ *   - Delegate allowExecution to policy system
+ *   - Double-key: env (MERIDIAN_EXECUTION_ENABLED) + policy (HardStop)
+ *   - Aggressive + HardStop: Stop only when truly broken
+ *
  * Constitutional Constraints:
  *   - EXECUTION DISABLED BY DEFAULT
- *   - Only execute if opts.allowExecution === true
+ *   - Only execute if policy allows (env key + policy key)
  *   - Never log private keys or sensitive data
  *   - Defensive: Handle errors gracefully
  *   - Conservative: Prefer safe defaults
@@ -41,16 +47,27 @@ import {
   SimulationInput,
   ExecutionSimulationRecord,
 } from "../sim";
+import {
+  evaluateExecutionPolicy,
+  isExecutionAllowed,
+  PolicyInput,
+  PolicyResult,
+  HardStopState,
+} from "../policy";
 
 /**
  * Executor options
  */
 export interface ExecutorOptions {
   // Allow actual execution (default: false)
+  // NOTE: This is now delegated to policy system (PR156)
   allowExecution?: boolean;
 
   // Simulate-only mode (default: true)
   simulateOnly?: boolean;
+
+  // HardStop state (for policy evaluation, optional)
+  hardStopState?: HardStopState;
 
   // Additional notes for debugging
   notes?: string[];
@@ -188,29 +205,54 @@ export async function simulateTx(
 }
 
 /**
- * Execute transaction
+ * Execute transaction (PR156: Policy-based execution control)
  *
  * @param draft - Transaction draft
+ * @param policyResult - Policy evaluation result (PR156)
  * @param opts - Executor options
  * @returns Execution result
  *
- * IMPORTANT: Execution is DISABLED by default.
- * Only executes if opts.allowExecution === true.
+ * IMPORTANT: Execution is controlled by policy system (PR156).
+ * Double-key: env (MERIDIAN_EXECUTION_ENABLED) + policy (HardStop).
+ *
+ * Logic:
+ *   1. Check policy status (ALLOW/SIM_ONLY/BLOCKED/ERROR)
+ *   2. If not ALLOW → execution disabled
+ *   3. Else → proceed with execution (stub for now)
  */
 export async function executeTx(
   draft: TxDraft,
+  policyResult: PolicyResult,
   opts?: ExecutorOptions
 ): Promise<TxExecutionResult> {
   const notes: string[] = [];
   const errors: string[] = [];
 
-  // Check if execution is allowed
-  if (!opts?.allowExecution) {
-    errors.push("EXECUTION_DISABLED");
-    notes.push("Execution is disabled by default (set allowExecution=true to enable)");
+  // PR156: Check policy status
+  if (!isExecutionAllowed(policyResult)) {
+    if (policyResult.status === "SIM_ONLY") {
+      errors.push("EXECUTION_ENV_DISABLED");
+      notes.push("Execution disabled by env (MERIDIAN_EXECUTION_ENABLED not true)");
+    } else if (policyResult.status === "BLOCKED") {
+      errors.push("EXECUTION_HARDSTOP_ACTIVE");
+      notes.push(
+        `Execution blocked by HardStop (${policyResult.hardStopState.reason})`
+      );
+    } else {
+      errors.push("EXECUTION_POLICY_ERROR");
+      notes.push("Execution disabled by policy error");
+    }
+
+    // Add policy warnings to notes
+    if (policyResult.warnings.length > 0) {
+      notes.push(...policyResult.warnings);
+    }
 
     return { ok: false, errors, notes };
   }
+
+  // Policy allows execution
+  notes.push("PR156: Policy allows execution (double-key passed)");
 
   // Check if draft is skipped
   if (draft.status === "SKIPPED") {

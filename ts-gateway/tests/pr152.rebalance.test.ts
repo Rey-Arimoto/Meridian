@@ -127,13 +127,31 @@ async function test4_executor_disabled() {
   // Build draft
   const draft = await buildTxDraft(plan, constraints);
 
-  // Try to execute without allowExecution
-  const result = await executeTx(draft, { allowExecution: false });
+  // PR156: Create policy result with env disabled (SIM_ONLY)
+  const { evaluateExecutionPolicy } = await import("../src/policy");
+
+  // Save original env
+  const originalEnv = process.env.MERIDIAN_EXECUTION_ENABLED;
+  delete process.env.MERIDIAN_EXECUTION_ENABLED;
+
+  const policyResult = evaluateExecutionPolicy({
+    oracleStatus: "AVAILABLE",
+    simulationStatus: "PASS",
+    routeStatus: "AVAILABLE",
+  });
+
+  // Restore env
+  if (originalEnv !== undefined) {
+    process.env.MERIDIAN_EXECUTION_ENABLED = originalEnv;
+  }
+
+  // Try to execute with env disabled
+  const result = await executeTx(draft, policyResult);
 
   assert.strictEqual(result.ok, false, "Execution should fail");
   assert.ok(
-    result.errors?.includes("EXECUTION_DISABLED"),
-    "Should have EXECUTION_DISABLED error"
+    result.errors?.includes("EXECUTION_ENV_DISABLED"),
+    "Should have EXECUTION_ENV_DISABLED error"
   );
 
   console.log("✓ Test 4 passed");

@@ -69,3 +69,80 @@ export interface DeepSwapResponse {
 
   errorMessage?: string;
 }
+```
+
+---
+
+## PR156: Auto Execution Policy (Aggressive + HardStop) v1
+
+### Double-Key System
+Execution is controlled by two keys that must BOTH be satisfied:
+1. **Env Key**: `MERIDIAN_EXECUTION_ENABLED="true"` must be set
+2. **Policy Key**: HardStop must not be active
+
+Formula: `allowExecution = envOk && policyOk`
+
+### Policy Status
+- `ALLOW`: Both keys OK, execution allowed
+- `SIM_ONLY`: Env disabled (envOk=false)
+- `BLOCKED`: HardStop active (policyOk=false)
+- `ERROR`: Policy evaluation failed
+
+### Aggressive + HardStop Strategy
+**Aggressive**: Don't stop for transient issues
+- `BLOCK_IMPACT_HIGH`, `BLOCK_SLIPPAGE_HIGH`, `BLOCK_DEPTH_THIN` → Skip that round only
+- `BLOCK_ORACLE_STALE` → Skip that round only
+- `NO_ROUTE` → Skip that round (but track streak)
+
+**HardStop**: Stop only when truly broken (with TTL auto-recovery)
+- Oracle.ERROR × 3 consecutive → 30 min lock
+- Simulation FAIL × 2 consecutive → 60 min lock
+- Unexpected exception × 1 → 60 min lock
+- NO_ROUTE × 10 consecutive → 15 min lock
+
+### HardStop Auto-Recovery
+All HardStops have TTL (Time To Live) and automatically release when expired.
+- No manual intervention required for v1
+- Future versions may add manual release
+
+### Heartbeat Monitoring
+System health check endpoint for continuous monitoring:
+```typescript
+{
+  status: "OK" | "DEGRADED" | "CRITICAL" | "ERROR",
+  executionAllowed: boolean,
+  components: {
+    oracle: "AVAILABLE" | "DEGRADED" | "ERROR",
+    router: "AVAILABLE" | "DEGRADED" | "ERROR",
+    simulation: "AVAILABLE" | "DEGRADED" | "ERROR"
+  },
+  hardStopActive: boolean,
+  warnings: string[],
+  timestamp: number
+}
+```
+
+### Usage
+```typescript
+import { evaluateExecutionPolicy, runHeartbeat } from "./policy";
+
+// Evaluate policy before execution
+const policyResult = evaluateExecutionPolicy(
+  {
+    oracleStatus: "AVAILABLE",
+    simulationStatus: "PASS",
+    routeStatus: "AVAILABLE"
+  },
+  currentHardStopState
+);
+
+if (policyResult.status === "ALLOW") {
+  // Execute transaction
+} else {
+  // Skip execution (SIM_ONLY or BLOCKED)
+}
+
+// Check system health
+const heartbeat = runHeartbeat(input, policyResult);
+console.log(`System status: ${heartbeat.status}`);
+```
