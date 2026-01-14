@@ -6213,6 +6213,163 @@ Relationship to v1.4:
 
 ---
 
+### v1.4 Shock Phase Detection Engine v1 (PR149)
+
+**Purpose:** Detect shock phase from observation labels using fixed rules. Shock Phase = Structural phase label (not instruction, not prediction). Detects market state phases from Deep/Cetus observations (pair_ref-centric) for integration with v1.4 Stress / Action Shape / TS Executor.
+
+**⚠️ Constitutional Notice - Shock Phase ≠ Instruction:**
+
+```
+This shock phase does NOT:
+- Recommend actions
+- Provide trading advice
+- Instruct what to do
+- Make decisions
+- Suggest trades
+- Grant permission
+- Predict future outcomes
+
+This shock phase ONLY:
+- Describes structural phase label (PRE_SHOCK/UP_SHOCK/DOWN_SHOCK/etc.)
+- Uses fixed rule detection from observation labels
+- Outputs label-only (no numeric values)
+- Maintains READ-ONLY guarantees
+```
+
+**What is Shock Phase?**
+
+Shock Phase = Structural phase label based on observation labels (not raw numeric values)
+- PHASE_UNKNOWN: Cannot determine from available observations
+- PHASE_NORMAL: Normal market state (no shock pattern)
+- PHASE_PRE_SHOCK: Pre-shock state (liquidity thinning + impulse)
+- PHASE_UP_SHOCK: Upward shock (impulse_up + ask_absorption or agg_buy_dominance)
+- PHASE_DOWN_SHOCK: Downward shock (impulse_down + bid_absorption or agg_sell_dominance)
+- PHASE_UP_REVERSAL: Upward reversal (prev UP_SHOCK + impulse_down + agg_sell)
+- PHASE_DOWN_REVERSAL: Downward reversal (prev DOWN_SHOCK + impulse_up + agg_buy)
+- PHASE_RECOVERY: Recovery state (prev reversal/shock + impulse_flat + no_absorption)
+- PHASE_ERROR: Detection error
+
+**Observation Labels (Input):**
+
+Observation labels (provided by upstream, not calculated by PR149):
+- `price_impulse_label`: IMPULSE_UP / IMPULSE_DOWN / IMPULSE_FLAT / IMPULSE_UNKNOWN
+- `absorption_label`: ASK_ABSORPTION / BID_ABSORPTION / NO_ABSORPTION / ABSORPTION_UNKNOWN
+- `flow_dominance_label`: AGG_BUY_DOMINANCE / AGG_SELL_DOMINANCE / FLOW_BALANCED / FLOW_UNKNOWN
+- `liquidity_thinning_label`: LIQUIDITY_THINNING / LIQUIDITY_OK / LIQUIDITY_UNKNOWN
+- `shock_state_memory` (optional): prev_phase, prev_phase_age_label
+
+**API:**
+
+```python
+from shock import detect_shock_phase_from_bundle_v1
+
+# Artifact bundle with observations
+bundle = {
+    "artifacts": {
+        "observations": {
+            "deep:wBTC/USDC": {
+                "price_impulse_label": "IMPULSE_DOWN",
+                "absorption_label": "BID_ABSORPTION",
+                "flow_dominance_label": "AGG_SELL_DOMINANCE",
+                "liquidity_thinning_label": "LIQUIDITY_OK",
+            }
+        }
+    }
+}
+
+result = detect_shock_phase_from_bundle_v1(bundle, "deep:wBTC/USDC")
+shock_record = result["shock_record"]
+
+print(shock_record["v14_shock_phase_label"])  # PHASE_DOWN_SHOCK
+print(shock_record["v14_shock_phase_direction"])  # DOWN
+print(shock_record["v14_shock_basis_labels"])  # ["BASIS_IMPULSE_DOWN", "BASIS_BID_ABSORPTION", ...]
+```
+
+**Fixed Detection Rules (Priority, first-match-wins):**
+
+1. Invalid input → PHASE_ERROR
+2. Observation labels missing → PHASE_UNKNOWN
+3. PRE_SHOCK: liquidity_thinning + (impulse_up or impulse_down) + flow_dominance != unknown
+4. DOWN_REVERSAL: prev in {DOWN_SHOCK, PRE_SHOCK} + impulse_up + agg_buy_dominance
+5. UP_REVERSAL: prev in {UP_SHOCK, PRE_SHOCK} + impulse_down + agg_sell_dominance
+6. DOWN_SHOCK: impulse_down + (bid_absorption or agg_sell_dominance)
+7. UP_SHOCK: impulse_up + (ask_absorption or agg_buy_dominance)
+8. RECOVERY: prev in {UP_REVERSAL, DOWN_REVERSAL, UP_SHOCK, DOWN_SHOCK} + impulse_flat + no_absorption
+9. NORMAL: impulse present but no rule matches
+
+**Phase Direction:**
+- UP_SHOCK, UP_REVERSAL → DIRECTION_UP
+- DOWN_SHOCK, DOWN_REVERSAL → DIRECTION_DOWN
+- PRE_SHOCK, NORMAL, RECOVERY → DIRECTION_NONE
+- Others → DIRECTION_UNKNOWN
+
+**Files:**
+- `python/shock/v14_shock_phase_schema.py` - Shock phase schema (9 phase labels, 4 directions)
+- `python/shock/v14_shock_phase_engine_v1.py` - Detection engine (fixed rules)
+- `python/shock/v14_shock_constitutional_guard.py` - Constitutional guards
+- `python/shock/__init__.py` - Package exports
+- `python/validation/pr149_shock_phase_engine_v1_smoke.py` - 14 smoke tests
+
+**Constitutional Guarantees (PR149):**
+- READ-ONLY: No execution, no trading
+- Non-prescriptive: No should/must/recommend/advise
+- No trading verbs: No buy/sell/swap/execute/sign/transfer
+- No token literals: No BTC/USDC/SUI/ETH in text
+- Label-only output: No numeric values in text
+- No addresses: No 0x... patterns
+- No causal coupling: No therefore/so/hence
+- No phase coupling: No "phase=DOWN_SHOCK therefore sell"
+- Fixed rules: Deterministic detection (not inference, not prediction)
+- Defensive: Invalid input → valid ERROR record
+- Warning-only guards: Always exit 0
+
+**Philosophy (PR149):**
+```
+Shock Phase = Structural phase label (not instruction, not prediction)
+
+The shock phase engine:
+  - Extracts observation labels from artifact bundle
+  - Applies fixed detection rules (first-match-wins)
+  - Returns label-only shock phase record
+  - Tracks observation presence for diagnostics
+  - Does NOT calculate observations (upstream responsibility)
+
+The shock phase engine does NOT:
+  - Recommend actions
+  - Provide trading advice
+  - Make decisions
+  - Grant permission
+  - Instruct what to do
+  - Predict future phases
+  - Calculate observation values (uses labels only)
+
+Relationship to v1.4:
+  - Input: Artifact bundle + pair_ref + observation labels
+  - Process: Fixed rule detection
+  - Output: Shock phase record (label-only)
+  - Purpose: Structural phase detection for integration with Stress/Action Shape
+```
+
+**Use Cases:**
+1. **Shock phase detection**: Detect PRE_SHOCK/UP_SHOCK/DOWN_SHOCK/REVERSAL/RECOVERY
+2. **Fixed rule detection**: Deterministic, predictable results
+3. **Bundle integration**: Extract from artifact bundle automatically
+4. **State machine support**: Track prev_phase for reversal detection
+5. **Constitutional validation**: Enforce shock phase ≠ instruction
+
+**Explicit Non-Claims:**
+- This is NOT an action recommendation
+- This is NOT trading advice
+- This is NOT a decision
+- This is NOT an instruction
+- This is NOT permission granting
+- This is NOT a suggestion
+- This is NOT a prediction of future phases
+- Shock phase is label-only (not prescriptive, not directive, not predictive)
+- Observation labels are provided by upstream (PR149 does NOT calculate them)
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
@@ -6233,6 +6390,9 @@ python3 python/validation/pr147_action_shape_guidance_v1_smoke.py
 
 # PR148: Watchlist + Observation Profile v1
 python3 python/validation/pr148_watchlist_profile_v1_smoke.py
+
+# PR149: Shock Phase Detection Engine v1
+python3 python/validation/pr149_shock_phase_engine_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
