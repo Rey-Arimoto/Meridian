@@ -1,6 +1,7 @@
 /**
  * PR153: v1.4 Quote/Safety Gate (READ-ONLY)
  * PR155: Oracle status checks added
+ * PR156: Simulation checks added
  *
  * Purpose:
  *   Validate rebalance plan against safety constraints.
@@ -11,7 +12,7 @@
  *   - Conservative: When in doubt, BLOCK
  *   - Fixed rules: No learning, no optimization
  *   - Double guard: TS-side checks Python-side constraints
- *   - Safe defaults: Oracle unavailable → BLOCK (PR155)
+ *   - Safe defaults: Oracle/simulation unavailable → BLOCK (PR155/156)
  *
  * Gate Rules (BLOCK conditions - first-match-wins):
  *   A) Upper-level prohibitions (from Python):
@@ -41,6 +42,7 @@
 
 import { RebalancePlan, RebalanceConstraints, PortfolioSnapshot } from "./types";
 import { RoutePlan } from "./router";
+import type { ExecutionSimulationRecord } from "../sim/types";
 
 /**
  * Python signals (extracted from Python PR151/149/146/147 output)
@@ -198,4 +200,139 @@ export function runSafetyGate(
  */
 export function isGatePassed(result: GateResult): boolean {
   return result.status === "PASS";
+}
+
+/**
+ * Run safety gate with simulation (PR156)
+ *
+ * @param plan - Rebalance plan
+ * @param route - Route plan
+ * @param signals - Python signals
+ * @param constraints - Rebalance constraints
+ * @param portfolio - Portfolio snapshot
+ * @param simulation - Execution simulation record (PR156)
+ * @returns Gate result
+ *
+ * Adds simulation checks to existing gate logic.
+ * Simulation checks run AFTER upper-level prohibitions but BEFORE trade safety.
+ * Conservative: Simulation missing → BLOCK.
+ */
+export function runSafetyGateWithSimulation(
+  plan: RebalancePlan,
+  route: RoutePlan,
+  signals: PythonSignals,
+  constraints: RebalanceConstraints,
+  portfolio: PortfolioSnapshot,
+  simulation?: ExecutionSimulationRecord
+): GateResult {
+  const blockReasons: string[] = [];
+  const warnings: string[] = [];
+
+  // ===== A) Upper-level prohibitions (from Python) =====
+  // Same as runSafetyGate
+
+  if (signals.actionShape === "FREEZE_STATE") {
+    blockReasons.push("BLOCK_FREEZE_STATE");
+  }
+
+  if (signals.stress === "STRESS_STRESSED") {
+    blockReasons.push("BLOCK_STRESSED");
+  }
+
+  if (signals.shockPhase === "PHASE_DOWN_SHOCK") {
+    blockReasons.push("BLOCK_DOWN_SHOCK");
+  }
+
+  if (signals.shockPhase === "PHASE_UP_REVERSAL") {
+    blockReasons.push("BLOCK_UP_REVERSAL");
+  }
+
+  // ===== B) Execution impossibility =====
+
+  if (route.venue === "NONE") {
+    blockReasons.push("BLOCK_NO_ROUTE");
+  }
+
+  if (portfolio.oracleStatus === "ERROR") {
+    blockReasons.push("BLOCK_ORACLE_UNAVAILABLE");
+  }
+
+  if (portfolio.oracleStatus === "STALE") {
+    blockReasons.push("BLOCK_ORACLE_STALE");
+  }
+
+  // ===== B-SIM) Simulation checks (PR156) =====
+
+  // SIM1: Simulation missing (conservative)
+  if (!simulation) {
+    blockReasons.push("BLOCK_SIMULATION_MISSING");
+  } else {
+    // SIM2: Simulation ERROR
+    if (simulation.status === "ERROR") {
+      blockReasons.push("BLOCK_SIMULATION_ERROR");
+    }
+
+    // SIM3: Simulation BLOCK (high risk)
+    if (simulation.status === "BLOCK") {
+      blockReasons.push("BLOCK_SIMULATION_RISK_HIGH");
+
+      // Add specific reasons from simulation
+      if (simulation.reasons.includes("REASON_ORACLE_UNAVAILABLE")) {
+        blockReasons.push("BLOCK_SIMULATION_ORACLE");
+      }
+      if (simulation.reasons.includes("REASON_MISSING_QUOTE")) {
+        blockReasons.push("BLOCK_SIMULATION_NO_QUOTE");
+      }
+    }
+
+    // Add simulation warnings (if any)
+    if (simulation.warnings.length > 0) {
+      warnings.push(...simulation.warnings);
+    }
+  }
+
+  // ===== C) Trade safety =====
+
+  const suiBalance = parseFloat(portfolio.balances.SUI);
+  const minSui = parseFloat(constraints.minSuiBalance);
+  if (suiBalance < minSui) {
+    blockReasons.push("BLOCK_NO_GAS");
+  }
+
+  if (plan.intent === "NOOP") {
+    blockReasons.push("BLOCK_DELTA_TOO_SMALL");
+  }
+
+  if (
+    plan.notionalUsd === undefined ||
+    plan.notionalUsd === null ||
+    isNaN(plan.notionalUsd)
+  ) {
+    blockReasons.push("BLOCK_NOTIONAL_UNAVAILABLE");
+  }
+
+  const maxNotional = constraints.maxNotionalUsd ?? 200000;
+  if (plan.notionalUsd > maxNotional) {
+    blockReasons.push("BLOCK_NOTIONAL_CAP");
+  }
+
+  if (route.chosenQuote && route.chosenQuote.impact === "IMPACT_HIGH") {
+    blockReasons.push("BLOCK_IMPACT_HIGH");
+  }
+
+  if (route.chosenQuote && route.chosenQuote.slippage === "SLIP_HIGH") {
+    blockReasons.push("BLOCK_SLIPPAGE_HIGH");
+  }
+
+  if (route.chosenQuote && route.chosenQuote.depth === "DEPTH_THIN") {
+    blockReasons.push("BLOCK_DEPTH_THIN");
+  }
+
+  // ===== Determine status =====
+
+  if (blockReasons.length > 0) {
+    return { status: "BLOCK", blockReasons, warnings };
+  }
+
+  return { status: "PASS", blockReasons, warnings };
 }

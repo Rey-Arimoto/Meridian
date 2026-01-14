@@ -1,6 +1,7 @@
 /**
  * PR152: v1.4 TS Rebalance Executor Skeleton (READ-ONLY)
  * PR153: v1.4 Gate Integration (READ-ONLY)
+ * PR156: v1.4 Simulation Pipeline Integration (READ-ONLY)
  *
  * Purpose:
  *   Build transaction drafts and execute rebalances.
@@ -11,6 +12,11 @@
  *   - BLOCK → status=SKIPPED
  *   - PASS → status=EXECUTABLE_DRAFT
  *   - Execution still requires allowExecution=true
+ *
+ * PR156 Updates:
+ *   - Integrate execution simulation into pipeline
+ *   - Pipeline: planner → router → quote → simulation → gate → txDraft
+ *   - Execution still disabled (allowExecution=false)
  *
  * Constitutional Constraints:
  *   - EXECUTION DISABLED BY DEFAULT
@@ -26,9 +32,15 @@ import {
   TxDraft,
   TxExecutionResult,
   SimulationResult,
+  PortfolioSnapshot,
 } from "./types";
-import { GateResult } from "./gate";
+import { GateResult, PythonSignals, runSafetyGateWithSimulation } from "./gate";
 import { RoutePlan } from "./router";
+import {
+  runExecutionSimulationV1,
+  SimulationInput,
+  ExecutionSimulationRecord,
+} from "../sim";
 
 /**
  * Executor options
@@ -361,4 +373,88 @@ export async function buildTxDraftWithGate(
     notes,
     errors,
   };
+}
+
+/**
+ * Build transaction draft with simulation + gate integration (PR156)
+ *
+ * @param plan - Rebalance plan
+ * @param route - Route plan
+ * @param signals - Python signals
+ * @param constraints - Rebalance constraints
+ * @param portfolio - Portfolio snapshot
+ * @param opts - Executor options
+ * @returns Transaction draft
+ *
+ * Pipeline: planner → router → quote → simulation → gate → txDraft
+ *
+ * Logic:
+ *   1. Build SimulationInput from plan and route.chosenQuote
+ *   2. Run runExecutionSimulationV1() to get ExecutionSimulationRecord
+ *   3. Run runSafetyGateWithSimulation() with simulation record
+ *   4. Build tx draft using gate result
+ *
+ * Note: Execution still disabled (allowExecution=false)
+ */
+export async function buildTxDraftWithSimulationGate(
+  plan: RebalancePlan,
+  route: RoutePlan,
+  signals: PythonSignals,
+  constraints: RebalanceConstraints,
+  portfolio: PortfolioSnapshot,
+  opts?: ExecutorOptions
+): Promise<TxDraft> {
+  const notes: string[] = opts?.notes ? [...opts.notes] : [];
+
+  // Step 1: Build SimulationInput
+  // Note: QuoteResult only provides labels, not numeric values (PR153)
+  // Simulation will return UNKNOWN labels when numeric values unavailable
+  const simulationInput: SimulationInput = {
+    notionalUsd: plan.notionalUsd,
+    deltaWbtc: plan.deltaWeights.WBTC,
+    intent: plan.intent,
+    quote: route.chosenQuote
+      ? {
+          venue: route.venue,
+          status: "AVAILABLE",
+          // PR153 quotes are label-only, no numeric values available
+          slippageBps: undefined,
+          impactBps: undefined,
+          depthUsd: undefined,
+        }
+      : undefined,
+    oracleStatus: portfolio.oracleStatus,
+  };
+
+  notes.push("PR156: Running execution simulation pipeline");
+
+  // Step 2: Run execution simulation
+  const simulationRecord: ExecutionSimulationRecord =
+    runExecutionSimulationV1(simulationInput);
+
+  notes.push(`Simulation status: ${simulationRecord.status}`);
+  if (simulationRecord.warnings.length > 0) {
+    notes.push(`Simulation warnings: ${simulationRecord.warnings.join(", ")}`);
+  }
+
+  // Step 3: Run safety gate with simulation
+  const gateResult: GateResult = runSafetyGateWithSimulation(
+    plan,
+    route,
+    signals,
+    constraints,
+    portfolio,
+    simulationRecord
+  );
+
+  notes.push(`Gate status: ${gateResult.status}`);
+  if (gateResult.blockReasons.length > 0) {
+    notes.push(`Gate block reasons: ${gateResult.blockReasons.join(", ")}`);
+  }
+
+  // Step 4: Build tx draft using gate result
+  return buildTxDraftWithGate(plan, route, gateResult, constraints, {
+    ...opts,
+    notes,
+  });
 }
