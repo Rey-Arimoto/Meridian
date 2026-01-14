@@ -6600,6 +6600,278 @@ Relationship to v1.4:
 
 ---
 
+### v1.4 Rebalance Template Guidance Engine v1 (PR151)
+
+**Purpose:** Map Shock Phase (PR149) + Stress (PR150) + Action Shape (PR147) + Trend → Template ID using fixed rules. Template ID is abstract label for TS-side Executor. Python does NOT hold token names or numeric ratios.
+
+**Core Philosophy: Template ID Only (No Token Names, No Ratios)**
+
+PR151 implements template-based rebalancing guidance:
+- **Python outputs template_id only** (e.g., TPL_RISK_90)
+- **NO token names** (wBTC/USDC/SUI) in Python code or text
+- **NO numeric ratios** (90/10, percentages) in Python text
+- **TS side resolves** template_id → actual token ratios
+- **First-match-wins** rule table with guard priority
+
+**Template IDs (Abstract Risk/Safe Ratios):**
+
+| Template ID | Abstract Meaning | TS-Side Resolution (wBTC/USDC Example) |
+|-------------|------------------|---------------------------------------|
+| TPL_UNKNOWN | Unknown state (safe default) | Decided by TS executor (safe fallback) |
+| TPL_RISK_0 | Maximum safe (0% risk asset) | 0% wBTC / 100% USDC |
+| TPL_RISK_20 | Low risk (20% risk asset) | 20% wBTC / 80% USDC |
+| TPL_RISK_50 | Balanced (50% risk asset) | 50% wBTC / 50% USDC |
+| TPL_RISK_90 | High risk (90% risk asset) | 90% wBTC / 10% USDC |
+
+**IMPORTANT:**
+- Python code does NOT know "wBTC" or "USDC" exists
+- Python code does NOT know "90%" or "10%" ratios
+- Python outputs abstract label: "TPL_RISK_90"
+- TS side has fixed table: TPL_RISK_90 → { wBTC: 0.9, USDC: 0.1 }
+- Multi-asset support: Extend template IDs (TPL_ROLE_BAND_*) in future
+
+**Fixed Rule Table (First-Match-Wins):**
+
+Guards (highest priority):
+1. **action_shape == FREEZE_STATE** → TPL_RISK_0 (RULE_GUARD_FREEZE)
+2. **stress == STRESSED** → TPL_RISK_0 (RULE_GUARD_STRESSED)
+
+Shock Phase Rules:
+3. **phase == PHASE_DOWN_SHOCK** → TPL_RISK_0 (RULE_DOWN_SHOCK)
+4. **phase == PHASE_DOWN_REVERSAL** → TPL_RISK_50 (RULE_DOWN_REVERSAL)
+5. **phase == PHASE_UP_SHOCK** → TPL_RISK_90 (RULE_UP_SHOCK)
+6. **phase == PHASE_UP_REVERSAL** → TPL_RISK_0 (RULE_UP_REVERSAL)
+
+NORMAL + Trend Rules:
+7. **phase == PHASE_NORMAL and trend == UP_TREND** → TPL_RISK_90 (RULE_NORMAL_UP_TREND)
+8. **phase == PHASE_NORMAL and trend == DOWN_TREND** → TPL_RISK_20 (RULE_NORMAL_DOWN_TREND)
+9. **phase == PHASE_NORMAL and trend == RANGE** → TPL_RISK_50 (RULE_NORMAL_RANGE)
+
+Fallback:
+10. **fallback** → TPL_UNKNOWN (RULE_FALLBACK_UNKNOWN)
+
+**Rule Priority:**
+- Guards checked first (FREEZE_STATE, STRESSED override everything)
+- Shock Phase rules checked second
+- NORMAL + Trend rules checked third
+- Fallback to UNKNOWN if no match
+
+**Trend Labels (Minimal Definition for PR151):**
+
+```python
+TREND_UP_TREND = "UP_TREND"
+TREND_DOWN_TREND = "DOWN_TREND"
+TREND_RANGE = "RANGE"
+TREND_UNKNOWN = "UNKNOWN"
+```
+
+Note: Trend detection engine is future work. PR151 accepts trend label as input.
+
+**Schema (v14_rebalance_ prefix):**
+
+Required fields:
+```python
+{
+    "v14_rebalance_version": "v1",
+    "v14_rebalance_status": "AVAILABLE | ERROR",
+    "v14_rebalance_template_id": "TPL_RISK_90",  # abstract template
+    "v14_rebalance_scope": "SCOPE_PORTFOLIO_REBALANCE",
+    "v14_rebalance_rule_id": "RULE_UP_SHOCK",  # which rule matched
+    "v14_rebalance_basis_labels": {
+        "shock_phase": "PHASE_UP_SHOCK",
+        "stress": "STRESS_CALM",
+        "action_shape": "NORMAL_STATE",
+        "trend": "UNKNOWN"
+    },
+    "v14_rebalance_inputs_present": {
+        "shock_phase": true,
+        "stress": true,
+        "action_shape": true,
+        "trend": false
+    },
+    "v14_rebalance_warnings": []
+}
+```
+
+**API:**
+
+```python
+from rebalance import (
+    build_rebalance_template_guidance_v1,
+    extract_rebalance_inputs_v1,
+    get_rebalance_engine_info,
+)
+
+# Build from artifact bundle
+artifact_bundle = {
+    "artifacts": {
+        "shock_phase_record": {"v14_shock_phase_label": "PHASE_UP_SHOCK"},
+        "stress_escalation_record": {"v14_escalation_output_stress_label": "STRESS_CALM"},
+        "action_shape_record": {"v14_action_shape_label": "NORMAL_STATE"},
+        "trend_record": {"v14_trend_label": "UNKNOWN"},
+    }
+}
+result = build_rebalance_template_guidance_v1(artifact_bundle)
+rebalance_record = result["rebalance_record"]
+warnings = result["warnings"]
+
+# Extract inputs
+phase, stress, action_shape, trend, presence = extract_rebalance_inputs_v1(artifact_bundle)
+```
+
+**Rule Examples:**
+
+```python
+# Example 1: Guard - FREEZE_STATE (highest priority)
+input: action_shape=FREEZE_STATE, phase=NORMAL, trend=UP_TREND
+output: TPL_RISK_0 (RULE_GUARD_FREEZE)
+
+# Example 2: Guard - STRESSED (overrides trend)
+input: stress=STRESSED, phase=NORMAL, trend=UP_TREND
+output: TPL_RISK_0 (RULE_GUARD_STRESSED)
+
+# Example 3: UP_SHOCK (shock phase priority)
+input: phase=UP_SHOCK, stress=CALM, action_shape=NORMAL
+output: TPL_RISK_90 (RULE_UP_SHOCK)
+
+# Example 4: NORMAL + UP_TREND (trend-based)
+input: phase=NORMAL, stress=CALM, action_shape=NORMAL, trend=UP_TREND
+output: TPL_RISK_90 (RULE_NORMAL_UP_TREND)
+
+# Example 5: NORMAL + DOWN_TREND (conservative)
+input: phase=NORMAL, stress=CALM, action_shape=NORMAL, trend=DOWN_TREND
+output: TPL_RISK_20 (RULE_NORMAL_DOWN_TREND)
+
+# Example 6: NORMAL + trend missing (safe fallback)
+input: phase=NORMAL, stress=CALM, action_shape=NORMAL, trend=UNKNOWN
+output: TPL_UNKNOWN (RULE_FALLBACK_UNKNOWN)
+```
+
+**Constitutional Guarantees (PR151):**
+
+1. **READ-ONLY:** No execution, no trading, no mutations
+2. **No token names:** No wBTC/USDC/SUI/ETH in Python code or text
+3. **No numeric ratios:** No percentages or ratio text in free fields
+4. **Non-prescriptive:** No should/must/recommend/advise
+5. **No trading verbs:** No buy/sell/swap/execute/sign/transfer
+6. **No causal coupling:** No therefore/so/hence/means you should
+7. **No template coupling:** No "template=TPL_RISK_90 therefore act"
+8. **Label-only output:** Template ID is abstract label
+9. **Defensive:** Invalid input → valid ERROR record (never raises)
+10. **Warning-only guards:** Constitutional guards always exit 0
+
+**Philosophy (PR151):**
+
+```
+Guidance ≠ Instruction
+Template ID ≠ Action
+
+Python abstraction layer:
+  - Python knows: RISK vs SAFE (abstract)
+  - Python does NOT know: wBTC vs USDC (concrete)
+  - Python outputs: TPL_RISK_90 (label)
+  - TS resolves: TPL_RISK_90 → {wBTC: 0.9, USDC: 0.1}
+
+Why this matters:
+  - Python stays token-agnostic (multi-asset extensible)
+  - TS executor owns token-specific logic
+  - Constitutional guarantees enforced at Python layer
+  - Clear separation of concerns
+
+PR151 provides template guidance.
+It does NOT prescribe action.
+It does NOT suggest trades.
+It does NOT recommend execution.
+```
+
+**Smoke Tests:**
+
+Location: `python/validation/pr151_rebalance_template_guidance_v1_smoke.py`
+
+14 test cases:
+1. Import works
+2. Minimal bundle (empty) → TPL_UNKNOWN + warnings
+3. Guard: action_shape=FREEZE_STATE → TPL_RISK_0
+4. Guard: stress=STRESSED → TPL_RISK_0
+5. DOWN_SHOCK → TPL_RISK_0
+6. DOWN_REVERSAL → TPL_RISK_50
+7. UP_SHOCK → TPL_RISK_90
+8. UP_REVERSAL → TPL_RISK_0
+9. NORMAL + UP_TREND → TPL_RISK_90
+10. NORMAL + DOWN_TREND → TPL_RISK_20
+11. NORMAL + RANGE → TPL_RISK_50
+12. NORMAL + trend missing → TPL_UNKNOWN (safe)
+13. Constitutional guard catches token literal (inject "wBTC") → warning
+14. Defensive invalid bundle → ERROR record validates
+
+Expected: 14/14 tests passed
+
+**Files (PR151):**
+
+```
+python/rebalance/
+├── __init__.py                                   # Package exports
+├── v14_rebalance_template_schema.py             # Template record schema
+├── v14_rebalance_template_engine_v1.py          # Template guidance engine
+└── v14_rebalance_constitutional_guard.py        # Constitutional guards
+
+python/validation/
+└── pr151_rebalance_template_guidance_v1_smoke.py  # 14 smoke tests
+```
+
+**Integration with v1.4:**
+
+```
+Workflow:
+  1. PR149 (Shock Phase) detects phase from observations
+  2. PR146 (Stress) calculates current stress
+  3. PR150 (Escalation) binds phase → stress with escalate-only logic
+  4. PR147 (Action Shape) provides freeze/normal state
+  5. PR151 (Template) maps (phase, stress, action_shape, trend) → template_id
+  6. TS Executor resolves template_id → actual token ratios
+  7. TS Executor executes rebalance with resolved ratios
+
+Data Flow:
+  observations → shock_phase (PR149)
+  distortion → stress (PR146)
+  (shock_phase, stress) → escalation (PR150)
+  action_shape (PR147)
+  trend (future PR or external)
+  (phase, stress, action_shape, trend) → template_id (PR151)
+  template_id → token_ratios (TS side)
+  token_ratios → executor (TS side)
+```
+
+Relationship to v1.4:
+```
+  - Input: Shock phase (PR149) + Stress escalation (PR150) + Action shape (PR147) + Trend
+  - Output: v1.4 rebalance template record (template_id + basis_labels)
+  - Purpose: Abstract guidance for TS-side executor (no token names, no ratios)
+```
+
+**Use Cases:**
+
+1. **Template-based rebalancing**: Map market state → abstract template ID
+2. **Token-agnostic guidance**: Python layer stays abstract (RISK/SAFE)
+3. **TS-side resolution**: Executor resolves template → actual ratios
+4. **Guard enforcement**: FREEZE/STRESSED override all other rules
+5. **Constitutional validation**: Enforce template ≠ instruction
+
+**Explicit Non-Claims:**
+
+- This is NOT an action recommendation
+- This is NOT trading advice
+- This is NOT a decision
+- This is NOT an instruction
+- This is NOT permission granting
+- This is NOT a suggestion
+- This is NOT a prediction of future templates
+- Template ID is label-only (not prescriptive, not directive, not predictive)
+- Template does NOT mean "you should rebalance" or "you should execute"
+- Template does NOT contain token names or ratios (TS side resolves)
+
+---
+
 ### Run Validations (v1.4)
 
 ```bash
@@ -6626,6 +6898,9 @@ python3 python/validation/pr149_shock_phase_engine_v1_smoke.py
 
 # PR150: Shock Phase → Stress Escalation Binding v1
 python3 python/validation/pr150_stress_escalation_binding_v1_smoke.py
+
+# PR151: Rebalance Template Guidance v1
+python3 python/validation/pr151_rebalance_template_guidance_v1_smoke.py
 ```
 
 All scripts exit 0 (warning-only, never fails).
