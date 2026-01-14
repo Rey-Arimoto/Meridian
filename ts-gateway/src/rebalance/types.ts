@@ -120,6 +120,22 @@ export interface RebalancePlan {
 
   // Reason codes (debugging/logging)
   reasonCodes: string[];
+
+  // PR158: Drift evaluation result (optional)
+  drift?: {
+    status: "AVAILABLE" | "UNKNOWN" | "ERROR";
+    driftTooSmall?: boolean;
+    reasons: string[];
+    warnings: string[];
+  };
+
+  // PR158: Cooldown evaluation result (optional)
+  cooldown?: {
+    status: "AVAILABLE" | "BLOCKED" | "UNKNOWN" | "ERROR";
+    blocked?: boolean;
+    reasons: string[];
+    warnings: string[];
+  };
 }
 
 /**

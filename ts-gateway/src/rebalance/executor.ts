@@ -3,6 +3,7 @@
  * PR153: v1.4 Gate Integration (READ-ONLY)
  * PR156: v1.4 Simulation Pipeline Integration (READ-ONLY)
  * PR156: v1.4 Auto Execution Policy Integration (READ-ONLY)
+ * PR158: v1.4 Cooldown Integration (READ-ONLY)
  *
  * Purpose:
  *   Build transaction drafts and execute rebalances.
@@ -23,6 +24,11 @@
  *   - Delegate allowExecution to policy system
  *   - Double-key: env (MERIDIAN_EXECUTION_ENABLED) + policy (HardStop)
  *   - Aggressive + HardStop: Stop only when truly broken
+ *
+ * PR158 Updates (Cooldown):
+ *   - Cooldown state should be evaluated by caller and added to plan.cooldown
+ *   - After successful execution, use updateCooldownAfterExecution() helper
+ *   - Cooldown blocks execution if within cooldown period
  *
  * Constitutional Constraints:
  *   - EXECUTION DISABLED BY DEFAULT
@@ -54,6 +60,12 @@ import {
   PolicyResult,
   HardStopState,
 } from "../policy";
+import {
+  evaluateCooldownV1,
+  markActivityV1,
+  CooldownState,
+  CooldownResult,
+} from "./cooldown";
 
 /**
  * Executor options
@@ -507,4 +519,57 @@ export async function buildTxDraftWithSimulationGate(
     ...opts,
     notes,
   });
+}
+
+/**
+ * Evaluate cooldown and add to plan (PR158)
+ *
+ * @param plan - Rebalance plan
+ * @param cooldownState - Current cooldown state
+ * @param nowTs - Current timestamp (optional, defaults to Date.now())
+ * @returns Updated plan with cooldown metadata
+ *
+ * Helper function to evaluate cooldown and add result to plan.
+ * Call this before passing plan to gate/executor functions.
+ */
+export function evaluateCooldownForPlan(
+  plan: RebalancePlan,
+  cooldownState: CooldownState,
+  nowTs?: number
+): RebalancePlan {
+  const timestamp = nowTs ?? Date.now();
+  const cooldownResult: CooldownResult = evaluateCooldownV1(
+    cooldownState,
+    timestamp
+  );
+
+  return {
+    ...plan,
+    cooldown: {
+      status: cooldownResult.status,
+      blocked: cooldownResult.blocked,
+      reasons: cooldownResult.reasons,
+      warnings: cooldownResult.warnings,
+    },
+  };
+}
+
+/**
+ * Update cooldown state after activity (PR158)
+ *
+ * @param cooldownState - Current cooldown state
+ * @param activityKind - Activity kind (EXECUTED or SIMULATED)
+ * @param nowTs - Activity timestamp (optional, defaults to Date.now())
+ * @returns Updated cooldown state
+ *
+ * Call this after successful execution or simulation to update cooldown state.
+ * The returned state should be persisted for future cooldown evaluations.
+ */
+export function updateCooldownAfterActivity(
+  cooldownState: CooldownState,
+  activityKind: "EXECUTED" | "SIMULATED",
+  nowTs?: number
+): CooldownState {
+  const timestamp = nowTs ?? Date.now();
+  return markActivityV1(cooldownState, timestamp, activityKind);
 }

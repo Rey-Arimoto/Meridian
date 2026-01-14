@@ -225,3 +225,151 @@ const consistencyResult = checkQuoteConsistency({
 ```
 
 **Note**: Execution still disabled by default (PR156 policy controls execution)
+
+---
+
+## PR158: Position Drift Monitor + Cooldown Gate v1
+
+### Purpose
+Prevent unnecessary execution noise through drift monitoring and cooldown enforcement:
+- **Drift**: Evaluate if weight drift is too small (< 7%) → NOOP (prevent micro-adjustments)
+- **Cooldown**: Track last activity and block execution within cooldown period (10 min) → prevent rapid-fire execution
+
+### Fixed Thresholds
+
+**Drift Threshold**:
+- minAbsDeltaToAct: 0.07 (7%)
+- If abs(target.WBTC - current.WBTC) < 7% → driftTooSmall=true
+
+**Cooldown Period**:
+- cooldownMs: 600,000 (10 minutes)
+- countSimulationAsActivity: true (default)
+
+### Drift Monitor
+
+Evaluates if position drift is actionable:
+
+```typescript
+import { evaluateDriftV1 } from "./rebalance/drift";
+
+const driftResult = evaluateDriftV1(
+  snapshot,
+  { WBTC: 0.6, USDC: 0.4 }
+);
+
+if (driftResult.driftTooSmall) {
+  // Skip rebalance (drift < 7%)
+}
+```
+
+**Drift Status**:
+- `AVAILABLE`: Drift evaluated successfully
+- `UNKNOWN`: Weights unavailable (oracle failure)
+- `ERROR`: Evaluation error
+
+### Cooldown Gate
+
+Tracks last activity and enforces cooldown period:
+
+```typescript
+import {
+  initCooldownStateV1,
+  evaluateCooldownV1,
+  markActivityV1
+} from "./rebalance/cooldown";
+
+// Initialize state (first time)
+let cooldownState = initCooldownStateV1();
+
+// Evaluate cooldown
+const cooldownResult = evaluateCooldownV1(cooldownState, Date.now());
+
+if (cooldownResult.blocked) {
+  // Skip execution (within cooldown period)
+}
+
+// After successful execution
+cooldownState = markActivityV1(cooldownState, Date.now(), "EXECUTED");
+```
+
+**Cooldown Status**:
+- `AVAILABLE`: Cooldown expired or no activity yet
+- `BLOCKED`: Within cooldown period
+- `UNKNOWN`: Cooldown state unavailable
+- `ERROR`: Evaluation error
+
+### Gate Integration
+
+**Priority Order** (first-match-wins):
+1. Upper-level prohibitions (FREEZE/STRESSED/SHOCK)
+2. Execution impossibility (NO_ROUTE/ORACLE/SIMULATION)
+3. **Cooldown check** (PR158)
+4. **Drift check** (PR158)
+5. Trade safety (GAS/NOTIONAL/IMPACT/SLIPPAGE/DEPTH)
+
+**New Block Reasons**:
+- `BLOCK_COOLDOWN_ACTIVE`: Within cooldown period
+- `BLOCK_DRIFT_TOO_SMALL`: Drift below 7% threshold
+
+**Approach B (Cooldown Unknown)**:
+- If cooldown state unknown → WARN only, don't BLOCK
+- `WARN_COOLDOWN_UNAVAILABLE`: Cooldown state missing
+
+### Planner Integration
+
+The planner automatically evaluates drift and overrides intent to NOOP if drift is too small:
+
+```typescript
+import { buildRebalancePlan } from "./rebalance/planner";
+
+const plan = buildRebalancePlan(snapshot, "TPL_RISK_50", constraints);
+
+// Drift metadata included in plan
+console.log(plan.drift?.driftTooSmall); // true if drift < 7%
+console.log(plan.intent); // "NOOP" if drift too small
+```
+
+### Executor Integration
+
+Use helper functions to manage cooldown state:
+
+```typescript
+import {
+  evaluateCooldownForPlan,
+  updateCooldownAfterActivity
+} from "./rebalance/executor";
+
+// Add cooldown to plan
+const planWithCooldown = evaluateCooldownForPlan(plan, cooldownState);
+
+// After execution/simulation
+const newCooldownState = updateCooldownAfterActivity(
+  cooldownState,
+  "EXECUTED"
+);
+```
+
+### Usage Example
+
+```typescript
+// 1. Build plan (drift evaluated automatically)
+const plan = buildRebalancePlan(snapshot, "TPL_RISK_50", constraints);
+
+// 2. Evaluate cooldown and add to plan
+const planWithCooldown = evaluateCooldownForPlan(plan, cooldownState);
+
+// 3. Gate checks both drift and cooldown
+const gateResult = runSafetyGateWithSimulation(
+  planWithCooldown,
+  route,
+  signals,
+  constraints,
+  portfolio,
+  simulation
+);
+
+// 4. After successful execution, update cooldown
+if (executionResult.ok) {
+  cooldownState = updateCooldownAfterActivity(cooldownState, "EXECUTED");
+}
+```

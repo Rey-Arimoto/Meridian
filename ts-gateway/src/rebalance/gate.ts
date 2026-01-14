@@ -2,6 +2,7 @@
  * PR153: v1.4 Quote/Safety Gate (READ-ONLY)
  * PR155: Oracle status checks added
  * PR156: Simulation checks added
+ * PR158: Cooldown and Drift checks added
  *
  * Purpose:
  *   Validate rebalance plan against safety constraints.
@@ -13,8 +14,9 @@
  *   - Fixed rules: No learning, no optimization
  *   - Double guard: TS-side checks Python-side constraints
  *   - Safe defaults: Oracle/simulation unavailable → BLOCK (PR155/156)
+ *   - Cooldown approach B: Unknown → WARN only, don't BLOCK (PR158)
  *
- * Gate Rules (BLOCK conditions - first-match-wins):
+ * Gate Rules (BLOCK conditions - priority order):
  *   A) Upper-level prohibitions (from Python):
  *      - actionShape = FREEZE_STATE → BLOCK
  *      - stress = STRESSED → BLOCK
@@ -23,8 +25,14 @@
  *
  *   B) Execution impossibility:
  *      - route.venue = NONE → BLOCK
+ *      - oracle unavailable → BLOCK (PR155)
+ *      - simulation missing/error → BLOCK (PR156)
  *
- *   C) Trade safety:
+ *   C) Cooldown/Drift (PR158):
+ *      - cooldown.blocked = true → BLOCK
+ *      - drift.driftTooSmall = true → BLOCK (redundant with NOOP)
+ *
+ *   D) Trade safety:
  *      - SUI balance < minSuiBalance → BLOCK
  *      - delta < minDeltaToAct → BLOCK
  *      - notionalUsd > maxNotionalUsd (200k) → BLOCK
@@ -291,7 +299,39 @@ export function runSafetyGateWithSimulation(
     }
   }
 
-  // ===== C) Trade safety =====
+  // ===== C) Cooldown/Drift checks (PR158) =====
+
+  // C1: Cooldown check
+  if (plan.cooldown) {
+    if (plan.cooldown.blocked === true) {
+      blockReasons.push("BLOCK_COOLDOWN_ACTIVE");
+    } else if (
+      plan.cooldown.status === "UNKNOWN" ||
+      plan.cooldown.status === "ERROR"
+    ) {
+      // Approach B: Don't block, just warn
+      warnings.push("WARN_COOLDOWN_UNAVAILABLE");
+    }
+
+    // Add cooldown warnings
+    if (plan.cooldown.warnings.length > 0) {
+      warnings.push(...plan.cooldown.warnings);
+    }
+  }
+
+  // C2: Drift check (redundant with plan.intent=NOOP, but explicit)
+  if (plan.drift) {
+    if (plan.drift.driftTooSmall === true) {
+      blockReasons.push("BLOCK_DRIFT_TOO_SMALL");
+    }
+
+    // Add drift warnings
+    if (plan.drift.warnings.length > 0) {
+      warnings.push(...plan.drift.warnings);
+    }
+  }
+
+  // ===== D) Trade safety =====
 
   const suiBalance = parseFloat(portfolio.balances.SUI);
   const minSui = parseFloat(constraints.minSuiBalance);

@@ -1,5 +1,6 @@
 /**
  * PR152: v1.4 TS Rebalance Planner (READ-ONLY)
+ * PR158: v1.4 Drift Monitor Integration
  *
  * Purpose:
  *   Calculate rebalance plan: target weights → delta → intent → notional.
@@ -19,6 +20,7 @@ import {
   RebalanceIntent,
   TemplateId,
 } from "./types";
+import { evaluateDriftV1, DriftResult } from "./drift";
 
 /**
  * Build rebalance plan
@@ -148,6 +150,19 @@ export function buildRebalancePlan(
     reasonCodes.push("DELTA_ZERO");
   }
 
+  // Step 5.5: PR158 - Evaluate drift (only if intent is not already NOOP)
+  let driftResult: DriftResult | undefined;
+
+  if (intent !== "NOOP") {
+    driftResult = evaluateDriftV1(snapshot, targetWeights);
+
+    // If drift is too small, override intent to NOOP
+    if (driftResult.driftTooSmall) {
+      intent = "NOOP";
+      reasonCodes.push("DRIFT_TOO_SMALL");
+    }
+  }
+
   // Step 6: Calculate notional USD to move
   // notionalUsd = min(maxNotionalUsd, totalUsd * abs(delta))
   const uncappedNotional = snapshot.totalUsd * absDeltaWbtc;
@@ -178,6 +193,15 @@ export function buildRebalancePlan(
     intent,
     notionalUsd,
     reasonCodes,
+    // PR158: Include drift evaluation result
+    drift: driftResult
+      ? {
+          status: driftResult.status,
+          driftTooSmall: driftResult.driftTooSmall,
+          reasons: driftResult.reasons,
+          warnings: driftResult.warnings,
+        }
+      : undefined,
   };
 }
 
