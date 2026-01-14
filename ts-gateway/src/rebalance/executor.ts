@@ -110,6 +110,7 @@ export async function buildTxDraft(
       minOut: null,
       slippageBps: constraints.slippageBps,
       deadlineSeconds: constraints.deadlineSeconds,
+      checks: [],
       notes,
       errors,
     };
@@ -143,6 +144,7 @@ export async function buildTxDraft(
       minOut: null,
       slippageBps: constraints.slippageBps,
       deadlineSeconds: constraints.deadlineSeconds,
+      checks: [],
       notes,
       errors,
     };
@@ -165,6 +167,7 @@ export async function buildTxDraft(
     minOut,
     slippageBps: constraints.slippageBps,
     deadlineSeconds: constraints.deadlineSeconds,
+    checks: [],
     notes,
     errors,
   };
@@ -320,6 +323,7 @@ export async function buildTxDraftWithGate(
       minOut: null,
       slippageBps: constraints.slippageBps,
       deadlineSeconds: constraints.deadlineSeconds,
+      checks: [],
       notes,
       errors: gate.blockReasons, // Block reasons as errors
     };
@@ -337,6 +341,7 @@ export async function buildTxDraftWithGate(
       minOut: null,
       slippageBps: constraints.slippageBps,
       deadlineSeconds: constraints.deadlineSeconds,
+      checks: [],
       notes,
       errors,
     };
@@ -356,6 +361,7 @@ export async function buildTxDraftWithGate(
       minOut: null,
       slippageBps: constraints.slippageBps,
       deadlineSeconds: constraints.deadlineSeconds,
+      checks: [],
       notes,
       errors,
     };
@@ -385,6 +391,7 @@ export async function buildTxDraftWithGate(
       minOut: null,
       slippageBps: constraints.slippageBps,
       deadlineSeconds: constraints.deadlineSeconds,
+      checks: [],
       notes,
       errors,
     };
@@ -412,6 +419,7 @@ export async function buildTxDraftWithGate(
     minOut,
     slippageBps: constraints.slippageBps,
     deadlineSeconds: constraints.deadlineSeconds,
+    checks: [],
     notes,
     errors,
   };

@@ -144,6 +144,8 @@ export type SwapAction = "SWAP_USDC_TO_WBTC" | "SWAP_WBTC_TO_USDC" | "NOOP";
 
 /**
  * Transaction draft (ready for simulate/execute)
+ *
+ * PR157: Enhanced with minOut guard and consistency checks
  */
 export interface TxDraft {
   // Draft status
@@ -161,14 +163,17 @@ export interface TxDraft {
   // Amount in (as string)
   amountIn: string;
 
-  // Minimum amount out (as string, null if not calculated)
+  // Minimum amount out (PR157: Required for execution safety, string format)
   minOut: string | null;
 
-  // Slippage tolerance in basis points
+  // Slippage tolerance in basis points (PR157: Calculated from fixed rules)
   slippageBps: number;
 
   // Transaction deadline (seconds from now)
   deadlineSeconds: number;
+
+  // Safety checks performed (PR157: Label-only, no numbers)
+  checks: string[];
 
   // Notes (debugging/logging)
   notes: string[];

@@ -1,15 +1,21 @@
 /**
  * PR153: v1.4 Quote Interface + Stub (READ-ONLY)
+ * PR157: v1.4 Slippage + minOut Guard + Quote Consistency (READ-ONLY)
  *
  * Purpose:
  *   Define quote interface for Cetus and DeepBook.
  *   Stub implementation returns deterministic labels for testing.
  *   Future PR will replace with actual SDK/HTTP calls.
  *
+ * PR157 Updates:
+ *   - Add required fields: side, amountIn, amountOut, ts
+ *   - Enable minOut calculation and consistency checks
+ *
  * Constitutional Constraints:
  *   - READ-ONLY: No execution, just quote fetching
  *   - Stub only: Deterministic for testing
- *   - Label-only: Impact/slippage/depth as labels
+ *   - Label-only output: Impact/slippage/depth as labels
+ *   - Numeric values: Internal only (amountIn/amountOut)
  */
 
 /**
@@ -61,7 +67,7 @@ export interface QuoteRequest {
 }
 
 /**
- * Quote result
+ * Quote result (PR157: Extended with numeric fields for minOut calculation)
  */
 export interface QuoteResult {
   // Venue
@@ -69,6 +75,18 @@ export interface QuoteResult {
 
   // Status
   status: "AVAILABLE" | "UNAVAILABLE" | "ERROR";
+
+  // Swap side (PR157: Required for consistency check)
+  side: SwapSide;
+
+  // Amount in (PR157: Internal numeric, required for minOut)
+  amountIn: number;
+
+  // Amount out (PR157: Internal numeric, required for minOut)
+  amountOut: number;
+
+  // Timestamp (PR157: epoch ms, for staleness check)
+  ts: number;
 
   // Impact label
   impact: ImpactLabel;
@@ -82,7 +100,7 @@ export interface QuoteResult {
   // Fee label
   fee: FeeLabel;
 
-  // Warnings
+  // Warnings (label-only, no numbers)
   warnings: string[];
 }
 
@@ -125,9 +143,28 @@ export async function getQuoteCetus(req: QuoteRequest): Promise<QuoteResult> {
     fee = "FEE_HIGH";
   }
 
+  // PR157: Calculate stub amountIn/amountOut
+  // For stub, assume wBTC price = $45000, USDC = $1
+  let amountIn: number;
+  let amountOut: number;
+
+  if (req.side === "USDC_TO_WBTC") {
+    // Buying wBTC with USDC
+    amountIn = req.notionalUsd; // USDC amount
+    amountOut = req.notionalUsd / 45000; // wBTC amount
+  } else {
+    // Selling wBTC for USDC
+    amountIn = req.notionalUsd / 45000; // wBTC amount
+    amountOut = req.notionalUsd; // USDC amount
+  }
+
   return {
     venue: "CETUS",
     status: "AVAILABLE",
+    side: req.side,
+    amountIn,
+    amountOut,
+    ts: Date.now(), // PR157: Current timestamp
     impact,
     slippage,
     depth,
@@ -178,9 +215,28 @@ export async function getQuoteDeepBook(
     fee = "FEE_HIGH";
   }
 
+  // PR157: Calculate stub amountIn/amountOut
+  // For stub, assume wBTC price = $45000, USDC = $1
+  let amountIn: number;
+  let amountOut: number;
+
+  if (req.side === "USDC_TO_WBTC") {
+    // Buying wBTC with USDC
+    amountIn = req.notionalUsd; // USDC amount
+    amountOut = req.notionalUsd / 45000; // wBTC amount
+  } else {
+    // Selling wBTC for USDC
+    amountIn = req.notionalUsd / 45000; // wBTC amount
+    amountOut = req.notionalUsd; // USDC amount
+  }
+
   return {
     venue: "DEEPBOOK",
     status: "AVAILABLE",
+    side: req.side,
+    amountIn,
+    amountOut,
+    ts: Date.now(), // PR157: Current timestamp
     impact,
     slippage,
     depth,

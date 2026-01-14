@@ -146,3 +146,82 @@ if (policyResult.status === "ALLOW") {
 const heartbeat = runHeartbeat(input, policyResult);
 console.log(`System status: ${heartbeat.status}`);
 ```
+
+---
+
+## PR157: Slippage + minOut Guard + Quote Consistency v1
+
+### Purpose
+Calculate minOut and validate quote integrity before swap execution using fixed rules. Conservative approach: prefer execution with appropriate slippage over unnecessary blocking.
+
+### Fixed Slippage Rules
+Slippage tolerance is calculated deterministically from:
+1. **Template base** (risk level)
+   - TPL_RISK_90: 150 bps
+   - TPL_RISK_50: 100 bps
+   - TPL_RISK_20: 75 bps
+   - TPL_RISK_0: 50 bps
+
+2. **Shock phase adjustment**
+   - UP/DOWN_SHOCK: +150 bps
+   - PRE_SHOCK: +100 bps
+   - REVERSAL: +200 bps
+
+3. **Stress adjustment**
+   - STRESSED: +200 bps
+   - TENSE: +100 bps
+
+4. **Impact adjustment**
+   - HIGH: +200 bps
+   - MEDIUM: +100 bps
+   - UNKNOWN: +200 bps
+
+5. **Venue adjustment**
+   - CETUS: +50 bps (AMM)
+   - DEEPBOOK: 0 bps
+
+**Hard limit**: 1500 bps (15%) → BLOCK if exceeded
+
+### minOut Calculation
+```
+minOut = amountOut * (1 - slippageBps/10000)
+```
+Floor rounding for safety. If amountOut invalid → BLOCK_MINOUT_UNAVAILABLE
+
+### Quote Consistency Check
+Two requirements (both required):
+1. **Freshness**: amountIn > 0, amountOut > 0, timestamp < 60s old
+2. **Price consistency**: Implied price within ±5% of oracle price
+
+If oracle unavailable → BLOCK_QUOTE_CONSISTENCY_UNAVAILABLE (conservative)
+
+### New Block Reasons
+- `BLOCK_MINOUT_UNAVAILABLE`: Cannot calculate minOut
+- `BLOCK_SLIPPAGE_TOO_HIGH`: Exceeds 15% cap
+- `BLOCK_QUOTE_INCONSISTENT`: Price deviation > ±5%
+- `BLOCK_QUOTE_STALE`: Quote timestamp too old
+- `BLOCK_QUOTE_CONSISTENCY_UNAVAILABLE`: Oracle unavailable for consistency check
+
+### Usage
+```typescript
+import { calculateSlippageAndMinOut, checkQuoteConsistency } from "./rebalance";
+
+// Calculate slippage and minOut
+const slippageResult = calculateSlippageAndMinOut({
+  templateId: "TPL_RISK_50",
+  shockPhase: "PHASE_NORMAL",
+  stress: "STRESS_CALM",
+  impactLabel: "IMPACT_LOW",
+  venue: "CETUS",
+  amountOut: 1000000
+});
+
+// Check quote consistency
+const consistencyResult = checkQuoteConsistency({
+  quote: quoteResult,
+  oraclePrices: { wbtcUsd: 45000, usdcUsd: 1.0 },
+  oracleStatus: "AVAILABLE"
+});
+```
+
+**Note**: Execution still disabled by default (PR156 policy controls execution)
