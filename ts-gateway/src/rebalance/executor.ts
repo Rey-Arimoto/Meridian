@@ -1,9 +1,16 @@
 /**
  * PR152: v1.4 TS Rebalance Executor Skeleton (READ-ONLY)
+ * PR153: v1.4 Gate Integration (READ-ONLY)
  *
  * Purpose:
  *   Build transaction drafts and execute rebalances.
  *   Execution is DISABLED by default (safety first).
+ *
+ * PR153 Updates:
+ *   - Integrate GateResult for safety checks
+ *   - BLOCK → status=SKIPPED
+ *   - PASS → status=EXECUTABLE_DRAFT
+ *   - Execution still requires allowExecution=true
  *
  * Constitutional Constraints:
  *   - EXECUTION DISABLED BY DEFAULT
@@ -20,6 +27,8 @@ import {
   TxExecutionResult,
   SimulationResult,
 } from "./types";
+import { GateResult } from "./gate";
+import { RoutePlan } from "./router";
 
 /**
  * Executor options
@@ -216,4 +225,140 @@ export async function executeTx(
   notes.push(`Would execute: ${draft.action} ${draft.amountIn} on ${draft.route}`);
 
   return { ok: false, errors, notes };
+}
+
+/**
+ * Build transaction draft with gate integration (PR153)
+ *
+ * @param plan - Rebalance plan
+ * @param route - Route plan
+ * @param gate - Gate result
+ * @param constraints - Rebalance constraints
+ * @param opts - Executor options
+ * @returns Transaction draft
+ *
+ * Logic:
+ *   1. If gate.status = BLOCK → return SKIPPED draft with block reasons
+ *   2. If gate.status = PASS → build draft with status=EXECUTABLE_DRAFT
+ *   3. Use route.venue for routing
+ */
+export async function buildTxDraftWithGate(
+  plan: RebalancePlan,
+  route: RoutePlan,
+  gate: GateResult,
+  constraints: RebalanceConstraints,
+  opts?: ExecutorOptions
+): Promise<TxDraft> {
+  const notes: string[] = opts?.notes ? [...opts.notes] : [];
+  const errors: string[] = [];
+
+  // Check gate status
+  if (gate.status === "BLOCK") {
+    notes.push("Gate status is BLOCK, skipping transaction");
+    notes.push(`Block reasons: ${gate.blockReasons.join(", ")}`);
+
+    return {
+      status: "SKIPPED",
+      simulateOnly: opts?.simulateOnly ?? true,
+      route: route.venue === "NONE" ? "UNKNOWN" : route.venue,
+      action: "NOOP",
+      amountIn: "0",
+      minOut: null,
+      slippageBps: constraints.slippageBps,
+      deadlineSeconds: constraints.deadlineSeconds,
+      notes,
+      errors: gate.blockReasons, // Block reasons as errors
+    };
+  }
+
+  if (gate.status === "ERROR") {
+    errors.push("Gate returned ERROR status");
+
+    return {
+      status: "ERROR",
+      simulateOnly: opts?.simulateOnly ?? true,
+      route: "UNKNOWN",
+      action: "NOOP",
+      amountIn: "0",
+      minOut: null,
+      slippageBps: constraints.slippageBps,
+      deadlineSeconds: constraints.deadlineSeconds,
+      notes,
+      errors,
+    };
+  }
+
+  // Gate PASS → build executable draft
+  // Check if NOOP (should have been caught by gate, but defensive)
+  if (plan.intent === "NOOP") {
+    notes.push("Intent is NOOP (defensive check)");
+
+    return {
+      status: "SKIPPED",
+      simulateOnly: opts?.simulateOnly ?? true,
+      route: route.venue === "NONE" ? "UNKNOWN" : route.venue,
+      action: "NOOP",
+      amountIn: "0",
+      minOut: null,
+      slippageBps: constraints.slippageBps,
+      deadlineSeconds: constraints.deadlineSeconds,
+      notes,
+      errors,
+    };
+  }
+
+  // Determine action and amountIn
+  let action: "SWAP_USDC_TO_WBTC" | "SWAP_WBTC_TO_USDC";
+  let amountIn: string;
+
+  if (plan.intent === "INCREASE_WBTC") {
+    action = "SWAP_USDC_TO_WBTC";
+    amountIn = plan.notionalUsd.toFixed(6); // 6 decimals for USDC
+    notes.push(`Action: Buy wBTC with ${amountIn} USDC`);
+  } else if (plan.intent === "DECREASE_WBTC") {
+    action = "SWAP_WBTC_TO_USDC";
+    amountIn = (plan.notionalUsd / 45000).toFixed(8); // 8 decimals for wBTC
+    notes.push(`Action: Sell ${amountIn} wBTC for USDC`);
+  } else {
+    errors.push("Invalid intent (not INCREASE_WBTC or DECREASE_WBTC)");
+
+    return {
+      status: "ERROR",
+      simulateOnly: opts?.simulateOnly ?? true,
+      route: "UNKNOWN",
+      action: "NOOP",
+      amountIn: "0",
+      minOut: null,
+      slippageBps: constraints.slippageBps,
+      deadlineSeconds: constraints.deadlineSeconds,
+      notes,
+      errors,
+    };
+  }
+
+  // Use route.venue
+  const routeVenue = route.venue === "NONE" ? "UNKNOWN" : route.venue;
+  notes.push(`Route: ${routeVenue}`);
+
+  // Add gate warnings
+  if (gate.warnings.length > 0) {
+    notes.push(`Gate warnings: ${gate.warnings.join(", ")}`);
+  }
+
+  // minOut (not calculated yet - future PR will add price/slippage calculation)
+  const minOut = null;
+  notes.push("minOut not calculated (will be added in routing PR)");
+
+  return {
+    status: "EXECUTABLE_DRAFT", // Gate passed
+    simulateOnly: opts?.simulateOnly ?? true,
+    route: routeVenue,
+    action,
+    amountIn,
+    minOut,
+    slippageBps: constraints.slippageBps,
+    deadlineSeconds: constraints.deadlineSeconds,
+    notes,
+    errors,
+  };
 }

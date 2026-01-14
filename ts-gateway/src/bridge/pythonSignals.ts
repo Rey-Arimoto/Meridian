@@ -150,3 +150,96 @@ export function validatePythonRebalanceRecord(json: any): {
 
   return { valid: true, warnings };
 }
+
+/**
+ * Extract all Python signals from bundle (PR153)
+ *
+ * @param json - Python output (artifact bundle)
+ * @returns Python signals object
+ *
+ * Extracts:
+ *   - templateId (PR151)
+ *   - shockPhase (PR149)
+ *   - stress (PR146/150)
+ *   - actionShape (PR147)
+ *
+ * Searches multiple nested paths:
+ *   - Direct fields
+ *   - Nested in specific records
+ *   - Nested in artifacts.*_record
+ */
+export function extractPythonSignalsAll(json: any): {
+  templateId?: string;
+  shockPhase?: string;
+  stress?: string;
+  actionShape?: string;
+} {
+  const signals: {
+    templateId?: string;
+    shockPhase?: string;
+    stress?: string;
+    actionShape?: string;
+  } = {};
+
+  // Defensive: handle null/undefined
+  if (!json || typeof json !== "object") {
+    return signals;
+  }
+
+  // Helper function to search nested paths
+  const searchField = (fieldName: string): string | undefined => {
+    // Direct field
+    if (fieldName in json && typeof json[fieldName] === "string") {
+      return json[fieldName];
+    }
+
+    // Check all *_record fields
+    const recordKeys = Object.keys(json).filter((k) => k.endsWith("_record"));
+    for (const recordKey of recordKeys) {
+      const record = json[recordKey];
+      if (
+        record &&
+        typeof record === "object" &&
+        fieldName in record &&
+        typeof record[fieldName] === "string"
+      ) {
+        return record[fieldName];
+      }
+    }
+
+    // Check artifacts.*_record
+    if ("artifacts" in json && json.artifacts && typeof json.artifacts === "object") {
+      const artifacts = json.artifacts;
+      const artifactKeys = Object.keys(artifacts).filter((k) => k.endsWith("_record"));
+      for (const artifactKey of artifactKeys) {
+        const record = artifacts[artifactKey];
+        if (
+          record &&
+          typeof record === "object" &&
+          fieldName in record &&
+          typeof record[fieldName] === "string"
+        ) {
+          return record[fieldName];
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  // Extract template ID (PR151)
+  signals.templateId = searchField("v14_rebalance_template_id");
+
+  // Extract shock phase (PR149)
+  signals.shockPhase = searchField("v14_shock_phase_label");
+
+  // Extract stress (PR146/150 - try escalation output first, then raw stress)
+  signals.stress =
+    searchField("v14_escalation_output_stress_label") ||
+    searchField("v14_stress_label");
+
+  // Extract action shape (PR147)
+  signals.actionShape = searchField("v14_action_shape_label");
+
+  return signals;
+}

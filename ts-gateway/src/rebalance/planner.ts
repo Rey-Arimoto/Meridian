@@ -166,7 +166,7 @@ export function createDefaultConstraints(): RebalanceConstraints {
   return {
     minSuiBalance: "0.05", // 0.05 SUI minimum for gas
     minDeltaToAct: 0.05, // 5% minimum delta to trigger action
-    maxNotionalUsd: 200, // $200 max per rebalance
+    maxNotionalUsd: 200000, // $200,000 max per rebalance (PR153 update)
     cooldownSeconds: 900, // 15 minutes cooldown
     slippageBps: 50, // 0.50% slippage tolerance
     deadlineSeconds: 120, // 2 minutes deadline

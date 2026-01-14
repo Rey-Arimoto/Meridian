@@ -117,14 +117,19 @@ export interface RebalancePlan {
 }
 
 /**
- * Transaction draft status
+ * Transaction draft status (PR153 update)
  */
-export type TxDraftStatus = "DRAFT" | "SKIPPED" | "ERROR";
+export type TxDraftStatus =
+  | "DRAFT"
+  | "EXECUTABLE_DRAFT" // PR153: Gate passed, ready for execution
+  | "SIMULATION_ONLY" // PR153: Simulation only, no execution
+  | "SKIPPED"
+  | "ERROR";
 
 /**
  * Routing protocol
  */
-export type RouteProtocol = "CETUS" | "DEEP" | "UNKNOWN";
+export type RouteProtocol = "CETUS" | "DEEPBOOK" | "UNKNOWN";
 
 /**
  * Swap action
