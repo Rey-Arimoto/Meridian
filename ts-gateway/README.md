@@ -560,3 +560,223 @@ Next chunk (or STOP/COMPLETE)
 Total time for 3 chunks: ~20s (0s + exec + 10s + exec + 10s + exec)
 Max duration: 60s (PR160: reduced from 10min)
 ```
+
+---
+
+## PR161: TWAP-lite Phase Re-eval STOP + Per-Chunk Route Reselect v1
+
+### Purpose
+"React correctly" by stopping on dangerous phase escalations and reselecting routes per chunk:
+- **Phase Re-eval STOP**: Mid-execution phase escalation detection with fixed STOP table
+- **Route Reselection**: Mandatory fresh route selection for every chunk
+
+### Phase STOP Policy (Fixed Decision Table)
+
+**STOP Immediately When**:
+1. `now = PHASE_UNKNOWN` → STOP_PHASE_UNKNOWN (data loss is unsafe)
+2. `now = PHASE_ERROR` → STOP_PHASE_ERROR (observation failure)
+3. `prev in {NORMAL, RECOVERY}` and `now = PRE_SHOCK` → STOP_PHASE_ESCALATED (escalation)
+4. `prev = PRE_SHOCK` and `now in {UP_SHOCK, DOWN_SHOCK}` → STOP_PHASE_ESCALATED (escalation)
+5. `prev = UP_SHOCK` and `now = UP_REVERSAL` → STOP_PHASE_CHANGED (template flip)
+6. `prev = DOWN_SHOCK` and `now = DOWN_REVERSAL` → STOP_PHASE_CHANGED (template flip)
+7. `prev = PRE_SHOCK` and `now in {UP_REVERSAL, DOWN_REVERSAL}` → STOP_PHASE_CHANGED (skip transition)
+
+**NO STOP (Continue) When**:
+- `now = PHASE_RECOVERY` → continue (de-escalation)
+- `SHOCK → NORMAL` → continue (de-escalation)
+- Same phase → continue
+- First chunk (no previous phase) → continue
+
+### Route Reselection (Per Chunk Mandatory)
+
+**Fixed Requirement**:
+- Every chunk MUST call `selectRoute()` with fresh market data
+- Route may change between chunks (CETUS → DEEPBOOK or vice versa)
+- Route change tracked in ChunkResult diagnostics: `routeSelected`, `routeChanged`
+
+**Integration**:
+```typescript
+// Runner calls selectRoute per chunk (Step 1.6)
+const routeResult = await selectRoute({
+  chunkPlan,
+  portfolio: freshPortfolio,
+  phaseLabel: currentPhase,
+  prevVenue: lastVenue,
+});
+
+// Diagnostics recorded in ChunkResult
+chunkResult.routeSelected = routeResult.venue; // "CETUS" | "DEEPBOOK" | "NONE"
+chunkResult.routeChanged = routeResult.venue !== lastVenue; // true if changed
+```
+
+### Execution Pipeline Update
+
+**Per-Chunk Pipeline** (PR161 adds steps 1.5 and 1.6):
+1. Sleep (10s interval, except first chunk)
+2. Refresh portfolio snapshot
+3. **1.5. Evaluate phase (NEW)**: Check for dangerous escalation
+4. **1.6. Select route (NEW)**: Fresh route selection with market data
+5. Evaluate gate (PR153/155/157/158)
+6. Evaluate policy (PR156)
+7. Build transaction draft
+8. Execute or simulate
+
+**STOP Trigger** (PR161 addition):
+- Phase escalation detected (any of 7 STOP rules) → STOP_PHASE_ESCALATED/CHANGED/UNKNOWN/ERROR
+- Run stops immediately, remaining chunks not executed
+
+### Phase Label Types
+
+```typescript
+type PhaseLabel =
+  | "PHASE_UNKNOWN"    // Data loss → STOP
+  | "PHASE_NORMAL"     // Calm market
+  | "PHASE_PRE_SHOCK"  // Early warning
+  | "PHASE_UP_SHOCK"   // Upward shock
+  | "PHASE_DOWN_SHOCK" // Downward shock
+  | "PHASE_UP_REVERSAL"   // Reversal from up
+  | "PHASE_DOWN_REVERSAL" // Reversal from down
+  | "PHASE_RECOVERY"   // De-escalation
+  | "PHASE_ERROR";     // Observation error → STOP
+```
+
+### Non-Claims (What This Is NOT)
+
+**Phase Policy does NOT**:
+- ❌ Predict future phase transitions
+- ❌ Optimize execution timing based on phase
+- ❌ Learn from historical phase patterns
+- ❌ Dynamically adjust thresholds
+- ❌ Implement optimal execution strategy
+
+**Route Reselection does NOT**:
+- ❌ Predict which route will be better
+- ❌ Learn from previous route performance
+- ❌ Optimize route selection dynamically
+- ❌ Balance execution across venues
+- ❌ Implement smart order routing
+
+**Phase Policy DOES**:
+- ✅ Use fixed STOP rules (no prediction, no learning)
+- ✅ Detect dangerous escalations only
+- ✅ Safe default: uncertain → STOP
+- ✅ Label-only output (no numeric logging)
+- ✅ Never throws (defensive)
+
+**Route Reselection DOES**:
+- ✅ Refresh route selection per chunk (mandatory)
+- ✅ Use fresh market data (depth, oracle, signals)
+- ✅ Track route changes for diagnostics
+- ✅ Respect gate BLOCK_NO_ROUTE
+- ✅ Label-only output
+
+### Safety: STOP ≠ HardStop
+
+**CRITICAL DISTINCTION**:
+- **STOP** (PR161): Pause for re-planning (phase escalation detected)
+  - Intent: "Market changed dramatically, let's re-evaluate template"
+  - Action: Stop current run, return to planner for new decision
+  - Recovery: Immediate (next planning cycle uses new phase)
+
+- **HardStop** (PR156): System-level lockdown (system is broken)
+  - Intent: "Something is fundamentally broken, lock down everything"
+  - Action: Block ALL execution until TTL expires or manual release
+  - Recovery: Time-based (15-60 min TTL) or manual intervention
+
+**STOP does NOT activate HardStop**.
+Phase escalation is expected market behavior, not system failure.
+
+### Usage
+
+```typescript
+import { evaluatePhaseStopPolicyV1 } from "./rebalance/phasePolicy";
+
+// Evaluate phase policy per chunk
+const phaseDecision = evaluatePhaseStopPolicyV1(
+  prevPhase,  // undefined if first chunk
+  currentPhase
+);
+
+if (phaseDecision.shouldStop) {
+  // Stop run: STOP_PHASE_ESCALATED/CHANGED/UNKNOWN/ERROR
+  return {
+    status: "STOPPED",
+    reasons: [phaseDecision.reason, ...phaseDecision.warnings],
+  };
+}
+
+// Continue to next chunk
+```
+
+### Example: 3-Chunk Run with Phase Escalation
+
+```typescript
+// Chunk 1: PHASE_NORMAL → Execute successfully
+//   prevPhase: undefined, nowPhase: "PHASE_NORMAL" → NO_STOP
+//   route: CETUS, routeChanged: false
+
+// Chunk 2: PHASE_NORMAL → Execute successfully
+//   prevPhase: "PHASE_NORMAL", nowPhase: "PHASE_NORMAL" → NO_STOP
+//   route: DEEPBOOK, routeChanged: true (route switched)
+
+// Chunk 3: PHASE_PRE_SHOCK → STOP immediately
+//   prevPhase: "PHASE_NORMAL", nowPhase: "PHASE_PRE_SHOCK" → STOP_PHASE_ESCALATED
+//   reasons: ["STOP_PHASE_ESCALATED", "WARN_PHASE_ESCALATED_TO_PRE_SHOCK"]
+//   status: "STOPPED" (chunk 3 not executed)
+
+// Result: RunResult.status = "STOPPED"
+// Next planning cycle will use PHASE_PRE_SHOCK and select TPL_RISK_20 or TPL_RISK_0
+```
+
+### Integration with Existing Systems
+
+**Phase evaluation respects**:
+- Fixed observation pipeline (PR149/PR154): Phase labels come from external observation
+- Constitutional constraints: READ-ONLY, no prediction, no learning
+- Safe defaults: UNKNOWN/ERROR → STOP immediately
+
+**Route reselection respects**:
+- Route selection logic (PR155): Uses same selectRoute() function
+- Gate integration (PR153): NO_ROUTE still triggers BLOCK
+- Venue constraints: Only CETUS and DEEPBOOK supported
+
+**Execution flow**:
+```
+Per chunk:
+  ↓
+Portfolio refresh
+  ↓
+Phase evaluation (PR161: NEW)
+  ↓  [If STOP → exit immediately]
+Route selection (PR161: NEW, fresh per chunk)
+  ↓
+Gate (FREEZE/SHOCK/ORACLE/SIM/COOLDOWN/DRIFT/TRADE_SAFETY)
+  ↓
+Policy (env key + HardStop)
+  ↓
+TxDraft build (with fresh quote)
+  ↓
+Execute or Simulate
+  ↓
+10s sleep
+  ↓
+Next chunk (or STOP/COMPLETE)
+```
+
+### Diagnostics (Label-Only)
+
+**ChunkResult metadata** (PR161 additions):
+```typescript
+interface ChunkResult {
+  // ... existing fields ...
+
+  // Phase diagnostics (label-only)
+  phaseLabel?: string;  // e.g., "PHASE_PRE_SHOCK"
+
+  // Route diagnostics (label-only)
+  routeSelected?: "CETUS" | "DEEPBOOK" | "NONE";
+  routeChanged?: boolean;  // true if different from previous chunk
+}
+```
+
+**Purpose**: Debugging and observability, NOT for decision-making (READ-ONLY)

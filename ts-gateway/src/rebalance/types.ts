@@ -298,6 +298,13 @@ export interface ChunkResult {
 
   // Creation timestamp
   createdAtMs: number;
+
+  // PR161: Phase diagnostics (label-only)
+  phaseLabel?: string;
+
+  // PR161: Route selection diagnostics (label-only)
+  routeSelected?: "CETUS" | "DEEPBOOK" | "NONE";
+  routeChanged?: boolean;
 }
 
 /**

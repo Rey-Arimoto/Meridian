@@ -1,6 +1,7 @@
 /**
  * PR159: v1.4 TWAP-lite Runner (READ-ONLY)
  * PR160: FAST Profile v1.1 - Updated timing parameters
+ * PR161: Phase Re-eval STOP + Per-Chunk Route Reselect
  *
  * Purpose:
  *   Execute chunked rebalance plans with per-chunk refreshing of:
@@ -9,6 +10,8 @@
  *   - Quotes
  *   - Gate checks (PR153/155/157/158)
  *   - Policy checks (PR156)
+ *   - Phase evaluation (PR161) - STOP on dangerous escalation
+ *   - Route selection (PR161) - Reselect venue per chunk
  *
  * Constitutional Constraints:
  *   - READ-ONLY: No learning, no optimization, no prediction
@@ -27,6 +30,11 @@ import {
   TxDraft,
 } from "./types";
 import { CHUNKING_PARAMS } from "./chunking";
+import {
+  PhaseLabel,
+  evaluatePhaseStopPolicyV1,
+  getPhasePolicySummary,
+} from "./phasePolicy";
 
 /**
  * Fixed runner parameters (constitutional constants)
@@ -81,6 +89,18 @@ export interface RunnerDeps {
 
   // Get portfolio snapshot (refreshed per chunk)
   getPortfolioSnapshot: () => Promise<PortfolioSnapshot>;
+
+  // PR161: Get current phase label (refreshed per chunk)
+  getPhaseLabel?: () => Promise<PhaseLabel>;
+
+  // PR161: Select route (refreshed per chunk)
+  selectRoute?: (args: {
+    chunkPlan: ChunkPlan;
+    portfolio: PortfolioSnapshot;
+  }) => Promise<{
+    venue: "CETUS" | "DEEPBOOK" | "NONE";
+    reasons: string[];
+  }>;
 
   // Evaluate gate (PR153/155/157/158)
   evaluateGate: (args: {
@@ -162,6 +182,10 @@ export async function runChunkedExecutionV1(
 
     reasons.push("REASON_CHUNKED_EXECUTION_STARTED");
 
+    // PR161: Track phase across chunks
+    let prevPhase: PhaseLabel | undefined = undefined;
+    let prevRoute: "CETUS" | "DEEPBOOK" | "NONE" | undefined = undefined;
+
     // Execute each chunk
     for (let i = 0; i < runPlan.chunks.length; i++) {
       const chunk = runPlan.chunks[i];
@@ -213,6 +237,68 @@ export async function runChunkedExecutionV1(
         };
       }
 
+      // Step 1.5 (PR161): Evaluate phase STOP policy
+      let currentPhase: PhaseLabel = "PHASE_UNKNOWN";
+      if (deps.getPhaseLabel) {
+        try {
+          currentPhase = await deps.getPhaseLabel();
+        } catch (error) {
+          currentPhase = "PHASE_ERROR";
+        }
+
+        const phaseDecision = evaluatePhaseStopPolicyV1(prevPhase, currentPhase);
+
+        if (phaseDecision.shouldStop) {
+          // Phase escalated → STOP entire run
+          chunkResults.push({
+            chunkId: chunk.chunkId,
+            status: "STOPPED",
+            reasons: [
+              "REASON_PHASE_STOP",
+              phaseDecision.reason,
+              ...phaseDecision.warnings,
+            ],
+            createdAtMs: getNowMs(),
+            phaseLabel: currentPhase,
+          });
+
+          reasons.push("REASON_PHASE_ESCALATION_STOP");
+          reasons.push(phaseDecision.reason);
+          reasons.push(...phaseDecision.warnings);
+
+          return {
+            runId: runPlan.runId,
+            status: "STOPPED",
+            reasons,
+            chunkResults,
+            startedAtMs,
+            finishedAtMs: getNowMs(),
+          };
+        }
+
+        // Update prevPhase for next chunk
+        prevPhase = currentPhase;
+      }
+
+      // Step 1.6 (PR161): Select route per chunk
+      let selectedRoute: "CETUS" | "DEEPBOOK" | "NONE" = "NONE";
+      let routeChanged = false;
+
+      if (deps.selectRoute) {
+        try {
+          const routeResult = await deps.selectRoute({
+            chunkPlan: chunk,
+            portfolio,
+          });
+          selectedRoute = routeResult.venue;
+          routeChanged = prevRoute !== undefined && prevRoute !== selectedRoute;
+          prevRoute = selectedRoute;
+        } catch (error) {
+          // Defensive: Route selection failed → NONE
+          selectedRoute = "NONE";
+        }
+      }
+
       // Step 2: Evaluate gate
       let gateResult: GateResultSimple;
       try {
@@ -261,6 +347,9 @@ export async function runChunkedExecutionV1(
             status: "BLOCKED",
             reasons: gateResult.blockReasons,
             createdAtMs: getNowMs(),
+            phaseLabel: currentPhase, // PR161
+            routeSelected: selectedRoute, // PR161
+            routeChanged, // PR161
           });
 
           reasons.push("REASON_CRITICAL_BLOCK_STOP");
@@ -291,6 +380,9 @@ export async function runChunkedExecutionV1(
             status: "SKIPPED",
             reasons: gateResult.blockReasons,
             createdAtMs: getNowMs(),
+            phaseLabel: currentPhase, // PR161
+            routeSelected: selectedRoute, // PR161
+            routeChanged, // PR161
           });
 
           consecutiveBlockCount = 0; // Reset streak
@@ -304,6 +396,9 @@ export async function runChunkedExecutionV1(
             status: "BLOCKED",
             reasons: gateResult.blockReasons,
             createdAtMs: getNowMs(),
+            phaseLabel: currentPhase, // PR161
+            routeSelected: selectedRoute, // PR161
+            routeChanged, // PR161
           });
 
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
@@ -324,6 +419,9 @@ export async function runChunkedExecutionV1(
           status: "BLOCKED",
           reasons: gateResult.blockReasons,
           createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
         });
 
         continue;
@@ -334,6 +432,9 @@ export async function runChunkedExecutionV1(
           status: "ERROR",
           reasons: ["REASON_GATE_ERROR"],
           createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
         });
 
         reasons.push("REASON_GATE_ERROR_STOP");
@@ -459,6 +560,9 @@ export async function runChunkedExecutionV1(
           txDraft,
           venue: txDraft.route as "CETUS" | "DEEPBOOK" | "NONE",
           createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
         });
       } else if (executionResult.status === "SIMULATED") {
         chunkResults.push({
@@ -467,6 +571,9 @@ export async function runChunkedExecutionV1(
           reasons: executionResult.reasons,
           txDraft,
           createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
         });
       } else if (executionResult.status === "EXECUTION_DISABLED") {
         chunkResults.push({
@@ -475,6 +582,9 @@ export async function runChunkedExecutionV1(
           reasons: ["REASON_EXECUTION_DISABLED", ...executionResult.reasons],
           txDraft,
           createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
         });
       } else {
         // ERROR
@@ -484,6 +594,9 @@ export async function runChunkedExecutionV1(
           reasons: executionResult.reasons,
           txDraft,
           createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
         });
 
         reasons.push("REASON_CHUNK_EXECUTION_ERROR");
