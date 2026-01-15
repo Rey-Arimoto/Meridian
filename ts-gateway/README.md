@@ -1539,3 +1539,249 @@ lines.forEach((line) => console.log(line));
 - `tests/pr165.snapshot_export.test.ts`: 12 comprehensive tests
 
 **Purpose**: Strategy verification and post-analysis, NOT trading signals or execution advice
+
+---
+
+## PR166: Snapshot Analysis Helper v1
+
+### Purpose
+Deterministic analysis of snapshot logs for strategy improvement through:
+- **A) Frequency Analysis**: Phase/stress/template/gate distribution
+- **B) Confusion Signals**: Regime misidentification indicators
+- **C) Timing Analysis**: Phase transition timing and stop reasons
+
+### Constitutional Constraints
+- **READ-ONLY**: Analysis reads snapshot logs only, no execution
+- **Label-only**: Normal output uses labels (numeric counts only in debug mode)
+- **Defensive**: Never throws, always returns result (even on error)
+- **Fixed rules**: No prediction, no optimization, no recommendations
+
+### Analysis Categories
+
+**A) Frequency Analysis**:
+- Phase label distribution
+- Stress label distribution
+- Template ID distribution
+- Gate decision distribution
+- Block reason ranking (top N)
+
+**B) Confusion Signals** (label-only detection):
+- `CONFUSION_SHOCK_BUT_RISK_HIGH_FREQUENT`: UP_REVERSAL/DOWN_SHOCK with TPL_RISK_90 frequent (>30% threshold)
+- `CONFUSION_PRE_SHOCK_NO_TEMPLATE_SHIFT`: PRE_SHOCK but no template change
+- `CONFUSION_GATE_BLOCK_DOMINATES`: BLOCK dominates PASS (>50% threshold)
+
+**C) Timing Analysis**:
+- Phase transitions (PRE_SHOCK → SHOCK, SHOCK → REVERSAL, REVERSAL → RECOVERY)
+- Lag labels: `LAG_NONE` / `LAG_SHORT` (1-3 ticks) / `LAG_MEDIUM` (4-10 ticks) / `LAG_LONG` (11+ ticks)
+- Stop reason breakdown: PHASE_POLICY / GATE / POLICY_HARDSTOP / DURATION / BLOCK_STREAK
+
+### Analysis CLI
+
+Run analysis on snapshot logs:
+```bash
+# Default: 200 most recent snapshots
+npx ts-node src/cli/analyze.ts
+
+# Custom tail count
+npx ts-node src/cli/analyze.ts --tail 500
+
+# Focus on confusion signals only
+npx ts-node src/cli/analyze.ts --focus confusion
+
+# JSON output (sanitized)
+npx ts-node src/cli/analyze.ts --json
+
+# Debug mode (allows numeric counts)
+MERIDIAN_DEBUG=true npx ts-node src/cli/analyze.ts --tail 500
+
+# Built version
+node dist/cli/analyze.js
+```
+
+### Normal Mode vs Debug Mode
+
+**Normal Mode** (default):
+- Label-only output (no counts, no numerics)
+- Presence/absence of patterns indicated by labels
+- Example: `Snapshots: HAS_SNAPSHOTS` (not "Snapshots: 142")
+
+**Debug Mode** (`MERIDIAN_DEBUG=true`):
+- Numeric counts displayed for analysis
+- Useful for detailed investigation
+- Example: `Snapshots: 142` (actual count)
+- **Note**: Addresses/secrets still sanitized (always)
+
+### Example Output (Normal Mode)
+
+```
+=== Meridian Snapshot Analysis ===
+
+Status: COMPLETE
+Snapshots: HAS_SNAPSHOTS
+
+=== Frequency Analysis ===
+Phase Labels: PHASE_NORMAL, PHASE_PRE_SHOCK, PHASE_UP_SHOCK
+Stress Labels: STRESS_CALM, STRESS_TENSE
+Template IDs: TPL_RISK_50, TPL_RISK_20, TPL_RISK_90
+Gate Decisions: PASS, BLOCK
+Block Reasons (Top): BLOCK_ORACLE_STALE, BLOCK_IMPACT_HIGH
+
+=== Confusion Signals ===
+CONFUSION_SHOCK_BUT_RISK_HIGH_FREQUENT: ACTIVE
+  Reasons: REASON_SHOCK_PHASE_WITH_HIGH_RISK_TEMPLATE, RATIO_ABOVE_THRESHOLD
+
+=== Timing Analysis ===
+Phase Transitions:
+  PHASE_NORMAL → PHASE_PRE_SHOCK: LAG_SHORT
+  PHASE_PRE_SHOCK → PHASE_UP_SHOCK: LAG_MEDIUM
+Stop Reasons: STOP_BY_PHASE_POLICY, STOP_BY_GATE
+
+=== End Analysis ===
+```
+
+### Example Output (Focus: Confusion)
+
+```bash
+npx ts-node src/cli/analyze.ts --focus confusion
+```
+
+```
+=== Confusion Signals Focus ===
+
+CONFUSION_SHOCK_BUT_RISK_HIGH_FREQUENT: ACTIVE
+  Reasons: REASON_SHOCK_PHASE_WITH_HIGH_RISK_TEMPLATE, RATIO_ABOVE_THRESHOLD
+  Details: {"dominantLabel":"TPL_RISK_90"}
+
+=== End Focus ===
+```
+
+### Confusion Signal Thresholds (Fixed/Deterministic)
+
+**1) CONFUSION_SHOCK_BUT_RISK_HIGH_FREQUENT**:
+- Threshold: >30% of shock phase snapshots use TPL_RISK_90
+- Rationale: High-risk template should be rare in reversal/shock phases
+
+**2) CONFUSION_PRE_SHOCK_NO_TEMPLATE_SHIFT**:
+- Threshold: PRE_SHOCK exists (>3 snapshots) but only 1 template ID
+- Rationale: PRE_SHOCK should trigger template adjustment
+
+**3) CONFUSION_GATE_BLOCK_DOMINATES**:
+- Threshold: >50% of gate decisions are BLOCK
+- Rationale: BLOCK should be minority (system should mostly run)
+- Details: Categorizes block reasons (ORACLE / IMPACT / SLIPPAGE / COOLDOWN / DRIFT / PHASE_POLICY / POLICY)
+
+### Timing Analysis Details
+
+**Phase Transitions**:
+- Tracks: `from` phase → `to` phase
+- Lag: Tick count between transitions
+- Lag Labels:
+  - `LAG_NONE`: 0 ticks (immediate)
+  - `LAG_SHORT`: 1-3 ticks
+  - `LAG_MEDIUM`: 4-10 ticks
+  - `LAG_LONG`: 11+ ticks
+
+**Stop Reason Breakdown**:
+- `STOP_BY_PHASE_POLICY`: Phase escalation (PRE_SHOCK → SHOCK, etc.)
+- `STOP_BY_GATE`: Gate block (oracle stale, impact high, etc.)
+- `STOP_BY_POLICY_HARDSTOP`: HardStop active
+- `STOP_BY_DURATION`: Run duration exceeded
+- `STOP_BY_BLOCK_STREAK`: Consecutive blocks exceeded
+- `STOP_UNKNOWN`: Reason unclear
+
+### Usage
+
+```typescript
+import { analyzeSnapshotsV1 } from "./analyze";
+import { readRecentSnapshotsV1 } from "./snapshot";
+
+// Read snapshots
+const snapshotResult = await readRecentSnapshotsV1({}, { maxLines: 200 });
+
+// Analyze snapshots
+const analysis = await analyzeSnapshotsV1(snapshotResult.snapshots);
+
+// Check confusion signals
+for (const signal of analysis.confusionSignals) {
+  if (signal.active) {
+    console.log(`${signal.type}: ACTIVE`);
+    console.log(`Reasons: ${signal.reasons.join(", ")}`);
+  }
+}
+
+// Check timing
+for (const transition of analysis.timing.transitions) {
+  console.log(`${transition.from} → ${transition.to}: ${transition.lag}`);
+}
+```
+
+### Sanitization for Display
+
+```typescript
+import { sanitizeAnalysisForDisplay, isDebugMode } from "./analyze/guards";
+
+const debugMode = isDebugMode(); // MERIDIAN_DEBUG=true
+
+// Sanitize for display (removes counts in normal mode)
+const sanitized = sanitizeAnalysisForDisplay(analysis, debugMode);
+
+// In normal mode:
+// sanitized.snapshotCountLabel → "HAS_SNAPSHOTS" (not numeric count)
+// sanitized.frequency.phaseLabels → string[] (no count field)
+
+// In debug mode:
+// analysis.snapshotCount → 142 (actual count)
+// analysis.frequency.phaseLabels → FrequencyItem[] (with count field)
+```
+
+### Non-Claims
+
+**Analysis does NOT**:
+- ❌ Predict future market conditions
+- ❌ Provide trading recommendations
+- ❌ Optimize execution strategies
+- ❌ Learn from patterns (just reports observed patterns)
+- ❌ Trigger execution or trading decisions
+
+**Analysis DOES**:
+- ✅ Report observed patterns (frequency, confusion, timing)
+- ✅ Use fixed thresholds (deterministic, no adaptation)
+- ✅ Support strategy improvement (manual review)
+- ✅ Fail gracefully (never throws)
+- ✅ Respect label-only constraints (normal mode)
+
+### Safety Guarantees
+
+**Defensive design**:
+- Analysis never throws exceptions
+- Empty input → PARTIAL status with warnings
+- Invalid input → ERROR status with minimal result
+- Always returns AnalysisResultV1 (defensive)
+
+**Privacy protection**:
+- Normal mode: label-only (no counts)
+- Debug mode: allows counts (but not addresses/secrets)
+- Guards sanitize: token literals, trading vocab, prescriptive language
+- Addresses always REDACTED (even in debug mode)
+
+**Read-only operation**:
+- Analysis reads snapshot logs only
+- No execution, no trading, no state modification
+- Post-hoc analysis for strategy improvement
+
+### Environment Variables
+
+- `MERIDIAN_DEBUG`: Set to "true" to enable debug mode (numeric counts)
+- `MERIDIAN_SNAPSHOTS_PATH`: Snapshot log path (default: `~/.meridian/snapshots.log`)
+- `MERIDIAN_SNAPSHOTS_MAXLINES`: Max lines for analysis (default: 200)
+
+### Files
+
+- `src/analyze/types.ts`: Analysis result types, signal types, lag labels
+- `src/analyze/guards.ts`: Sanitization, validation, label-only formatting
+- `src/analyze/analyzer.ts`: Core analysis logic (frequency, confusion, timing)
+- `src/analyze/index.ts`: Barrel exports
+- `src/cli/analyze.ts`: Analysis CLI tool
+- `tests/pr166.analyze.test.ts`: 12 comprehensive tests
+
+**Purpose**: Strategy improvement through deterministic analysis, NOT trading signals or execution advice
