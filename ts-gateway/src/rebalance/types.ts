@@ -354,4 +354,68 @@ export interface RunResult {
 
   // Finish timestamp (if completed/stopped)
   finishedAtMs?: number;
+
+  // PR162: Resume state (if stopped with resume possibility)
+  resumeState?: ResumeState;
+}
+
+/**
+ * PR162: Partial Resume Policy v1
+ */
+
+/**
+ * Resume status
+ */
+export type ResumeStatus = "RESUMABLE" | "WAIT" | "ABANDON" | "UNKNOWN";
+
+/**
+ * Stop reason (label-only)
+ */
+export type StopReason =
+  | "STOP_PHASE_POLICY"
+  | "STOP_NO_ROUTE"
+  | "STOP_ORACLE_STALE"
+  | "STOP_ORACLE_ERROR"
+  | "STOP_QUOTE_STALE"
+  | "STOP_QUOTE_INCONSISTENT"
+  | "STOP_IMPACT_HIGH"
+  | "STOP_SLIPPAGE_HIGH"
+  | "STOP_DEPTH_THIN"
+  | "STOP_POLICY_DENY"
+  | "STOP_HARDSTOP_ACTIVE"
+  | "STOP_DURATION_EXCEEDED"
+  | "STOP_BLOCKED_STREAK"
+  | "STOP_ERROR"
+  | "STOP_UNKNOWN";
+
+/**
+ * Resume state (stopped run state for resume evaluation)
+ */
+export interface ResumeState {
+  // Status (constant "STOPPED")
+  status: "STOPPED";
+
+  // Stop reason (label-only)
+  stopReason: StopReason;
+
+  // Stop timestamp (internal numeric only)
+  stopAtTs: number;
+
+  // Resume after timestamp (internal numeric only, optional)
+  resumeAfterTs?: number;
+
+  // Last phase label (label-only, for observability)
+  lastPhaseLabel?: string;
+
+  // Last route (label-only, for observability)
+  lastRoute?: string;
+
+  // Last template ID (label-only, for observability)
+  lastTemplateId?: string;
+
+  // Last intent (label-only, for observability)
+  lastIntent?: string;
+
+  // Warnings (label-only)
+  warnings: string[];
 }

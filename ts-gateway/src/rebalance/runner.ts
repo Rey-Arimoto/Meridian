@@ -2,6 +2,7 @@
  * PR159: v1.4 TWAP-lite Runner (READ-ONLY)
  * PR160: FAST Profile v1.1 - Updated timing parameters
  * PR161: Phase Re-eval STOP + Per-Chunk Route Reselect
+ * PR162: Partial Resume Policy v1
  *
  * Purpose:
  *   Execute chunked rebalance plans with per-chunk refreshing of:
@@ -12,6 +13,7 @@
  *   - Policy checks (PR156)
  *   - Phase evaluation (PR161) - STOP on dangerous escalation
  *   - Route selection (PR161) - Reselect venue per chunk
+ *   - Resume evaluation (PR162) - Save/evaluate resume state on STOP
  *
  * Constitutional Constraints:
  *   - READ-ONLY: No learning, no optimization, no prediction
@@ -28,6 +30,8 @@ import {
   ChunkPlan,
   PortfolioSnapshot,
   TxDraft,
+  ResumeState,
+  StopReason,
 } from "./types";
 import { CHUNKING_PARAMS } from "./chunking";
 import {
@@ -48,6 +52,12 @@ const RUNNER_PARAMS = {
 
   // Maximum run duration (milliseconds)
   MAX_RUN_DURATION_MS: CHUNKING_PARAMS.MAX_RUN_DURATION_MS,
+
+  // PR162: Blocked streak cooldown (milliseconds)
+  BLOCKED_STREAK_COOLDOWN_MS: 30_000, // 30 seconds
+
+  // PR162: Phase policy cooldown (milliseconds)
+  PHASE_POLICY_COOLDOWN_MS: 10_000, // 10 seconds (FAST)
 };
 
 /**
@@ -127,6 +137,46 @@ export interface RunnerDeps {
 }
 
 /**
+ * PR162: Create resume state (helper for STOP scenarios)
+ *
+ * @param stopReason - Stop reason (label-only)
+ * @param nowMs - Current timestamp (internal numeric only)
+ * @param runPlan - Run plan (for observability metadata)
+ * @param lastPhase - Last phase label (optional, label-only)
+ * @param lastRoute - Last route (optional, label-only)
+ * @param warnings - Warnings (optional, label-only)
+ * @returns Resume state
+ */
+function createResumeState(
+  stopReason: StopReason,
+  nowMs: number,
+  runPlan: RunPlan,
+  lastPhase?: string,
+  lastRoute?: string,
+  warnings: string[] = []
+): ResumeState {
+  const state: ResumeState = {
+    status: "STOPPED",
+    stopReason,
+    stopAtTs: nowMs,
+    lastPhaseLabel: lastPhase,
+    lastRoute,
+    lastTemplateId: runPlan.templateId,
+    lastIntent: runPlan.chunks[0]?.intent, // Use first chunk intent
+    warnings,
+  };
+
+  // Add resumeAfterTs for specific stop reasons
+  if (stopReason === "STOP_BLOCKED_STREAK") {
+    state.resumeAfterTs = nowMs + RUNNER_PARAMS.BLOCKED_STREAK_COOLDOWN_MS;
+  } else if (stopReason === "STOP_PHASE_POLICY") {
+    state.resumeAfterTs = nowMs + RUNNER_PARAMS.PHASE_POLICY_COOLDOWN_MS;
+  }
+
+  return state;
+}
+
+/**
  * Run chunked execution (TWAP-lite v1)
  *
  * @param runPlan - Run plan from buildChunkPlansV1
@@ -202,13 +252,21 @@ export async function runChunkedExecutionV1(
       if (elapsed > RUNNER_PARAMS.MAX_RUN_DURATION_MS) {
         reasons.push("REASON_RUN_DURATION_EXCEEDED");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_DURATION_EXCEEDED",
+            nowMs,
+            runPlan,
+            prevPhase,
+            prevRoute
+          ),
         };
       }
 
@@ -227,13 +285,22 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_PORTFOLIO_FETCH_ERROR_STOP");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_ERROR",
+            nowMs,
+            runPlan,
+            prevPhase,
+            prevRoute,
+            ["WARN_PORTFOLIO_FETCH_ERROR"]
+          ),
         };
       }
 
@@ -266,13 +333,22 @@ export async function runChunkedExecutionV1(
           reasons.push(phaseDecision.reason);
           reasons.push(...phaseDecision.warnings);
 
+          const nowMs = getNowMs();
           return {
             runId: runPlan.runId,
             status: "STOPPED",
             reasons,
             chunkResults,
             startedAtMs,
-            finishedAtMs: getNowMs(),
+            finishedAtMs: nowMs,
+            resumeState: createResumeState(
+              "STOP_PHASE_POLICY",
+              nowMs,
+              runPlan,
+              currentPhase,
+              prevRoute,
+              phaseDecision.warnings
+            ),
           };
         }
 
@@ -314,13 +390,22 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_GATE_EVALUATION_ERROR_STOP");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_ERROR",
+            nowMs,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_GATE_EVALUATION_ERROR"]
+          ),
         };
       }
 
@@ -355,13 +440,36 @@ export async function runChunkedExecutionV1(
           reasons.push("REASON_CRITICAL_BLOCK_STOP");
           reasons.push(...gateResult.blockReasons);
 
+          const nowMs = getNowMs();
+          // Determine stop reason from critical block
+          let stopReason: StopReason = "STOP_UNKNOWN";
+          if (gateResult.blockReasons.includes("BLOCK_NO_ROUTE")) {
+            stopReason = "STOP_NO_ROUTE";
+          } else if (gateResult.blockReasons.includes("BLOCK_ORACLE_STALE")) {
+            stopReason = "STOP_ORACLE_STALE";
+          } else if (gateResult.blockReasons.includes("BLOCK_ORACLE_UNAVAILABLE")) {
+            stopReason = "STOP_ORACLE_ERROR";
+          } else if (gateResult.blockReasons.includes("BLOCK_QUOTE_INCONSISTENT")) {
+            stopReason = "STOP_QUOTE_INCONSISTENT";
+          } else if (gateResult.blockReasons.includes("BLOCK_IMPACT_HIGH")) {
+            stopReason = "STOP_IMPACT_HIGH";
+          }
+
           return {
             runId: runPlan.runId,
             status: "STOPPED",
             reasons,
             chunkResults,
             startedAtMs,
-            finishedAtMs: getNowMs(),
+            finishedAtMs: nowMs,
+            resumeState: createResumeState(
+              stopReason,
+              nowMs,
+              runPlan,
+              currentPhase,
+              selectedRoute,
+              gateResult.warnings
+            ),
           };
         }
 
@@ -403,13 +511,22 @@ export async function runChunkedExecutionV1(
 
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
 
+          const nowMs = getNowMs();
           return {
             runId: runPlan.runId,
             status: "STOPPED",
             reasons,
             chunkResults,
             startedAtMs,
-            finishedAtMs: getNowMs(),
+            finishedAtMs: nowMs,
+            resumeState: createResumeState(
+              "STOP_BLOCKED_STREAK",
+              nowMs,
+              runPlan,
+              currentPhase,
+              selectedRoute,
+              gateResult.warnings
+            ),
           };
         }
 
@@ -439,13 +556,22 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_GATE_ERROR_STOP");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_ERROR",
+            nowMs,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_GATE_ERROR"]
+          ),
         };
       }
 
@@ -467,13 +593,22 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_POLICY_EVALUATION_ERROR_STOP");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_ERROR",
+            nowMs,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_POLICY_EVALUATION_ERROR"]
+          ),
         };
       }
 
@@ -490,13 +625,30 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_POLICY_DENIES_EXECUTION_STOP");
         reasons.push(...policyResult.reasons);
 
+        const nowMs2 = getNowMs();
+        // Determine if HARDSTOP or POLICY_DENY
+        let stopReason: StopReason = "STOP_POLICY_DENY";
+        if (policyResult.status === "BLOCKED") {
+          stopReason = "STOP_HARDSTOP_ACTIVE";
+        } else if (policyResult.status === "SIM_ONLY") {
+          stopReason = "STOP_POLICY_DENY";
+        }
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs2,
+          resumeState: createResumeState(
+            stopReason,
+            nowMs2,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_POLICY_DENIES_EXECUTION"]
+          ),
         };
       }
 
@@ -515,13 +667,22 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_TX_DRAFT_BUILD_ERROR_STOP");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_ERROR",
+            nowMs,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_TX_DRAFT_BUILD_ERROR"]
+          ),
         };
       }
 
@@ -541,13 +702,22 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_TX_EXECUTION_ERROR_STOP");
 
+        const nowMs = getNowMs();
         return {
           runId: runPlan.runId,
           status: "STOPPED",
           reasons,
           chunkResults,
           startedAtMs,
-          finishedAtMs: getNowMs(),
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_ERROR",
+            nowMs,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_TX_EXECUTION_ERROR"]
+          ),
         };
       }
 

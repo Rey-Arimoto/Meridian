@@ -780,3 +780,210 @@ interface ChunkResult {
 ```
 
 **Purpose**: Debugging and observability, NOT for decision-making (READ-ONLY)
+
+---
+
+## PR162: Partial Resume Policy v1
+
+### Purpose
+Define fixed "resume conditions" for stopped TWAP-lite runs to enable safe automatic resumption:
+- **STOP ≠ Failure**: STOP means "wait until conditions improve", not termination
+- **Fixed Decision Table**: Per-reason resume conditions (no learning, no prediction)
+- **Safe Resumption**: Only resume when all safety conditions are met
+
+### Resume Status
+
+**Four possible states**:
+- **RESUMABLE**: All conditions OK, can resume execution now
+- **WAIT**: Waiting for specific condition to improve (oracle, gate, phase, route, etc.)
+- **ABANDON**: Cannot resume, give up (duration exceeded, policy permanently denied)
+- **UNKNOWN**: Insufficient inputs or evaluation error
+
+### Fixed Resume Decision Table
+
+**Priority order (first-match-wins)**:
+
+**A. ABANDON (cannot resume)**:
+1. `STOP_DURATION_EXCEEDED` → ABANDON (run took too long)
+2. `STOP_POLICY_DENY` → ABANDON (env key missing, config issue)
+
+**B. WAIT (wait for conditions)**:
+3. `STOP_HARDSTOP_ACTIVE` + hardStop=true → WAIT (until HardStop releases)
+4. `STOP_ORACLE_STALE` → WAIT (until oracle=AVAILABLE)
+5. `STOP_ORACLE_ERROR` → WAIT (until oracle=AVAILABLE)
+6. `STOP_NO_ROUTE` → WAIT (until routeAvailable=true)
+7. `STOP_PHASE_POLICY` → WAIT (until phase=NORMAL/RECOVERY)
+8. `STOP_QUOTE_STALE` → WAIT (until gate=PASS)
+9. `STOP_QUOTE_INCONSISTENT` → WAIT (until gate=PASS)
+10. `STOP_IMPACT_HIGH` → WAIT (until gate=PASS)
+11. `STOP_SLIPPAGE_HIGH` → WAIT (until gate=PASS)
+12. `STOP_DEPTH_THIN` → WAIT (until gate=PASS)
+13. `STOP_BLOCKED_STREAK` → WAIT (until resumeAfterTs, 30s cooldown)
+
+**C. RESUMABLE (can resume now)**:
+14. All conditions OK:
+    - policyEnvEnabled=true
+    - hardStopActive=false
+    - oracleStatus=AVAILABLE
+    - gateStatus=PASS
+    - phaseLabel in {NORMAL, RECOVERY}
+    - routeAvailable=true
+    → RESUMABLE
+
+**D. UNKNOWN**:
+15. Missing critical inputs / evaluation error → UNKNOWN
+
+### Resume State (Observability Metadata)
+
+When a run STOPs, a `ResumeState` is saved in `RunResult.resumeState`:
+
+```typescript
+interface ResumeState {
+  status: "STOPPED";                 // constant
+  stopReason: StopReason;            // label-only
+  stopAtTs: number;                  // internal numeric only
+  resumeAfterTs?: number;            // internal numeric only (for cooldowns)
+  lastPhaseLabel?: string;           // label-only observability
+  lastRoute?: string;                // label-only observability
+  lastTemplateId?: string;           // label-only observability
+  lastIntent?: string;               // label-only observability
+  warnings: string[];                // label-only
+}
+```
+
+**Important**: Numeric timestamps (`stopAtTs`, `resumeAfterTs`) are internal only—never appear in warnings/reasons/logs.
+
+### Integration with Runner
+
+**On STOP** (any of 11 stop scenarios):
+- Runner creates `ResumeState` with `createResumeState()`
+- Includes stop reason, timestamp, and observability metadata
+- Adds `resumeState` to `RunResult`
+
+**On Next Run** (future PR):
+- Check if previous `ResumeState` exists
+- Call `evaluateResumeV1(resumeState, currentInputs)`
+- If RESUMABLE → continue run
+- If WAIT → skip run, check again next tick
+- If ABANDON → mark run as abandoned, don't retry
+- If UNKNOWN → log warning, treat as WAIT
+
+### Cooldown Periods (Fixed)
+
+**Two stop reasons have automatic cooldowns**:
+- `STOP_BLOCKED_STREAK`: 30 seconds (short pause before retry)
+- `STOP_PHASE_POLICY`: 10 seconds (FAST, phase can change quickly)
+
+These are set in `resumeAfterTs` and checked by policy.
+
+### Non-Claims (What This Is NOT)
+
+**Resume Policy does NOT**:
+- ❌ Predict when conditions will improve
+- ❌ Learn optimal retry timing from history
+- ❌ Dynamically adjust cooldown periods
+- ❌ Implement exponential backoff strategies
+- ❌ Optimize execution scheduling
+
+**Resume Policy DOES**:
+- ✅ Use fixed decision table (no prediction, no learning)
+- ✅ Check current conditions only (stateless evaluation)
+- ✅ Safe defaults: uncertain → WAIT or UNKNOWN
+- ✅ Label-only output (no numeric logs)
+- ✅ Never throws (defensive)
+
+### Safety: STOP ≠ HardStop
+
+**CRITICAL DISTINCTION**:
+- **STOP** (PR162): Pause until conditions improve
+  - Intent: "Oracle is stale, let's wait for fresh data"
+  - Action: Save resume state, check conditions on next tick
+  - Recovery: Automatic when conditions improve (seconds to minutes)
+
+- **HardStop** (PR156): System-level lockdown
+  - Intent: "System is fundamentally broken, lock down everything"
+  - Action: Block ALL execution until TTL expires
+  - Recovery: Time-based (15-60 min TTL) or manual intervention
+
+**STOP does NOT activate HardStop**.
+Transient issues (stale oracle, phase escalation) are expected, not system failures.
+
+### Usage
+
+```typescript
+import { evaluateResumeV1 } from "./rebalance/resumePolicy";
+
+// After a run STOPs with resumeState
+const resumeDecision = evaluateResumeV1(resumeState, {
+  nowTs: Date.now(),
+  oracleStatus: "AVAILABLE",
+  gateStatus: "PASS",
+  phaseLabel: "PHASE_NORMAL",
+  routeAvailable: true,
+  hardStopActive: false,
+  policyEnvEnabled: true,
+});
+
+if (resumeDecision.status === "RESUMABLE") {
+  // Safe to resume execution
+} else if (resumeDecision.status === "WAIT") {
+  // Wait for conditions to improve
+  console.log(`Wait: ${resumeDecision.reasons.join(", ")}`);
+  console.log(`Next check: ${resumeDecision.nextCheckHint}`); // SOON/NORMAL/SLOW
+} else if (resumeDecision.status === "ABANDON") {
+  // Cannot resume, give up
+  console.log(`Abandon: ${resumeDecision.reasons.join(", ")}`);
+}
+```
+
+### Example: Oracle Stale Recovery Flow
+
+```typescript
+// Chunk 1: Oracle goes stale during execution
+//   status: "STOPPED", stopReason: "STOP_ORACLE_STALE"
+//   resumeState saved with lastPhase="PHASE_NORMAL", lastRoute="CETUS"
+
+// Next tick (10s later): Oracle still stale
+//   evaluateResumeV1() → WAIT, reason: "REASON_WAIT_ORACLE_STALE"
+//   nextCheckHint: "SOON" (oracle can recover quickly)
+//   Action: Skip execution, check again next tick
+
+// Next tick (20s later): Oracle recovered
+//   oracleStatus: "AVAILABLE", gate: "PASS", phase: "NORMAL"
+//   evaluateResumeV1() → RESUMABLE, reason: "REASON_RESUMABLE_ALL_CONDITIONS_OK"
+//   Action: Resume execution from where it stopped
+```
+
+### Integration with Existing Systems
+
+**Resume policy respects**:
+- Phase evaluation (PR161): Wait until phase is safe (NORMAL/RECOVERY)
+- Gate checks (PR153/155/157/158): Wait until gate passes
+- Policy checks (PR156): Wait until HardStop releases and env key is set
+- Route selection (PR155): Wait until route is available
+
+**All conditions must be satisfied** for RESUMABLE status (conservative approach).
+
+### Diagnostics (Label-Only)
+
+**Stop Reasons** (all label-only):
+```typescript
+type StopReason =
+  | "STOP_PHASE_POLICY"         // Phase escalated
+  | "STOP_NO_ROUTE"             // No route available
+  | "STOP_ORACLE_STALE"         // Oracle stale
+  | "STOP_ORACLE_ERROR"         // Oracle error
+  | "STOP_QUOTE_STALE"          // Quote stale
+  | "STOP_QUOTE_INCONSISTENT"   // Quote inconsistent
+  | "STOP_IMPACT_HIGH"          // Impact too high
+  | "STOP_SLIPPAGE_HIGH"        // Slippage too high
+  | "STOP_DEPTH_THIN"           // Depth too thin
+  | "STOP_POLICY_DENY"          // Policy denied (env key)
+  | "STOP_HARDSTOP_ACTIVE"      // HardStop active
+  | "STOP_DURATION_EXCEEDED"    // Run took too long
+  | "STOP_BLOCKED_STREAK"       // Consecutive blocks
+  | "STOP_ERROR"                // Unexpected error
+  | "STOP_UNKNOWN";             // Unknown reason
+```
+
+**Purpose**: Debugging and observability, NOT for decision-making (READ-ONLY)
