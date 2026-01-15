@@ -1033,3 +1033,232 @@ Supervisor does NOT predict, learn, optimize, or provide trading advice.
 Supervisor DOES use fixed tick logic and respect all existing safety systems.
 
 **Purpose**: 24/7 operational readiness, NOT trading advice or execution signals
+
+---
+
+## PR164: Telemetry + Audit Log + Replay v1
+
+### Purpose
+Add observability to Meridian through append-only audit logging:
+- **Telemetry Events**: Structured events emitted from Supervisor and Runner
+- **Audit Log**: Append-only JSONL file with label-only events
+- **Replay CLI**: Display recent events for troubleshooting and monitoring
+
+### Constitutional Constraints
+- **READ-ONLY**: Record facts only, no learning, no optimization
+- **Label-only**: No numerics, no prices, no addresses in output
+- **Defensive**: Telemetry failures never break execution
+- **Append-only**: JSONL format, one event per line
+
+### Event Types
+
+**11 telemetry event types**:
+- `SUPERVISOR_TICK`: Supervisor tick started
+- `RESUME_EVAL`: Resume evaluation completed
+- `RUN_START`: TWAP run started (reserved)
+- `RUN_STOP`: TWAP run stopped
+- `CHUNK_START`: Chunk execution started
+- `CHUNK_RESULT`: Chunk execution completed
+- `POLICY_BLOCK`: Policy blocked execution
+- `GATE_BLOCK`: Gate blocked execution
+- `ROUTE_SELECTED`: Route selected for chunk
+- `ORACLE_STATUS`: Oracle status changed (reserved)
+- `ERROR`: Error occurred
+
+### Event Levels
+
+**Three severity levels**:
+- `INFO`: Normal operational events
+- `WARN`: Warning conditions (blocks, stops)
+- `ERROR`: Error conditions
+
+### Event Structure
+
+**MeridianEventV1**:
+```typescript
+{
+  v: "v1",                    // Schema version
+  ts: number,                 // Timestamp (internal only)
+  level: "INFO" | "WARN" | "ERROR",
+  type: TelemetryEventType,
+  labels: Record<string, string | undefined>,
+  warnings: string[]
+}
+```
+
+### Guards (Forbidden Patterns)
+
+Labels are sanitized to prevent leaking sensitive data:
+- **Token addresses**: `0x...` → REDACTED
+- **Prices**: `1234.56` → REDACTED
+- **Trading vocab**: `buy`, `sell`, `swap`, `trade` → REDACTED
+- **Prescriptive**: `should`, `must`, `recommend` → REDACTED
+- **Numeric amounts**: Removed from labels
+
+### Audit Log Format
+
+**JSONL (JSON Lines)**:
+- One event per line
+- Append-only (never modified)
+- Default path: `~/.meridian/events.log`
+- Configurable via `MERIDIAN_EVENTS_PATH`
+
+### Replay CLI
+
+Display recent events:
+```bash
+# Default: 200 most recent events
+npx ts-node src/cli/replay.ts
+
+# Custom line count
+npx ts-node src/cli/replay.ts --lines 500
+
+# Filter by event type
+npx ts-node src/cli/replay.ts --type GATE_BLOCK
+
+# Filter by level
+npx ts-node src/cli/replay.ts --level ERROR
+
+# Combined filters
+npx ts-node src/cli/replay.ts --type RUN_STOP --level WARN --lines 100
+
+# Built version
+node dist/cli/replay.js
+```
+
+### Label-Only Output
+
+All CLI output is label-only with timestamp labels:
+- `T_RECENT`: < 60 seconds ago
+- `T_MIN`: 1-60 minutes ago
+- `T_HOUR`: 1-24 hours ago
+- `T_OLD`: > 24 hours ago
+
+Example output:
+```
+=== Meridian Event Replay ===
+
+EVENTS: 5
+
+T_RECENT INFO  SUPERVISOR_TICK      action=TICK_START
+T_RECENT INFO  CHUNK_START          chunk_id=chunk_1 chunk_index=1/3
+T_RECENT INFO  ROUTE_SELECTED       route=CETUS route_changed=NO phase=PHASE_NORMAL
+T_RECENT WARN  GATE_BLOCK           gate_reason=BLOCK_ORACLE_STALE consecutive_blocks=1
+T_RECENT WARN  RUN_STOP             run_status=STOPPED stop_reason=STOP_ORACLE_STALE
+
+=== End Replay ===
+```
+
+### Integration with Supervisor
+
+**Supervisor emits events at key points**:
+- `SUPERVISOR_TICK`: At start of each tick
+- `POLICY_BLOCK`: When HardStop is active
+- `RESUME_EVAL`: After resume evaluation
+
+Events are emitted defensively (failures are caught and ignored).
+
+### Integration with Runner
+
+**Runner emits events during chunk execution**:
+- `CHUNK_START`: At start of each chunk
+- `ROUTE_SELECTED`: After route selection
+- `GATE_BLOCK`: When gate blocks execution
+- `CHUNK_RESULT`: After chunk completes (EXECUTED/SIMULATED/ERROR)
+- `RUN_STOP`: When run stops (any stop reason)
+
+All events include relevant labels (status, reason, phase, route).
+
+### Usage
+
+```typescript
+import { createEventV1, appendEventV1 } from "./telemetry";
+
+// Create event
+const event = createEventV1("GATE_BLOCK", "WARN", {
+  gate_reason: "BLOCK_ORACLE_STALE",
+  consecutive_blocks: "1",
+});
+
+// Append to log (defensive)
+await appendEventV1(event).catch(() => {
+  // Telemetry failure doesn't break execution
+});
+```
+
+### Reading Events
+
+```typescript
+import { readRecentEventsV1, readFilteredEventsV1 } from "./telemetry";
+
+// Read recent events
+const recent = await readRecentEventsV1({}, { maxLines: 200 });
+console.log(`Found ${recent.events.length} events`);
+
+// Filter by type
+const gateBlocks = await readFilteredEventsV1({
+  type: "GATE_BLOCK",
+  maxLines: 100,
+});
+
+// Filter by level
+const errors = await readFilteredEventsV1({
+  level: "ERROR",
+  maxLines: 50,
+});
+```
+
+### Label-Only Formatting
+
+```typescript
+import { formatLabelOnlyLine } from "./telemetry";
+
+const line = formatLabelOnlyLine(event);
+// Output: "T_RECENT WARN  GATE_BLOCK           gate_reason=BLOCK_ORACLE_STALE"
+```
+
+### Non-Claims
+
+**Telemetry does NOT**:
+- ❌ Predict future events or failures
+- ❌ Learn from historical patterns
+- ❌ Optimize execution based on telemetry
+- ❌ Provide trading recommendations
+- ❌ Expose sensitive data (prices, balances, addresses)
+
+**Telemetry DOES**:
+- ✅ Record facts only (what happened, when)
+- ✅ Use label-only output (no numerics in display)
+- ✅ Fail gracefully (never breaks execution)
+- ✅ Append-only (immutable audit trail)
+- ✅ Support filtering and replay for debugging
+
+### Safety Guarantees
+
+**Defensive design**:
+- Telemetry failures never throw exceptions
+- Failures return warnings but don't stop execution
+- Missing log file → empty array (not an error)
+- Corrupted lines → skip with warning (continue parsing)
+
+**Privacy protection**:
+- Guards prevent token addresses in logs
+- Guards prevent prices in logs
+- Guards prevent trading vocabulary in logs
+- Timestamp labels (T_RECENT) instead of numeric timestamps in output
+
+### Environment Variables
+
+- `MERIDIAN_EVENTS_PATH`: Log file path (default: `~/.meridian/events.log`)
+- `MERIDIAN_EVENTS_MAXLINES`: Max lines for replay CLI (default: 200)
+
+### Files
+
+- `src/telemetry/types.ts`: Event types, levels, schema
+- `src/telemetry/guards.ts`: Sanitization, validation, formatting
+- `src/telemetry/eventLog.ts`: JSONL append-only log
+- `src/telemetry/index.ts`: Barrel exports
+- `src/cli/replay.ts`: Replay CLI tool
+- `tests/pr164.telemetry_replay.test.ts`: 10 comprehensive tests
+
+**Purpose**: Observability and debugging, NOT trading signals or execution advice

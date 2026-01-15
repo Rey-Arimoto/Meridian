@@ -1,0 +1,93 @@
+/**
+ * PR164: v1.4 Telemetry Types (READ-ONLY)
+ *
+ * Purpose:
+ *   Define event types for append-only audit log.
+ *   Events record "what happened" (facts), not predictions or instructions.
+ *
+ * Constitutional Constraints:
+ *   - READ-ONLY: Record facts only, no learning, no optimization, no prediction
+ *   - Label-only: All labels/warnings are strings, no numerics in display
+ *   - Numeric timestamps: Internal only (ts field), never in labels/warnings
+ *   - Defensive: Never throws, handles malformed events gracefully
+ */
+
+/**
+ * Telemetry event types (label-only)
+ */
+export type TelemetryEventType =
+  | "SUPERVISOR_TICK" // Supervisor tick started
+  | "RESUME_EVAL" // Resume condition evaluation
+  | "RUN_START" // TWAP run started
+  | "RUN_STOP" // TWAP run stopped
+  | "CHUNK_START" // Chunk execution started
+  | "CHUNK_RESULT" // Chunk execution completed
+  | "POLICY_BLOCK" // Policy blocked execution
+  | "GATE_BLOCK" // Gate blocked execution
+  | "ROUTE_SELECTED" // Route selected for chunk
+  | "ORACLE_STATUS" // Oracle status check
+  | "ERROR"; // Error occurred
+
+/**
+ * Telemetry event level
+ */
+export type TelemetryLevel = "INFO" | "WARN" | "ERROR";
+
+/**
+ * Meridian event v1 (single audit record)
+ */
+export interface MeridianEventV1 {
+  // Schema version
+  v: "v1";
+
+  // Timestamp (internal numeric only, never displayed as number)
+  ts: number;
+
+  // Event level
+  level: TelemetryLevel;
+
+  // Event type
+  type: TelemetryEventType;
+
+  // Labels (label-only, key-value pairs)
+  labels: Record<string, string | undefined>;
+
+  // Warnings (label-only array)
+  warnings: string[];
+}
+
+/**
+ * Common label keys (recommended but not enforced)
+ */
+export type CommonLabelKey =
+  | "phase" // Phase label (PHASE_NORMAL, etc)
+  | "stress" // Stress label (STRESS_CALM, etc)
+  | "template_id" // Template ID (TPL_RISK_50, etc)
+  | "action_shape" // Action shape label
+  | "route" // Route label (CETUS, DEEPBOOK, etc)
+  | "route_changed" // Route changed (YES/NO)
+  | "stop_reason" // Stop reason (STOP_ORACLE_STALE, etc)
+  | "gate_reason" // Gate block reason
+  | "policy_reason" // Policy block reason
+  | "run_status" // Run status (COMPLETED, STOPPED, etc)
+  | "chunk_status" // Chunk status (PASS, BLOCK, SKIP, ERROR)
+  | "oracle_status"; // Oracle status (AVAILABLE, STALE, ERROR)
+
+/**
+ * Create empty event (helper)
+ */
+export function createEventV1(
+  type: TelemetryEventType,
+  level: TelemetryLevel = "INFO",
+  labels: Record<string, string | undefined> = {},
+  warnings: string[] = []
+): MeridianEventV1 {
+  return {
+    v: "v1",
+    ts: Date.now(),
+    level,
+    type,
+    labels,
+    warnings,
+  };
+}

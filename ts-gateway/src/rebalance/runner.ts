@@ -3,6 +3,7 @@
  * PR160: FAST Profile v1.1 - Updated timing parameters
  * PR161: Phase Re-eval STOP + Per-Chunk Route Reselect
  * PR162: Partial Resume Policy v1
+ * PR164: Telemetry integration
  *
  * Purpose:
  *   Execute chunked rebalance plans with per-chunk refreshing of:
@@ -39,6 +40,7 @@ import {
   evaluatePhaseStopPolicyV1,
   getPhasePolicySummary,
 } from "./phasePolicy";
+import { createEventV1, appendEventV1 } from "../telemetry";
 
 /**
  * Fixed runner parameters (constitutional constants)
@@ -242,6 +244,14 @@ export async function runChunkedExecutionV1(
       const isFirstChunk = i === 0;
       const isLastChunk = i === runPlan.chunks.length - 1;
 
+      // PR164: Emit CHUNK_START event
+      await appendEventV1(
+        createEventV1("CHUNK_START", "INFO", {
+          chunk_id: chunk.chunkId,
+          chunk_index: `${i + 1}/${runPlan.chunks.length}`,
+        })
+      ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
       // Sleep between chunks (except before first chunk)
       if (!isFirstChunk) {
         await sleepMs(RUNNER_PARAMS.CHUNK_INTERVAL_MS);
@@ -253,6 +263,15 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_RUN_DURATION_EXCEEDED");
 
         const nowMs = getNowMs();
+
+        // PR164: Emit RUN_STOP event
+        await appendEventV1(
+          createEventV1("RUN_STOP", "WARN", {
+            run_status: "STOPPED",
+            stop_reason: "STOP_DURATION_EXCEEDED",
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
@@ -334,6 +353,16 @@ export async function runChunkedExecutionV1(
           reasons.push(...phaseDecision.warnings);
 
           const nowMs = getNowMs();
+
+          // PR164: Emit RUN_STOP event
+          await appendEventV1(
+            createEventV1("RUN_STOP", "WARN", {
+              run_status: "STOPPED",
+              stop_reason: "STOP_PHASE_POLICY",
+              phase: currentPhase,
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
           return {
             runId: runPlan.runId,
             status: "STOPPED",
@@ -369,6 +398,15 @@ export async function runChunkedExecutionV1(
           selectedRoute = routeResult.venue;
           routeChanged = prevRoute !== undefined && prevRoute !== selectedRoute;
           prevRoute = selectedRoute;
+
+          // PR164: Emit ROUTE_SELECTED event
+          await appendEventV1(
+            createEventV1("ROUTE_SELECTED", "INFO", {
+              route: selectedRoute,
+              route_changed: routeChanged ? "YES" : "NO",
+              phase: currentPhase,
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
         } catch (error) {
           // Defensive: Route selection failed → NONE
           selectedRoute = "NONE";
@@ -413,6 +451,14 @@ export async function runChunkedExecutionV1(
       if (gateResult.status === "BLOCK") {
         consecutiveBlockCount++;
 
+        // PR164: Emit GATE_BLOCK event
+        await appendEventV1(
+          createEventV1("GATE_BLOCK", "WARN", {
+            gate_reason: gateResult.blockReasons[0] || "BLOCK_UNKNOWN",
+            consecutive_blocks: `${consecutiveBlockCount}`,
+          }, gateResult.blockReasons)
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
         // Check if BLOCK reason is critical (should STOP)
         const hasCriticalBlock = gateResult.blockReasons.some((reason) =>
           [
@@ -454,6 +500,15 @@ export async function runChunkedExecutionV1(
           } else if (gateResult.blockReasons.includes("BLOCK_IMPACT_HIGH")) {
             stopReason = "STOP_IMPACT_HIGH";
           }
+
+          // PR164: Emit RUN_STOP event
+          await appendEventV1(
+            createEventV1("RUN_STOP", "WARN", {
+              run_status: "STOPPED",
+              stop_reason: stopReason,
+              gate_reason: gateResult.blockReasons[0] || "BLOCK_UNKNOWN",
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
           return {
             runId: runPlan.runId,
@@ -512,6 +567,15 @@ export async function runChunkedExecutionV1(
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
 
           const nowMs = getNowMs();
+
+          // PR164: Emit RUN_STOP event
+          await appendEventV1(
+            createEventV1("RUN_STOP", "WARN", {
+              run_status: "STOPPED",
+              stop_reason: "STOP_BLOCKED_STREAK",
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
           return {
             runId: runPlan.runId,
             status: "STOPPED",
@@ -634,6 +698,15 @@ export async function runChunkedExecutionV1(
           stopReason = "STOP_POLICY_DENY";
         }
 
+        // PR164: Emit RUN_STOP event
+        await appendEventV1(
+          createEventV1("RUN_STOP", "WARN", {
+            run_status: "STOPPED",
+            stop_reason: stopReason,
+            policy_status: policyResult.status,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
@@ -734,6 +807,15 @@ export async function runChunkedExecutionV1(
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
         });
+
+        // PR164: Emit CHUNK_RESULT event
+        await appendEventV1(
+          createEventV1("CHUNK_RESULT", "INFO", {
+            chunk_status: "EXECUTED",
+            venue: txDraft.route,
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
       } else if (executionResult.status === "SIMULATED") {
         chunkResults.push({
           chunkId: chunk.chunkId,
@@ -745,6 +827,14 @@ export async function runChunkedExecutionV1(
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
         });
+
+        // PR164: Emit CHUNK_RESULT event
+        await appendEventV1(
+          createEventV1("CHUNK_RESULT", "INFO", {
+            chunk_status: "SIMULATED",
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
       } else if (executionResult.status === "EXECUTION_DISABLED") {
         chunkResults.push({
           chunkId: chunk.chunkId,
@@ -756,6 +846,14 @@ export async function runChunkedExecutionV1(
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
         });
+
+        // PR164: Emit CHUNK_RESULT event
+        await appendEventV1(
+          createEventV1("CHUNK_RESULT", "INFO", {
+            chunk_status: "SIMULATED",
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
       } else {
         // ERROR
         chunkResults.push({
@@ -768,6 +866,14 @@ export async function runChunkedExecutionV1(
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
         });
+
+        // PR164: Emit CHUNK_RESULT event
+        await appendEventV1(
+          createEventV1("CHUNK_RESULT", "ERROR", {
+            chunk_status: "ERROR",
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
         reasons.push("REASON_CHUNK_EXECUTION_ERROR");
       }

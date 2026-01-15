@@ -1,5 +1,6 @@
 /**
  * PR163: v1.4 Supervisor Loop (READ-ONLY)
+ * PR164: Telemetry integration
  *
  * Purpose:
  *   24/7 operational loop that ticks periodically, evaluates resume conditions,
@@ -15,6 +16,7 @@
 
 import { StateStore, MeridianStateV1 } from "../state";
 import { evaluateResumeV1, ResumeInputs } from "../rebalance/resumePolicy";
+import { createEventV1, appendEventV1 } from "../telemetry";
 
 /**
  * Supervisor action (label-only)
@@ -114,6 +116,13 @@ export async function runSupervisorOnceV1(
   try {
     notes.push("NOTE_SUPERVISOR_TICK_START");
 
+    // PR164: Emit SUPERVISOR_TICK event
+    await appendEventV1(
+      createEventV1("SUPERVISOR_TICK", "INFO", {
+        action: "TICK_START",
+      })
+    ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
     // Step 0: Read state
     const readResult = await store.readState();
     warnings.push(...readResult.warnings);
@@ -156,6 +165,13 @@ export async function runSupervisorOnceV1(
     // Check if HardStop is active
     if (policyResult.hardStopActive) {
       notes.push("NOTE_HARDSTOP_ACTIVE_WAITING");
+
+      // PR164: Emit POLICY_BLOCK event
+      await appendEventV1(
+        createEventV1("POLICY_BLOCK", "WARN", {
+          policy_reason: policyResult.reasons[0] || "HARDSTOP_ACTIVE",
+        })
+      ).catch(() => {});
 
       // Update state with HardStop info
       await store.patchState({
@@ -204,6 +220,14 @@ export async function runSupervisorOnceV1(
       // Evaluate resume
       const resumeDecision = evaluateResumeV1(state.resumeState, resumeInputs);
       notes.push(`NOTE_RESUME_DECISION_${resumeDecision.status}`);
+
+      // PR164: Emit RESUME_EVAL event
+      await appendEventV1(
+        createEventV1("RESUME_EVAL", "INFO", {
+          resume_status: resumeDecision.status,
+          stop_reason: state.resumeState.stopReason,
+        }, resumeDecision.reasons)
+      ).catch(() => {});
 
       if (resumeDecision.status === "WAIT") {
         notes.push("NOTE_WAIT_RESUME_CONDITIONS");
