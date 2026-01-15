@@ -230,3 +230,121 @@ export interface SimulationResult {
  * Re-export TemplateId for convenience
  */
 export type { TemplateId };
+
+/**
+ * PR159: Chunked Execution / TWAP-lite v1
+ */
+
+/**
+ * Chunk status
+ */
+export type ChunkStatus =
+  | "PLANNED"
+  | "SKIPPED"
+  | "BLOCKED"
+  | "SIMULATED"
+  | "EXECUTED"
+  | "STOPPED"
+  | "ERROR";
+
+/**
+ * Run status
+ */
+export type RunStatus =
+  | "PLANNED"
+  | "RUNNING"
+  | "COMPLETED"
+  | "STOPPED"
+  | "ERROR";
+
+/**
+ * Chunk plan (single chunk in a run)
+ */
+export interface ChunkPlan {
+  // Chunk identifier
+  chunkId: string;
+
+  // Notional USD for this chunk (internal numeric only)
+  notionalUsd: number;
+
+  // Intent for this chunk
+  intent: "INCREASE_WBTC" | "DECREASE_WBTC" | "NOOP";
+
+  // Template ID (inherited from rebalance plan)
+  templateId: string;
+
+  // Venue hint (optional)
+  venueHint?: "CETUS" | "DEEPBOOK" | "NONE";
+}
+
+/**
+ * Chunk result (execution outcome of single chunk)
+ */
+export interface ChunkResult {
+  // Chunk identifier
+  chunkId: string;
+
+  // Execution status
+  status: ChunkStatus;
+
+  // Reasons (label-only)
+  reasons: string[];
+
+  // Transaction draft (if created)
+  txDraft?: TxDraft;
+
+  // Venue used (if executed)
+  venue?: "CETUS" | "DEEPBOOK" | "NONE";
+
+  // Creation timestamp
+  createdAtMs: number;
+}
+
+/**
+ * Run plan (chunked execution plan)
+ */
+export interface RunPlan {
+  // Run identifier
+  runId: string;
+
+  // Run status
+  status: RunStatus;
+
+  // Creation timestamp
+  createdAtMs: number;
+
+  // Template ID
+  templateId: string;
+
+  // Total notional USD (internal numeric only)
+  totalNotionalUsd: number;
+
+  // Chunk plans
+  chunks: ChunkPlan[];
+
+  // Reasons (label-only)
+  reasons: string[];
+}
+
+/**
+ * Run result (chunked execution outcome)
+ */
+export interface RunResult {
+  // Run identifier
+  runId: string;
+
+  // Run status
+  status: RunStatus;
+
+  // Reasons (label-only)
+  reasons: string[];
+
+  // Chunk results
+  chunkResults: ChunkResult[];
+
+  // Start timestamp
+  startedAtMs: number;
+
+  // Finish timestamp (if completed/stopped)
+  finishedAtMs?: number;
+}

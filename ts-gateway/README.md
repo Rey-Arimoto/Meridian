@@ -373,3 +373,183 @@ if (executionResult.ok) {
   cooldownState = updateCooldownAfterActivity(cooldownState, "EXECUTED");
 }
 ```
+
+---
+
+## PR159: Chunked Execution / TWAP-lite v1
+
+### Purpose
+Avoid self-induced market shocks by splitting large rebalances into multiple smaller chunks executed over time:
+- **Problem**: $200k one-shot swap → high slippage/impact → self-induced SHOCK
+- **Solution**: Split into multiple $50k chunks with 30s intervals → gradual execution
+- **Philosophy**: "Holding BTC is not evil. Slow reactions are evil." → Execute decisively but gradually
+
+### Fixed Parameters (Constitutional Constants)
+
+**Chunking Parameters**:
+- MAX_NOTIONAL_USD_PER_RUN: 200,000 (aligned with PR153/155/156 cap)
+- MAX_CHUNKS: 6
+- MIN_CHUNK_NOTIONAL_USD: 10,000
+- DEFAULT_CHUNK_NOTIONAL_USD: 50,000
+
+**Execution Parameters**:
+- CHUNK_INTERVAL_MS: 30,000 (30 seconds between chunks)
+- MAX_RUN_DURATION_MS: 600,000 (10 minutes maximum)
+- MAX_BLOCKED_STREAK: 2 (STOP after 2 consecutive BLOCKs)
+
+### Chunking Logic
+
+Build chunk plans with deterministic rules:
+
+```typescript
+import { buildChunkPlansV1 } from "./rebalance/chunking";
+
+const runPlan = buildChunkPlansV1({
+  totalNotionalUsd: 200000,
+  templateId: "TPL_RISK_50",
+  baseIntent: "INCREASE_WBTC",
+});
+
+// Result: 4 chunks of $50k each
+console.log(runPlan.chunks.length); // 4
+console.log(runPlan.chunks[0].notionalUsd); // 50000
+```
+
+**Chunking Rules**:
+1. If baseIntent = NOOP → chunks = []
+2. If totalNotionalUsd = 0 → chunks = []
+3. If totalNotionalUsd > 200k → cap at 200k, warn
+4. Calculate chunkSize = min(50k, totalNotionalUsd)
+5. Calculate numChunks = ceil(totalNotionalUsd / chunkSize)
+6. If numChunks > MAX_CHUNKS → cap at 6
+7. Distribute notional across chunks (last chunk gets remainder)
+8. Skip chunks with notional < 10k
+
+### Runner (TWAP-lite Execution)
+
+Execute chunked plan with per-chunk refreshing:
+
+```typescript
+import { runChunkedExecutionV1 } from "./rebalance/runner";
+
+const result = await runChunkedExecutionV1(runPlan, {
+  getPortfolioSnapshot: async () => refreshPortfolio(),
+  evaluateGate: async ({ chunkPlan, portfolio }) => runGate(chunkPlan, portfolio),
+  evaluatePolicy: async ({ portfolio }) => checkPolicy(portfolio),
+  buildTxDraft: async ({ chunkPlan, portfolio }) => buildDraft(chunkPlan, portfolio),
+  executeTx: async ({ txDraft, policy }) => execute(txDraft, policy),
+});
+
+console.log(result.status); // "COMPLETED" | "STOPPED" | "ERROR"
+console.log(result.chunkResults); // Array of chunk execution results
+```
+
+**Per-Chunk Execution Pipeline**:
+1. Sleep (30s interval, except first chunk)
+2. Refresh portfolio snapshot
+3. Evaluate gate (PR153/155/157/158)
+4. Evaluate policy (PR156)
+5. Build transaction draft
+6. Execute or simulate
+
+### STOP Conditions (Safe Defaults)
+
+The runner will STOP the entire run when:
+
+1. **Policy denies execution**:
+   - MERIDIAN_EXECUTION_ENABLED not "true"
+   - HardStop active (PR156)
+
+2. **Critical gate BLOCK**:
+   - BLOCK_ORACLE_UNAVAILABLE
+   - BLOCK_ORACLE_STALE
+   - BLOCK_IMPACT_HIGH
+   - BLOCK_QUOTE_INCONSISTENT
+   - BLOCK_NOTIONAL_UNAVAILABLE
+   - BLOCK_NO_ROUTE
+
+3. **Consecutive BLOCK streak**:
+   - 2 consecutive non-critical BLOCKs → STOP
+
+4. **Run duration exceeded**:
+   - Elapsed time > 10 minutes → STOP
+
+### SKIP Conditions (Continue to Next Chunk)
+
+The runner will SKIP a chunk (but continue to next) when:
+
+- BLOCK_DELTA_TOO_SMALL (micro-change)
+- BLOCK_DRIFT_TOO_SMALL (drift < 7%)
+
+### Non-Claims (What This Is NOT)
+
+**TWAP-lite does NOT**:
+- ❌ Learn from market behavior
+- ❌ Optimize chunk sizes dynamically
+- ❌ Predict future market conditions
+- ❌ Implement strict TWAP (Time-Weighted Average Price)
+- ❌ Adjust intervals based on market depth
+
+**TWAP-lite DOES**:
+- ✅ Use fixed parameters (deterministic)
+- ✅ Refresh market data per chunk
+- ✅ Stop on critical failures
+- ✅ Respect double-key execution gate (PR156)
+- ✅ Maintain label-only output (no numeric logs)
+
+### Safety Guarantees
+
+**Constitutional Constraints Maintained**:
+- READ-ONLY: No learning, no optimization
+- Double-key: Execution still requires env + policy approval
+- Safe defaults: Uncertain → STOP
+- Label-only: No numbers in reasons/warnings
+- Defensive: Never throws, always returns RunResult
+
+**Example: $200k Rebalance Flow**
+
+```typescript
+// 1. Plan: $200k → 4 chunks of $50k
+const plan = buildChunkPlansV1({
+  totalNotionalUsd: 200000,
+  templateId: "TPL_RISK_50",
+  baseIntent: "INCREASE_WBTC",
+});
+
+// 2. Execute with gradual execution
+const result = await runChunkedExecutionV1(plan, deps);
+
+// Result scenarios:
+// - COMPLETED: All 4 chunks executed successfully
+// - STOPPED: Critical BLOCK after chunk 2 (chunk 3-4 not attempted)
+// - ERROR: Unexpected failure (defensive, no throw)
+```
+
+### Integration with Existing Systems
+
+**Chunking respects all existing gates**:
+- Drift monitor (PR158): Each chunk checks drift
+- Cooldown (PR158): Each chunk checks cooldown
+- Slippage (PR157): Each chunk recalculates minOut
+- Policy (PR156): Each chunk checks HardStop
+- Oracle (PR155): Each chunk requires fresh oracle data
+- Gate (PR153): Each chunk passes all safety checks
+
+**Execution flow**:
+```
+Per chunk:
+  ↓
+Portfolio refresh
+  ↓
+Gate (FREEZE/SHOCK/ORACLE/SIM/COOLDOWN/DRIFT/TRADE_SAFETY)
+  ↓
+Policy (env key + HardStop)
+  ↓
+TxDraft build (with fresh quote)
+  ↓
+Execute or Simulate
+  ↓
+30s sleep
+  ↓
+Next chunk (or STOP/COMPLETE)
+```
