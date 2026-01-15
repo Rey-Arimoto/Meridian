@@ -2057,3 +2057,294 @@ const sanitized = sanitizeProposeResultForDisplay(proposeResult, debugMode);
 - `tests/pr167.propose.test.ts`: 12 comprehensive tests
 
 **Purpose**: Strategy improvement through fixed-rule proposals, NOT automatic optimization or trading advice
+
+---
+
+## PR168: Policy-First Adoption Loop (PatchPlan + ReplayCompare) v1
+
+### Purpose
+Complete the improvement cycle by converting proposals into patch plans and comparing before/after via snapshot replay:
+- **PatchPlan**: Convert proposals into concrete specification diffs (1-3 ops)
+- **ReplayCompare**: Simulate before/after metrics without code changes
+- **Decision**: ADOPT / HOLD / REJECT based on fixed rules
+
+### Constitutional Constraints
+- **READ-ONLY**: No automatic application (proposals and comparison only)
+- **Policy-First**: Changes that reduce safety are PATCH_NOT_ALLOWED → REJECT
+- **Label-only**: Normal output uses labels (numeric counts only in debug mode)
+- **Defensive**: Never throws, always returns result
+- **Deterministic**: Fixed rules only (no learning, no optimization)
+
+### Adoption Flow
+
+**Complete Flow** (PR165 → PR166 → PR167 → PR168):
+1. **PR165**: Read snapshots from log
+2. **PR166**: Analyze snapshots (frequency, confusion, timing)
+3. **PR167**: Generate improvement proposals (P0/P1/P2)
+4. **PR168**: Select proposal → Build patch plan → Simulate replay → Decide
+
+**PR168 Steps**:
+1. Select top proposal by priority (P0 > P1 > P2)
+2. Build patch plan (map proposal to ops)
+3. Simulate replay compare (virtual remapping)
+4. Decide ADOPT/HOLD/REJECT (fixed decision rules)
+
+### Patch Kinds
+
+**Allowed Patches**:
+- `PATCH_PHASE_POLICY`: Phase escalation/resume policy changes
+- `PATCH_GATE_ORDER`: Gate evaluation order changes (BLOCK → SKIP, not EXECUTE)
+- `PATCH_ROUTER_TIEBREAK`: Router tie-break logic changes
+- `PATCH_SLIPPAGE_RULES`: Slippage calculation rule changes (logging only)
+- `PATCH_COOLDOWN_RULES`: Cooldown duration/behavior changes (logging only)
+- `PATCH_DRIFT_RULES`: Drift threshold changes (logging only)
+
+**NOT ALLOWED Patches** (reduce safety):
+- `PATCH_NOT_ALLOWED`: Used for proposals that reduce safety
+  - Example: Degrade oracle stale threshold (would allow stale execution)
+  - Example: Increase slippage tolerance (would allow higher slippage)
+  - Example: Reduce cooldown duration (would reduce observation time)
+
+**Policy-First Principle**: Any change that reduces safety guardrails is automatically marked as PATCH_NOT_ALLOWED and rejected.
+
+### Patch Operations
+
+Each patch plan contains 1-3 operations (keep it small):
+- **kind**: Patch type (PATCH_PHASE_POLICY, etc.)
+- **target**: Target component (PHASE_POLICY, GATE, etc.)
+- **opId**: Fixed operation identifier (OP_PHASE_RECOVERY_RESUME_V1)
+- **change**: Label-only description (REMAP_PHASE_POLICY_STOP_TO_WAIT)
+- **safety**: Safety guarantees (KEEP_DOUBLE_KEY, KEEP_LABEL_ONLY, etc.)
+- **notAllowedReason**: Reason for rejection (if NOT_ALLOWED)
+
+### Virtual Remapping (Replay Compare)
+
+Replay compare simulates "what would happen if patch was applied" WITHOUT modifying code:
+
+**PATCH_PHASE_POLICY**:
+- Remaps: `STOP_BY_PHASE_POLICY` → `WAIT_RESUME` (not EXECUTE)
+- Effect: Reduces phase policy stops in replay analysis
+
+**PATCH_GATE_ORDER**:
+- Remaps: Minor blocks (DRIFT_SMALL, DELTA_SMALL) → `SKIP` (not EXECUTE)
+- Effect: Reduces gate block ratio in replay analysis
+
+**PATCH_ORACLE_FRESHNESS**:
+- Remaps: `BLOCK_ORACLE_STALE` → `WAIT_RESUME` (not EXECUTE)
+- Effect: Reduces oracle stale blocks (but still blocked, just category change)
+
+**Key Principle**: Virtual remapping NEVER converts blocks to EXECUTE. It only changes categorization (STOP → WAIT, BLOCK → SKIP) to simulate policy adjustments.
+
+### Compare Signals
+
+**Improvement Signals**:
+- `IMPROVED_BLOCK_DOMINANCE`: Gate BLOCK ratio decreased (>5%)
+- `IMPROVED_STOP_BY_PHASE_POLICY`: Phase policy stops decreased
+- `IMPROVED_ORACLE_STALE_RATE`: Oracle stale blocks decreased
+- `IMPROVED_IMPACT_BLOCK_RATE`: Impact blocks decreased
+- `IMPROVED_SLIPPAGE_BLOCK_RATE`: Slippage blocks decreased
+- `IMPROVED_COOLDOWN_BLOCK_RATE`: Cooldown blocks decreased
+- `IMPROVED_DRIFT_NOOP_RATE`: Drift no-op rate decreased
+
+**Worsening Signals**:
+- `WORSENED_BLOCK_DOMINANCE`: Gate BLOCK ratio increased (>5%)
+- `WORSENED_STOP_UNKNOWN`: Unknown stops increased
+
+**Other Signals**:
+- `NO_CHANGE`: No significant change detected
+- `COMPARE_UNAVAILABLE`: Comparison failed or insufficient data
+
+### Decision Rules
+
+Fixed decision rules (deterministic):
+
+**REJECT** (do not adopt):
+- Patch plan contains `PATCH_NOT_ALLOWED` operations
+- Reason: Would reduce safety
+
+**HOLD** (needs review):
+- Compare unavailable (cannot verify improvement)
+- Worsening signal detected (WORSENED_*)
+- No change + P1/P2 priority (require clear improvement)
+
+**ADOPT** (can be adopted):
+- Improvement signal detected (IMPROVED_*) + no worsening
+- No change + P0 priority (accept no worsening)
+
+**Priority Bias**:
+- P0: ADOPT-leaning (high confidence in critical changes)
+- P1/P2: HOLD-leaning (require clear improvement)
+
+### Adoption CLI
+
+Run complete adoption loop:
+```bash
+# Default: 200 most recent snapshots, P0 priority
+npx ts-node src/cli/adopt.ts
+
+# Custom tail count
+npx ts-node src/cli/adopt.ts --tail 500
+
+# Filter by priority (P0, P1, or P2)
+npx ts-node src/cli/adopt.ts --priority P1
+
+# JSON output (sanitized)
+npx ts-node src/cli/adopt.ts --json
+
+# Debug mode (allows numeric counts)
+MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --tail 500
+
+# Built version
+node dist/cli/adopt.js
+```
+
+### Normal Mode vs Debug Mode
+
+**Normal Mode** (default):
+- Label-only output (no counts, no numerics)
+- Operations shown as count labels (`HAS_OPS` / `NO_OPS`)
+- Example: `Operations: HAS_OPS` (not "Operations: 2")
+
+**Debug Mode** (`MERIDIAN_DEBUG=true`):
+- Full operation details displayed
+- Numeric counts displayed
+- Example: `Operations: 2` with full op details
+
+### Example Output (Normal Mode)
+
+```
+=== Policy-First Adoption Loop v1 ===
+
+Status: COMPLETE
+Decision: ADOPT
+Priority: P1
+Proposal ID: P1_SHOCK_RISK90_OVERUSE_TEMPLATE_POLICY_RESTRICT
+
+--- Patch Plan ---
+
+Status: COMPLETE
+Operations: 1
+
+[PATCH_PHASE_POLICY]
+  Target: PHASE_POLICY
+  Op ID: OP_SHOCK_RISK90_RESTRICT_V1
+  Change: RESTRICT_TPL_RISK_90_IN_SHOCK_REVERSAL
+  Safety: KEEP_DOUBLE_KEY, KEEP_LABEL_ONLY, KEEP_BLOCK_ON_UNCERTAIN
+
+--- Replay Compare ---
+
+Status: COMPLETE
+Window: TAIL_200
+
+Before:
+  - GATE_BLOCK_FREQUENT
+  - TOP_BLOCK_BLOCK_ORACLE_STALE
+  - PHASE_POLICY_STOPS_PRESENT
+
+After:
+  - GATE_BLOCK_REDUCED
+  - TOP_BLOCK_BLOCK_ORACLE_STALE
+  - PHASE_POLICY_STOPS_REDUCED
+
+Signals:
+  - IMPROVED_BLOCK_DOMINANCE
+  - IMPROVED_STOP_BY_PHASE_POLICY
+
+--- Decision Reasons ---
+
+  - ADOPT_IMPROVED_WITHOUT_WORSENING
+
+=== End Adoption ===
+```
+
+### Usage
+
+```typescript
+import { adoptImprovementV1 } from "./adopt";
+import { readRecentSnapshotsV1 } from "./snapshot";
+
+// Read snapshots
+const snapshotResult = await readRecentSnapshotsV1({}, { maxLines: 200 });
+
+// Adopt improvement (complete flow)
+const adoptResult = await adoptImprovementV1(
+  snapshotResult.snapshots,
+  "P0", // priority filter
+  200   // tail count
+);
+
+// Check decision
+console.log(`Decision: ${adoptResult.decision}`);
+console.log(`Reasons: ${adoptResult.reasons.join(", ")}`);
+
+// Check patch plan
+for (const op of adoptResult.patchPlan.ops) {
+  console.log(`[${op.kind}] ${op.change}`);
+}
+
+// Check comparison
+for (const signal of adoptResult.compare.signals) {
+  console.log(`Signal: ${signal}`);
+}
+```
+
+### Non-Claims
+
+**Adoption does NOT**:
+- ❌ Automatically apply patches (manual implementation required)
+- ❌ Modify code or execute changes
+- ❌ Provide trading advice or execution decisions
+- ❌ Learn from patterns (fixed rules only)
+- ❌ Predict future outcomes
+
+**Adoption DOES**:
+- ✅ Convert proposals into concrete patch plans
+- ✅ Simulate before/after comparison via replay
+- ✅ Decide ADOPT/HOLD/REJECT based on fixed rules
+- ✅ Enforce Policy-First (reject safety reductions)
+- ✅ Fail gracefully (never throws)
+- ✅ Respect label-only constraints (normal mode)
+
+### Safety Guarantees
+
+**Defensive design**:
+- Adoption never throws exceptions
+- Invalid input → ERROR status with HOLD decision
+- No proposals → HOLD decision
+- Always returns AdoptResultV1 (defensive)
+
+**Privacy protection**:
+- Normal mode: label-only (no counts)
+- Debug mode: allows operation details (but not addresses/secrets)
+- Guards sanitize: token literals, trading vocab, prescriptive language
+- Addresses always REDACTED (even in debug mode)
+
+**Read-only operation**:
+- No automatic application (proposals and comparison only)
+- Manual implementation required for adoption
+- No execution, no trading, no state modification
+
+**Policy-First enforcement**:
+- PATCH_NOT_ALLOWED for safety reductions
+- Automatic REJECT for safety violations
+- Virtual remapping NEVER enables execution (only categorization changes)
+
+### Environment Variables
+
+- `MERIDIAN_DEBUG`: Set to "true" to enable debug mode (full operation details)
+- `MERIDIAN_SNAPSHOTS_PATH`: Snapshot log path (default: `~/.meridian/snapshots.log`)
+- `MERIDIAN_SNAPSHOTS_MAXLINES`: Max lines for analysis (default: 200)
+
+### Files
+
+- `src/adopt/types.ts`: Adoption types, patch types, decision types
+- `src/adopt/guards.ts`: Sanitization, validation, label-only formatting
+- `src/adopt/rules.ts`: Fixed proposal-to-patch mapping rules
+- `src/adopt/patcher.ts`: Proposal selection and patch plan generation
+- `src/adopt/replay.ts`: Virtual remapping and replay comparison
+- `src/adopt/adopter.ts`: Main adoption engine and decision logic
+- `src/adopt/index.ts`: Barrel exports
+- `src/cli/adopt.ts`: Adoption CLI tool
+- `tests/pr168.adopt_patch_replay.test.ts`: 12 comprehensive tests
+
+**Purpose**: Close the improvement cycle through Policy-First adoption with replay verification, NOT automatic optimization or code modification
