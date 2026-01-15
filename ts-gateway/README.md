@@ -2348,3 +2348,263 @@ for (const signal of adoptResult.compare.signals) {
 - `tests/pr168.adopt_patch_replay.test.ts`: 12 comprehensive tests
 
 **Purpose**: Close the improvement cycle through Policy-First adoption with replay verification, NOT automatic optimization or code modification
+
+---
+
+## PR169: Policy Attribution Graph v1
+
+### Purpose
+Identify causal chains (attribution paths) that lead to outcomes like BLOCK, STOP, etc.
+While PR166/167/168 detect "results" (BLOCK/STOP dominance), PR169 identifies **"why"** by analyzing causal chains:
+- Example: `PHASE_PRE_SHOCK → PHASE_POLICY_STOP → STOP` is frequent
+- Example: `ORACLE_STALE → GATE_BLOCK → STOP` dominates
+- Example: `ROUTE_CHANGE → IMPACT_HIGH → BLOCK` is rare
+
+This provides the **"where to fix"** that makes PR167's proposals answerable with "why?".
+
+### Constitutional Constraints
+- **READ-ONLY**: Analysis only (no proposals, no execution, no changes)
+- **Fixed rules**: No learning, no optimization, no estimation
+- **Defensive**: Never throws, always returns result
+- **Label-only**: Normal output uses labels (numeric counts only in debug mode)
+- **Deterministic**: Same snapshots → same attribution result
+
+### Attribution Model
+
+**Node Extraction Order** (fixed sequence from PR165 snapshots):
+1. **PHASE**: Shock phase (PHASE_NORMAL, PHASE_PRE_SHOCK, etc.)
+2. **STRESS**: Market stress (STRESS_CALM, STRESS_TENSE, etc.)
+3. **ACTION_SHAPE**: Action shape (if available)
+4. **TEMPLATE**: Risk template (TPL_RISK_50, etc.)
+5. **GATE_DECISION**: Gate decision (PASS, BLOCK, ERROR, UNKNOWN)
+6. **GATE_BLOCK_REASON**: Block reason (if BLOCK) - BLOCK_ORACLE_STALE, etc.
+7. **POLICY**: Policy decision (ALLOW, DENY, UNKNOWN)
+8. **RUN_STOP**: Stop reason category (STOP_BY_PHASE_POLICY, STOP_BY_GATE, etc.)
+9. **RESUME**: Resume state (RESUMABLE, WAIT, ABANDON, UNKNOWN)
+10. **ROUTE**: Venue route (CETUS, DEEPBOOK, NONE, UNKNOWN)
+
+**Note**: If a field is missing in the snapshot, the corresponding node is skipped. Presence flags track which components appear in the data.
+
+### Path and Edge Aggregation
+
+**Paths**: Ordered sequences of nodes representing causal chains
+- Each snapshot is converted to a node sequence
+- Identical sequences are grouped and counted
+- Top N paths (default: 10) are returned sorted by count
+
+**Edges**: Adjacent pairs of nodes
+- Each snapshot's node sequence generates adjacent pairs (from → to)
+- Identical pairs are grouped and counted
+- Top N edges (default: 15) are returned sorted by count
+
+**Example Path**:
+```
+PHASE:PHASE_PRE_SHOCK →
+STRESS:STRESS_TENSE →
+TEMPLATE:TPL_RISK_20 →
+GATE_DECISION:BLOCK →
+GATE_BLOCK_REASON:BLOCK_ORACLE_STALE →
+POLICY:DENY
+```
+
+### Bottlenecks (Dominant Patterns)
+
+Bottlenecks are frequent patterns that dominate the attribution graph (threshold: >30% of total edge count):
+
+**Identified Bottlenecks**:
+- `BOTTLENECK_GATE_BLOCK_FREQUENT`: Gate BLOCK edges dominate
+- `BOTTLENECK_STOP_FREQUENT`: RUN_STOP edges dominate
+- `BOTTLENECK_ORACLE_DOMINANT`: ORACLE block reasons dominate
+- `BOTTLENECK_PHASE_POLICY_DOMINANT`: PHASE_POLICY stops dominate
+- `BOTTLENECK_MARKET_IMPACT_DOMINANT`: IMPACT/SLIPPAGE blocks dominate
+
+### Weak Links (Rare Patterns)
+
+Weak links are infrequent patterns that rarely appear in the attribution graph:
+
+**Identified Weak Links**:
+- `WEAKLINK_RESUME_RARE`: RESUME edges rarely appear
+- `WEAKLINK_ROUTE_CHANGE_RARE`: ROUTE edges rarely appear
+- `WEAKLINK_PASS_RARE`: Gate PASS edges rarely appear
+- `WEAKLINK_NO_RECOVERY_OBSERVED`: RECOVERY phase edges absent
+
+### Attribution CLI
+
+Analyze attribution paths from snapshot logs:
+```bash
+# Default: 200 most recent snapshots
+npx ts-node src/cli/attribution.ts
+
+# Custom tail count
+npx ts-node src/cli/attribution.ts --tail 500
+
+# Focus on specific section
+npx ts-node src/cli/attribution.ts --focus top_paths
+npx ts-node src/cli/attribution.ts --focus bottlenecks
+
+# JSON output (sanitized)
+npx ts-node src/cli/attribution.ts --json
+
+# Debug mode (allows numeric counts)
+MERIDIAN_DEBUG=true npx ts-node src/cli/attribution.ts --tail 500
+
+# Built version
+node dist/cli/attribution.js
+```
+
+### Normal Mode vs Debug Mode
+
+**Normal Mode** (default):
+- Label-only output (no counts, no numerics)
+- Paths and edges shown without counts
+- Example: `PHASE:PHASE_NORMAL → TEMPLATE:TPL_RISK_50`
+
+**Debug Mode** (`MERIDIAN_DEBUG=true`):
+- Counts displayed for paths and edges
+- Example: `PHASE:PHASE_NORMAL → TEMPLATE:TPL_RISK_50 (count: 42)`
+
+### Example Output (Normal Mode)
+
+```
+=== Policy Attribution Graph v1 ===
+
+Status: COMPLETE
+
+Presence: HAS_SNAPSHOTS HAS_PHASE HAS_STRESS HAS_TEMPLATE HAS_GATE
+
+--- Top Attribution Paths ---
+
+  PHASE:PHASE_PRE_SHOCK → STRESS:STRESS_TENSE → TEMPLATE:TPL_RISK_20 → GATE_DECISION:BLOCK → GATE_BLOCK_REASON:BLOCK_ORACLE_STALE → POLICY:DENY
+  PHASE:PHASE_NORMAL → STRESS:STRESS_CALM → TEMPLATE:TPL_RISK_50 → GATE_DECISION:PASS
+  PHASE:PHASE_UP_SHOCK → STRESS:STRESS_STRESSED → TEMPLATE:TPL_RISK_90 → GATE_DECISION:BLOCK → GATE_BLOCK_REASON:BLOCK_IMPACT_HIGH
+
+--- Top Edges ---
+
+  PHASE:PHASE_PRE_SHOCK → STRESS:STRESS_TENSE
+  STRESS:STRESS_TENSE → TEMPLATE:TPL_RISK_20
+  TEMPLATE:TPL_RISK_20 → GATE_DECISION:BLOCK
+  GATE_DECISION:BLOCK → GATE_BLOCK_REASON:BLOCK_ORACLE_STALE
+
+--- Bottlenecks ---
+
+  - BOTTLENECK_ORACLE_DOMINANT
+  - BOTTLENECK_GATE_BLOCK_FREQUENT
+
+--- Weak Links ---
+
+  - WEAKLINK_RESUME_RARE
+  - WEAKLINK_PASS_RARE
+
+=== End Attribution ===
+```
+
+### Focus Modes
+
+**TOP_PATHS**: Show only top attribution paths
+```bash
+npx ts-node src/cli/attribution.ts --focus top_paths
+```
+
+**TOP_EDGES**: Show only top edges
+```bash
+npx ts-node src/cli/attribution.ts --focus top_edges
+```
+
+**BOTTLENECKS**: Show only bottlenecks
+```bash
+npx ts-node src/cli/attribution.ts --focus bottlenecks
+```
+
+**WEAK_LINKS**: Show only weak links
+```bash
+npx ts-node src/cli/attribution.ts --focus weak_links
+```
+
+### Usage
+
+```typescript
+import { attributeSnapshotsV1 } from "./attribution";
+import { readRecentSnapshotsV1 } from "./snapshot";
+
+// Read snapshots
+const snapshotResult = await readRecentSnapshotsV1({}, { maxLines: 200 });
+
+// Attribute snapshots
+const attributionResult = attributeSnapshotsV1(snapshotResult.snapshots, {
+  tail: 200,
+  maxPaths: 10,
+  maxEdges: 15,
+  minCount: 2,
+});
+
+// Check top paths
+for (const path of attributionResult.topPaths) {
+  console.log(`Path (count: ${path.count}):`);
+  for (const node of path.nodes) {
+    console.log(`  ${node.t}: ${node.v}`);
+  }
+}
+
+// Check bottlenecks
+for (const bottleneck of attributionResult.bottlenecks) {
+  console.log(`Bottleneck: ${bottleneck}`);
+}
+
+// Check weak links
+for (const weakLink of attributionResult.weakLinks) {
+  console.log(`Weak link: ${weakLink}`);
+}
+```
+
+### Non-Claims
+
+**Attribution does NOT**:
+- ❌ Prove causation (only shows observed chains/correlations)
+- ❌ Provide trading advice or execution decisions
+- ❌ Predict future outcomes
+- ❌ Learn from patterns (fixed rules only)
+- ❌ Optimize strategies automatically
+
+**Attribution DOES**:
+- ✅ Identify frequent causal chains (paths)
+- ✅ Show dominant patterns (bottlenecks)
+- ✅ Highlight rare patterns (weak links)
+- ✅ Use fixed thresholds (deterministic)
+- ✅ Fail gracefully (never throws)
+- ✅ Respect label-only constraints (normal mode)
+
+### Safety Guarantees
+
+**Defensive design**:
+- Attribution never throws exceptions
+- Invalid input → ERROR status with minimal result
+- Malformed snapshots skipped (with warnings)
+- Always returns AttributionResultV1
+
+**Privacy protection**:
+- Normal mode: label-only (no counts)
+- Debug mode: allows counts (but not addresses/secrets)
+- Guards sanitize: token literals, trading vocab, prescriptive language
+- Addresses always REDACTED (even in debug mode)
+
+**Read-only operation**:
+- Analysis only (no execution, no trading, no state modification)
+- No proposals, no automatic changes
+
+### Environment Variables
+
+- `MERIDIAN_DEBUG`: Set to "true" to enable debug mode (numeric counts)
+- `MERIDIAN_SNAPSHOTS_PATH`: Snapshot log path (default: `~/.meridian/snapshots.log`)
+- `MERIDIAN_SNAPSHOTS_MAXLINES`: Max lines for analysis (default: 200)
+
+### Files
+
+- `src/attribution/types.ts`: Attribution types, node types, config
+- `src/attribution/guards.ts`: Sanitization, validation, label-only formatting
+- `src/attribution/model.ts`: Node extraction, path/edge building
+- `src/attribution/attributor.ts`: Main attribution engine, bottleneck/weak link detection
+- `src/attribution/index.ts`: Barrel exports
+- `src/cli/attribution.ts`: Attribution CLI tool
+- `tests/pr169.attribution.test.ts`: 12 comprehensive tests
+
+**Purpose**: Identify causal chains to understand "why" outcomes occur, supporting Policy-First improvement, NOT causal inference or automatic optimization
