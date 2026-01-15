@@ -1,11 +1,12 @@
 /**
  * PR159: v1.4 Chunked Execution / TWAP-lite v1 - Test Suite
+ * PR160: FAST Profile v1.1 - Updated test expectations
  *
  * Tests for chunked execution to avoid self-induced market shocks.
  *
  * Test Cases (10+):
  *   1. Chunking: totalNotional=0 or baseIntent=NOOP → chunks=0, COMPLETED
- *   2. Chunking: totalNotional=200k → 50k ×4 chunks
+ *   2. Chunking: totalNotional=200k → 3 chunks (PR160: FAST profile)
  *   3. Chunking: totalNotional=230k → capped at 200k, warned
  *   4. Chunking: chunk < MIN_CHUNK_NOTIONAL_USD → skipped
  *   5. Runner: allowExecution=false → all chunks SIMULATED
@@ -55,7 +56,7 @@ describe("PR159: Chunking Logic", () => {
     expect(plan.reasons).toContain("REASON_BASE_INTENT_NOOP");
   });
 
-  test("Test 2: totalNotional=200k → 50k ×4 chunks", () => {
+  test("Test 2: totalNotional=200k → 3 chunks (PR160: FAST profile)", () => {
     const plan = buildChunkPlansV1({
       totalNotionalUsd: 200000,
       templateId: "TPL_RISK_50",
@@ -63,14 +64,19 @@ describe("PR159: Chunking Logic", () => {
     });
 
     expect(plan.status).toBe("PLANNED");
-    expect(plan.chunks.length).toBe(4);
+    expect(plan.chunks.length).toBe(3); // PR160: 3 chunks max
     expect(plan.reasons).toContain("REASON_CHUNKED_EXECUTION_ENABLED");
 
-    // Verify chunk notionals
-    expect(plan.chunks[0].notionalUsd).toBe(50000);
-    expect(plan.chunks[1].notionalUsd).toBe(50000);
-    expect(plan.chunks[2].notionalUsd).toBe(50000);
-    expect(plan.chunks[3].notionalUsd).toBe(50000);
+    // Verify chunk notionals are evenly distributed
+    // 200k / 3 = 66666.67, so we expect 66667, 66667, 66666
+    const sum = plan.chunks.reduce((acc, chunk) => acc + chunk.notionalUsd, 0);
+    expect(sum).toBe(200000); // Total should match
+
+    // Each chunk should be roughly 66k-67k
+    plan.chunks.forEach((chunk) => {
+      expect(chunk.notionalUsd).toBeGreaterThanOrEqual(66666);
+      expect(chunk.notionalUsd).toBeLessThanOrEqual(66667);
+    });
   });
 
   test("Test 3: totalNotional=230k → capped at 200k", () => {
@@ -131,8 +137,9 @@ describe("PR159: Runner Execution", () => {
       totalNotionalUsd: 100000,
       templateId: "TPL_RISK_50",
       baseIntent: "INCREASE_WBTC",
-      chunkNotionalUsd: 50000,
     });
+
+    // PR160: 100k / 70k = 1.43 → 2 chunks expected
 
     const deps: RunnerDeps = {
       getNowMs: () => 1000000,
@@ -249,8 +256,9 @@ describe("PR159: Runner Execution", () => {
       totalNotionalUsd: 100000,
       templateId: "TPL_RISK_50",
       baseIntent: "INCREASE_WBTC",
-      chunkNotionalUsd: 50000,
     });
+
+    // PR160: 100k → 2 chunks
 
     let chunkCount = 0;
 
@@ -329,8 +337,9 @@ describe("PR159: Runner Execution", () => {
       totalNotionalUsd: 150000,
       templateId: "TPL_RISK_50",
       baseIntent: "INCREASE_WBTC",
-      chunkNotionalUsd: 50000,
     });
+
+    // PR160: 150k / 70k = 2.14 → 3 chunks
 
     const deps: RunnerDeps = {
       sleepMs: async () => {},
@@ -401,8 +410,9 @@ describe("PR159: Runner Execution", () => {
       totalNotionalUsd: 100000,
       templateId: "TPL_RISK_50",
       baseIntent: "INCREASE_WBTC",
-      chunkNotionalUsd: 50000,
     });
+
+    // PR160: 100k → 2 chunks
 
     const deps: RunnerDeps = {
       sleepMs: async () => {},

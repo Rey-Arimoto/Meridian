@@ -1,5 +1,6 @@
 /**
  * PR159: v1.4 TWAP-lite Runner (READ-ONLY)
+ * PR160: FAST Profile v1.1 - Updated timing parameters
  *
  * Purpose:
  *   Execute chunked rebalance plans with per-chunk refreshing of:

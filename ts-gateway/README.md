@@ -377,24 +377,26 @@ if (executionResult.ok) {
 ---
 
 ## PR159: Chunked Execution / TWAP-lite v1
+## PR160: FAST Profile v1.1 - Optimized for Speed
 
 ### Purpose
 Avoid self-induced market shocks by splitting large rebalances into multiple smaller chunks executed over time:
 - **Problem**: $200k one-shot swap → high slippage/impact → self-induced SHOCK
-- **Solution**: Split into multiple $50k chunks with 30s intervals → gradual execution
+- **Solution**: Split into ~$70k chunks with 10s intervals → faster but gradual execution
 - **Philosophy**: "Holding BTC is not evil. Slow reactions are evil." → Execute decisively but gradually
+- **PR160 Update**: Faster execution profile for operational efficiency (60s completion vs 10min)
 
 ### Fixed Parameters (Constitutional Constants)
 
-**Chunking Parameters**:
+**Chunking Parameters** (PR160: FAST Profile):
 - MAX_NOTIONAL_USD_PER_RUN: 200,000 (aligned with PR153/155/156 cap)
-- MAX_CHUNKS: 6
+- MAX_CHUNKS: 3 (PR160: reduced from 6)
 - MIN_CHUNK_NOTIONAL_USD: 10,000
-- DEFAULT_CHUNK_NOTIONAL_USD: 50,000
+- TARGET_CHUNK_NOTIONAL_USD: 70,000 (PR160: increased from 50,000)
 
-**Execution Parameters**:
-- CHUNK_INTERVAL_MS: 30,000 (30 seconds between chunks)
-- MAX_RUN_DURATION_MS: 600,000 (10 minutes maximum)
+**Execution Parameters** (PR160: FAST Profile):
+- CHUNK_INTERVAL_MS: 10,000 (PR160: 10 seconds, reduced from 30s)
+- MAX_RUN_DURATION_MS: 60,000 (PR160: 60 seconds, reduced from 10 minutes)
 - MAX_BLOCKED_STREAK: 2 (STOP after 2 consecutive BLOCKs)
 
 ### Chunking Logic
@@ -410,20 +412,22 @@ const runPlan = buildChunkPlansV1({
   baseIntent: "INCREASE_WBTC",
 });
 
-// Result: 4 chunks of $50k each
-console.log(runPlan.chunks.length); // 4
-console.log(runPlan.chunks[0].notionalUsd); // 50000
+// Result: 3 chunks (evenly distributed) (PR160: FAST profile)
+console.log(runPlan.chunks.length); // 3
+console.log(runPlan.chunks[0].notionalUsd); // 66667
+console.log(runPlan.chunks[1].notionalUsd); // 66667
+console.log(runPlan.chunks[2].notionalUsd); // 66666
 ```
 
-**Chunking Rules**:
+**Chunking Rules** (PR160: Updated):
 1. If baseIntent = NOOP → chunks = []
 2. If totalNotionalUsd = 0 → chunks = []
 3. If totalNotionalUsd > 200k → cap at 200k, warn
-4. Calculate chunkSize = min(50k, totalNotionalUsd)
-5. Calculate numChunks = ceil(totalNotionalUsd / chunkSize)
-6. If numChunks > MAX_CHUNKS → cap at 6
-7. Distribute notional across chunks (last chunk gets remainder)
-8. Skip chunks with notional < 10k
+4. Calculate idealChunks = ceil(totalNotionalUsd / 70k)
+5. Calculate numChunks = clamp(idealChunks, 1, 3)
+6. Distribute notional evenly: baseChunk = floor(total / numChunks)
+7. Add remainder (+1 USD) to first chunks
+8. Skip chunks with notional < 10k (rare with max 3 chunks)
 
 ### Runner (TWAP-lite Execution)
 
@@ -444,8 +448,8 @@ console.log(result.status); // "COMPLETED" | "STOPPED" | "ERROR"
 console.log(result.chunkResults); // Array of chunk execution results
 ```
 
-**Per-Chunk Execution Pipeline**:
-1. Sleep (30s interval, except first chunk)
+**Per-Chunk Execution Pipeline** (PR160: 10s intervals):
+1. Sleep (10s interval, except first chunk)
 2. Refresh portfolio snapshot
 3. Evaluate gate (PR153/155/157/158)
 4. Evaluate policy (PR156)
@@ -471,8 +475,8 @@ The runner will STOP the entire run when:
 3. **Consecutive BLOCK streak**:
    - 2 consecutive non-critical BLOCKs → STOP
 
-4. **Run duration exceeded**:
-   - Elapsed time > 10 minutes → STOP
+4. **Run duration exceeded** (PR160: 60s):
+   - Elapsed time > 60 seconds → STOP
 
 ### SKIP Conditions (Continue to Next Chunk)
 
@@ -506,22 +510,22 @@ The runner will SKIP a chunk (but continue to next) when:
 - Label-only: No numbers in reasons/warnings
 - Defensive: Never throws, always returns RunResult
 
-**Example: $200k Rebalance Flow**
+**Example: $200k Rebalance Flow** (PR160: FAST Profile)
 
 ```typescript
-// 1. Plan: $200k → 4 chunks of $50k
+// 1. Plan: $200k → 3 chunks (~67k each)
 const plan = buildChunkPlansV1({
   totalNotionalUsd: 200000,
   templateId: "TPL_RISK_50",
   baseIntent: "INCREASE_WBTC",
 });
 
-// 2. Execute with gradual execution
+// 2. Execute with fast gradual execution (10s intervals, 60s max)
 const result = await runChunkedExecutionV1(plan, deps);
 
 // Result scenarios:
-// - COMPLETED: All 4 chunks executed successfully
-// - STOPPED: Critical BLOCK after chunk 2 (chunk 3-4 not attempted)
+// - COMPLETED: All 3 chunks executed successfully (~30s total: 0s + 10s + 10s)
+// - STOPPED: Critical BLOCK after chunk 2 (chunk 3 not attempted)
 // - ERROR: Unexpected failure (defensive, no throw)
 ```
 
@@ -535,7 +539,7 @@ const result = await runChunkedExecutionV1(plan, deps);
 - Oracle (PR155): Each chunk requires fresh oracle data
 - Gate (PR153): Each chunk passes all safety checks
 
-**Execution flow**:
+**Execution flow** (PR160: 10s intervals):
 ```
 Per chunk:
   ↓
@@ -549,7 +553,10 @@ TxDraft build (with fresh quote)
   ↓
 Execute or Simulate
   ↓
-30s sleep
+10s sleep (PR160: reduced from 30s)
   ↓
 Next chunk (or STOP/COMPLETE)
+
+Total time for 3 chunks: ~20s (0s + exec + 10s + exec + 10s + exec)
+Max duration: 60s (PR160: reduced from 10min)
 ```

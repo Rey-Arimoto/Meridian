@@ -17,25 +17,26 @@ import { RunPlan, ChunkPlan } from "./types";
 
 /**
  * Fixed chunking parameters (constitutional constants)
+ * PR160: FAST Profile v1.1 - Updated for faster execution
  */
 const CHUNKING_PARAMS = {
   // Maximum notional USD per run (aligned with PR153/155/156 cap)
   MAX_NOTIONAL_USD_PER_RUN: 200_000,
 
-  // Maximum number of chunks per run
-  MAX_CHUNKS: 6,
+  // Maximum number of chunks per run (PR160: 6 → 3)
+  MAX_CHUNKS: 3,
 
   // Minimum notional USD per chunk (chunks below this are skipped)
   MIN_CHUNK_NOTIONAL_USD: 10_000,
 
-  // Default chunk size (notional USD)
-  DEFAULT_CHUNK_NOTIONAL_USD: 50_000,
+  // Target chunk size (notional USD) (PR160: 50k → 70k)
+  TARGET_CHUNK_NOTIONAL_USD: 70_000,
 
-  // Interval between chunks (milliseconds)
-  CHUNK_INTERVAL_MS: 30_000, // 30 seconds
+  // Interval between chunks (milliseconds) (PR160: 30s → 10s)
+  CHUNK_INTERVAL_MS: 10_000, // 10 seconds
 
-  // Maximum run duration (milliseconds)
-  MAX_RUN_DURATION_MS: 10 * 60_000, // 10 minutes
+  // Maximum run duration (milliseconds) (PR160: 10min → 60s)
+  MAX_RUN_DURATION_MS: 60_000, // 60 seconds
 };
 
 /**
@@ -107,31 +108,35 @@ export function buildChunkPlansV1(args: {
     effectiveNotional = CHUNKING_PARAMS.MAX_NOTIONAL_USD_PER_RUN;
   }
 
-  // Step 4: Calculate chunk size
-  const defaultChunkSize =
-    args.chunkNotionalUsd ?? CHUNKING_PARAMS.DEFAULT_CHUNK_NOTIONAL_USD;
-  const chunkSize = Math.min(defaultChunkSize, effectiveNotional);
-
-  // Step 5: Calculate number of chunks
+  // Step 4: Calculate number of chunks (PR160: 70k target, max 3)
+  const targetChunkSize =
+    args.chunkNotionalUsd ?? CHUNKING_PARAMS.TARGET_CHUNK_NOTIONAL_USD;
   const maxChunks = args.maxChunks ?? CHUNKING_PARAMS.MAX_CHUNKS;
-  let numChunks = Math.ceil(effectiveNotional / chunkSize);
 
-  if (numChunks > maxChunks) {
+  // idealChunks = ceil(total / 70k)
+  const idealChunks = Math.ceil(effectiveNotional / targetChunkSize);
+
+  // chunkCount = clamp(idealChunks, 1, maxChunks)
+  let numChunks = Math.max(1, Math.min(idealChunks, maxChunks));
+
+  if (idealChunks > maxChunks) {
     reasons.push("REASON_CHUNK_COUNT_LIMITED");
-    numChunks = maxChunks;
   }
 
-  // Step 6: Distribute notional across chunks
+  // Step 5: Distribute notional evenly across chunks
+  // baseChunk = floor(total / chunkCount)
+  // remainder = total - baseChunk * chunkCount
+  const baseChunkNotional = Math.floor(effectiveNotional / numChunks);
+  const remainder = effectiveNotional - baseChunkNotional * numChunks;
+
+  // Step 6: Build chunks with even distribution + remainder in first chunks
   const chunks: ChunkPlan[] = [];
-  let remainingNotional = effectiveNotional;
 
   for (let i = 0; i < numChunks; i++) {
-    const isLastChunk = i === numChunks - 1;
-    const chunkNotional = isLastChunk
-      ? remainingNotional // Last chunk gets remainder
-      : Math.min(chunkSize, remainingNotional);
+    // Add +1 USD to first 'remainder' chunks
+    const chunkNotional = baseChunkNotional + (i < remainder ? 1 : 0);
 
-    // Skip chunks with notional below minimum
+    // Skip chunks with notional below minimum (rare with max 3 chunks)
     if (chunkNotional < CHUNKING_PARAMS.MIN_CHUNK_NOTIONAL_USD) {
       reasons.push("REASON_CHUNK_NOTIONAL_TOO_SMALL_SKIPPED");
       continue;
@@ -143,8 +148,6 @@ export function buildChunkPlansV1(args: {
       intent: args.baseIntent,
       templateId: args.templateId,
     });
-
-    remainingNotional -= chunkNotional;
   }
 
   // Step 7: If no chunks after filtering, mark as COMPLETED
