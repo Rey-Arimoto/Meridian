@@ -17,6 +17,11 @@
 import { StateStore, MeridianStateV1 } from "../state";
 import { evaluateResumeV1, ResumeInputs } from "../rebalance/resumePolicy";
 import { createEventV1, appendEventV1 } from "../telemetry";
+import {
+  buildMarketRegimeSnapshotV1,
+  appendSnapshotV1,
+  SnapshotInputsV1,
+} from "../snapshot";
 
 /**
  * Supervisor action (label-only)
@@ -343,6 +348,9 @@ export async function runSupervisorOnceV1(
     // No action needed
     notes.push("NOTE_NO_ACTION_NEEDED");
 
+    // PR165: Save snapshot (defensive, failure doesn't abort tick)
+    await saveSnapshotDefensive(state, policyResult);
+
     return {
       status: "OK",
       action: "ACTION_NOOP",
@@ -358,5 +366,71 @@ export async function runSupervisorOnceV1(
       warnings,
       notes,
     };
+  }
+}
+
+/**
+ * Save snapshot (defensive helper)
+ *
+ * PR165: Generate and save market regime snapshot at tick completion.
+ * Failures are logged to telemetry but don't abort the tick.
+ *
+ * @param state - Current state
+ * @param policyResult - Policy result
+ */
+async function saveSnapshotDefensive(
+  state: MeridianStateV1,
+  policyResult: {
+    allowExecution: boolean;
+    hardStopActive: boolean;
+    status: string;
+    reasons: string[];
+  }
+): Promise<void> {
+  try {
+    // Build snapshot inputs from state
+    const inputs: SnapshotInputsV1 = {
+      latest: {
+        // Extract from state (label-only where possible)
+        hardStop: state.hardStop?.active ? "ACTIVE" : "INACTIVE",
+        resume: state.resumeState ? "WAIT" : "NONE",
+        policyDecision: policyResult.allowExecution ? "ALLOW" : "DENY",
+        policyReason: policyResult.reasons[0],
+        // Health labels
+        gateDecision:
+          state.health?.oracle === "AVAILABLE" ? "PASS" : "BLOCK",
+        blockReason:
+          state.health?.oracle !== "AVAILABLE"
+            ? `ORACLE_${state.health?.oracle}`
+            : undefined,
+      },
+    };
+
+    // Build snapshot
+    const snapshot = await buildMarketRegimeSnapshotV1(inputs);
+
+    // Save snapshot
+    const saveResult = await appendSnapshotV1(snapshot);
+
+    // Emit telemetry event
+    if (saveResult.status === "OK") {
+      await appendEventV1(
+        createEventV1("SNAPSHOT_SAVED", "INFO", {
+          snapshot_status: snapshot.status,
+          snapshot_kind: snapshot.kind,
+        })
+      ).catch(() => {}); // Defensive: Don't fail on telemetry error
+    } else {
+      await appendEventV1(
+        createEventV1("SNAPSHOT_ERROR", "ERROR", {
+          snapshot_status: snapshot.status,
+        }, saveResult.warnings)
+      ).catch(() => {}); // Defensive: Don't fail on telemetry error
+    }
+  } catch (error) {
+    // Defensive: Snapshot failure doesn't abort tick
+    await appendEventV1(
+      createEventV1("SNAPSHOT_ERROR", "ERROR", {}, ["WARN_SNAPSHOT_FAILED"])
+    ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }
 }

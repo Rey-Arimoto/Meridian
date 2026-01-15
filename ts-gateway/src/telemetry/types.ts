@@ -26,6 +26,8 @@ export type TelemetryEventType =
   | "GATE_BLOCK" // Gate blocked execution
   | "ROUTE_SELECTED" // Route selected for chunk
   | "ORACLE_STATUS" // Oracle status check
+  | "SNAPSHOT_SAVED" // Snapshot saved (PR165)
+  | "SNAPSHOT_ERROR" // Snapshot save error (PR165)
   | "ERROR"; // Error occurred
 
 /**

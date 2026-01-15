@@ -1262,3 +1262,280 @@ const line = formatLabelOnlyLine(event);
 - `tests/pr164.telemetry_replay.test.ts`: 10 comprehensive tests
 
 **Purpose**: Observability and debugging, NOT trading signals or execution advice
+
+---
+
+## PR165: Market Regime Snapshot Export v1
+
+### Purpose
+Export "what Meridian saw at that moment" for strategy verification and post-analysis:
+- **Market Regime Snapshots**: Capture system state (phase, stress, template, gate, policy)
+- **Append-only Log**: JSONL format (~/.meridian/snapshots.log)
+- **CLI Display**: Label-only (no numerics, prices, or addresses)
+- **Strategy Verification**: Replay decisions for improvement/comparison
+
+### Constitutional Constraints
+- **READ-ONLY**: Snapshots are observations, NOT recommendations or execution signals
+- **Label-only**: CLI/telemetry display uses labels (numerics allowed in saved files)
+- **Defensive**: Snapshot failures never break execution
+- **Fixed rules**: No prediction, no optimization, no learning
+
+### Snapshot Schema
+
+**MarketRegimeSnapshotV1**:
+```typescript
+{
+  version: "v1.0",
+  kind: "REGIME_SNAPSHOT" | "RUN_SNAPSHOT" | "TICK_SNAPSHOT",
+  status: "AVAILABLE" | "PARTIAL" | "ERROR",
+  ts: number,                  // Timestamp (internal only)
+  id: string,                  // Snapshot ID
+  warnings: string[],          // Label-only warnings
+  presence: {                  // Which components were available
+    hasOracle: boolean,
+    hasObservationLabels: boolean,
+    hasShockPhase: boolean,
+    hasStress: boolean,
+    hasActionShape: boolean,
+    hasTemplateId: boolean,
+    hasRoute: boolean,
+    hasGate: boolean,
+    hasPolicy: boolean,
+    hasHardStop: boolean,
+    hasCooldown: boolean,
+    hasDrift: boolean,
+    hasResume: boolean
+  },
+  labels: {                    // Label-only domain
+    shockPhase?: string,       // e.g., PHASE_UP_SHOCK
+    stress?: string,           // CALM/TENSE/STRESSED
+    actionShape?: string,      // FREEZE_STATE / CONSIDER_ONLY / ...
+    templateId?: string,       // TPL_RISK_90 etc.
+    route?: string,            // ROUTE_CETUS / ROUTE_DEEPBOOK / NONE
+    gateDecision?: string,     // PASS / BLOCK / ERROR
+    policyDecision?: string,   // ALLOW / DENY
+    hardStop?: string,         // ACTIVE / INACTIVE
+    // PR154 observation labels
+    impulse?: string,
+    thinning?: string,
+    dominance?: string,
+    absorption?: string
+  },
+  numerics?: {                 // Save-only (NEVER display in CLI)
+    notionalUsd?: number,
+    targetNotionalUsd?: number,
+    oracleAgeMs?: number
+  }
+}
+```
+
+### Snapshot Status
+
+**Three status levels**:
+- **AVAILABLE**: All required components present (phase, stress, action, template, gate, policy)
+- **PARTIAL**: Snapshot created but missing some components
+- **ERROR**: Snapshot creation failed (but record still returned)
+
+**Fixed AVAILABLE criteria**:
+- hasShockPhase && hasStress && hasActionShape && hasTemplateId && hasGate && hasPolicy
+
+### Storage Format
+
+**JSONL (JSON Lines)**:
+- One snapshot per line
+- Append-only (never modified)
+- Default path: `~/.meridian/snapshots.log`
+- Configurable via `MERIDIAN_SNAPSHOTS_PATH`
+
+### Snapshot CLI
+
+Display recent snapshots:
+```bash
+# Default: 200 most recent snapshots
+npx ts-node src/cli/snapshot.ts
+
+# Custom tail count
+npx ts-node src/cli/snapshot.ts --tail 50
+
+# Filter by status
+npx ts-node src/cli/snapshot.ts --level AVAILABLE
+
+# JSON output (sanitized)
+npx ts-node src/cli/snapshot.ts --json
+
+# Built version
+node dist/cli/snapshot.js
+```
+
+### Label-Only Display
+
+All CLI output is label-only:
+- Timestamp → `T_RECENT` / `T_MIN` / `T_HOUR` / `T_OLD`
+- Snapshot ID → `HAS_ID` / `NO_ID`
+- Numerics → REMOVED (not displayed)
+
+Example output:
+```
+=== Meridian Snapshot CLI ===
+
+SNAPSHOTS: 2
+
+T_RECENT REGIME_SNAPSHOT AVAILABLE
+  ID: HAS_ID
+  Presence: SHOCK_PHASE, STRESS, ACTION, TEMPLATE, ROUTE, GATE, POLICY
+  Labels: shockPhase=PHASE_NORMAL, stress=STRESS_CALM, actionShape=ACTION_NORMAL, templateId=TPL_RISK_50, route=ROUTE_CETUS, gateDecision=PASS, policyDecision=ALLOW
+
+T_MIN REGIME_SNAPSHOT PARTIAL
+  ID: HAS_ID
+  Presence: SHOCK_PHASE, STRESS
+  Labels: shockPhase=PHASE_PRE_SHOCK, stress=STRESS_TENSE
+  Warnings: WARN_MISSING_COMPONENTS
+
+=== End Snapshots ===
+```
+
+### Integration with Supervisor
+
+**Supervisor emits snapshots at tick completion**:
+- After all policy/gate/resume checks complete
+- Snapshot saved to JSONL log (defensive)
+- Telemetry event emitted: `SNAPSHOT_SAVED` or `SNAPSHOT_ERROR`
+- Failures logged but don't abort tick
+
+### Guards (Forbidden Patterns)
+
+Snapshot labels/warnings are sanitized to prevent:
+- **Token literals**: wBTC, USDC, SUI → REDACTED
+- **Trading vocabulary**: buy, sell, swap, execute → REDACTED
+- **Prescriptive language**: should, must, recommend → REDACTED
+- **Addresses/prices**: 0x..., 123.45 → REDACTED
+
+### Usage
+
+```typescript
+import {
+  buildMarketRegimeSnapshotV1,
+  appendSnapshotV1,
+  SnapshotInputsV1,
+} from "./snapshot";
+
+// Build snapshot from current state
+const inputs: SnapshotInputsV1 = {
+  latest: {
+    shockPhase: "PHASE_NORMAL",
+    stress: "STRESS_CALM",
+    actionShape: "ACTION_NORMAL",
+    templateId: "TPL_RISK_50",
+    gateDecision: "PASS",
+    policyDecision: "ALLOW",
+    // Numerics (save-only)
+    numerics: {
+      notionalUsd: 100000,
+      oracleAgeMs: 5000,
+    },
+  },
+};
+
+const snapshot = await buildMarketRegimeSnapshotV1(inputs);
+
+// Save snapshot (defensive)
+await appendSnapshotV1(snapshot).catch(() => {
+  // Snapshot failure doesn't break execution
+});
+```
+
+### Reading Snapshots
+
+```typescript
+import {
+  readRecentSnapshotsV1,
+  readFilteredSnapshotsV1,
+} from "./snapshot";
+
+// Read recent snapshots
+const recent = await readRecentSnapshotsV1({}, { maxLines: 200 });
+console.log(`Found ${recent.snapshots.length} snapshots`);
+
+// Filter by status
+const available = await readFilteredSnapshotsV1({
+  status: "AVAILABLE",
+  maxLines: 100,
+});
+
+// Filter by kind
+const regimeSnapshots = await readFilteredSnapshotsV1({
+  kind: "REGIME_SNAPSHOT",
+  maxLines: 50,
+});
+```
+
+### Sanitization for Display
+
+```typescript
+import {
+  sanitizeSnapshotForDisplay,
+  formatSnapshotLabelOnlyLines,
+} from "./snapshot/guards";
+
+// Sanitize snapshot (removes numerics)
+const sanitized = sanitizeSnapshotForDisplay(snapshot);
+// sanitized.numerics → undefined (removed)
+// sanitized.timeLabel → "T_RECENT" (not numeric ts)
+// sanitized.idLabel → "HAS_ID" (not actual ID)
+
+// Format as CLI lines
+const lines = formatSnapshotLabelOnlyLines(sanitized);
+lines.forEach((line) => console.log(line));
+```
+
+### Non-Claims
+
+**Snapshots do NOT**:
+- ❌ Predict future market conditions
+- ❌ Provide trading recommendations
+- ❌ Optimize execution strategies
+- ❌ Learn from historical patterns
+- ❌ Trigger execution or trading decisions
+
+**Snapshots DO**:
+- ✅ Record observed state (what Meridian saw)
+- ✅ Enable strategy verification (reproducibility)
+- ✅ Use label-only display (privacy protection)
+- ✅ Fail gracefully (never break execution)
+- ✅ Append-only storage (immutable audit trail)
+
+### Safety Guarantees
+
+**Defensive design**:
+- Snapshot failures never throw exceptions
+- Failures logged to telemetry (SNAPSHOT_ERROR)
+- Missing components → PARTIAL status (not ERROR)
+- Invalid inputs → ERROR record returned (not thrown)
+
+**Privacy protection**:
+- Guards prevent token names in display
+- Guards prevent prices in display
+- Guards prevent addresses in display
+- Numerics allowed in saved files (for analysis)
+- Numerics REMOVED in CLI/telemetry display
+
+**Execution safety**:
+- Snapshot is POST-execution (doesn't affect decisions)
+- Snapshot failures don't abort supervisor tick
+- Snapshot is observability, NOT control
+
+### Environment Variables
+
+- `MERIDIAN_SNAPSHOTS_PATH`: Log file path (default: `~/.meridian/snapshots.log`)
+- `MERIDIAN_SNAPSHOTS_MAXLINES`: Max lines for CLI (default: 200)
+
+### Files
+
+- `src/snapshot/types.ts`: Snapshot schema, types, status
+- `src/snapshot/guards.ts`: Sanitization, validation, display formatting
+- `src/snapshot/exporter.ts`: Snapshot generation, JSONL storage
+- `src/snapshot/index.ts`: Barrel exports
+- `src/cli/snapshot.ts`: Snapshot CLI tool
+- `tests/pr165.snapshot_export.test.ts`: 12 comprehensive tests
+
+**Purpose**: Strategy verification and post-analysis, NOT trading signals or execution advice
