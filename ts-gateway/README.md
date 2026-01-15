@@ -987,3 +987,49 @@ type StopReason =
 ```
 
 **Purpose**: Debugging and observability, NOT for decision-making (READ-ONLY)
+
+
+---
+
+## PR163: Supervisor Loop + Persistent State + Status CLI v1
+
+### Purpose
+Transform Meridian from "functions available" to "24/7 operational system":
+- **Persistent State**: Save/restore HardStop, Cooldown, ResumeState, lastRun
+- **Supervisor Loop**: Tick periodically, evaluate resume conditions, run when safe
+- **Status CLI**: Monitor "what's happening now?" at a glance
+
+### Persistent State Schema
+
+**Saved to `~/.meridian/state.json` (configurable via `MERIDIAN_STATE_PATH`)**:
+
+All state is label-only with internal timestamps. Numeric timestamps never appear in CLI output or logs.
+
+### State Store (Atomic Writes)
+
+File-based storage with defensive reads:
+- Atomic writes: tmp→rename to prevent corruption
+- Missing file → empty state (defensive default)
+- Corrupted JSON → ERROR status + warnings (never throws)
+- Forward-compatible: Unknown fields ignored
+
+### Supervisor Loop (24/7 Tick)
+
+Fixed tick flow evaluates policy, resume conditions, and executes TWAP when safe.
+
+### Status CLI (Monitoring)
+
+Display current state in label-only format:
+```bash
+npx ts-node src/cli/status.ts
+node dist/cli/status.js
+```
+
+All output is label-only: No prices, balances, timestamps, or addresses.
+
+### Non-Claims
+
+Supervisor does NOT predict, learn, optimize, or provide trading advice.
+Supervisor DOES use fixed tick logic and respect all existing safety systems.
+
+**Purpose**: 24/7 operational readiness, NOT trading advice or execution signals
