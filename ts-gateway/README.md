@@ -1785,3 +1785,275 @@ const sanitized = sanitizeAnalysisForDisplay(analysis, debugMode);
 - `tests/pr166.analyze.test.ts`: 12 comprehensive tests
 
 **Purpose**: Strategy improvement through deterministic analysis, NOT trading signals or execution advice
+
+---
+
+## PR167: Improvement Proposal Generator v1
+
+### Purpose
+Generate fixed-rule improvement proposals from snapshot analysis through:
+- **P0 Proposals**: Gate threshold degradation (reduce blocks)
+- **P1 Proposals**: Template/phase/gate policy restrictions (reduce confusion)
+- **P2 Proposals**: Observable improvements (logging, monitoring)
+
+### Constitutional Constraints
+- **READ-ONLY**: Proposals are suggestions, not actions
+- **Label-only**: Normal output uses labels (numeric counts only in debug mode)
+- **Fixed rules**: All triggers and proposals are predetermined
+- **Policy-first**: P0 = degrade policy, P1 = template/gate policy, P2 = observable
+- **Defensive**: Never throws, always returns result
+
+### Proposal Priorities
+
+**P0 (Highest)**: Degrade gate thresholds to reduce blocks
+- `P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE`
+- `P0_REDUCE_IMPACT_BLOCKS_DEGRADE`
+- `P0_REDUCE_SLIPPAGE_BLOCKS_DEGRADE`
+- `P0_REDUCE_DRIFT_BLOCKS_DEGRADE`
+- `P0_REDUCE_COOLDOWN_BLOCKS_DEGRADE`
+
+**P1**: Template/gate policy restrictions
+- `P1_SHOCK_RISK90_OVERUSE_TEMPLATE_POLICY_RESTRICT`
+- `P1_PRE_SHOCK_NO_SHIFT_TEMPLATE_POLICY_TRIGGER`
+- `P1_PHASE_ESCALATION_DOMINATES_PHASE_POLICY_REVIEW`
+- `P1_GATE_BLOCK_DOMINATES_GATE_POLICY_REVIEW`
+
+**P2**: Observable improvements
+- `P2_FREQUENT_TRANSITIONS_OBSERVABLE_LOG`
+- `P2_LAG_LONG_OBSERVABLE_LOG`
+- `P2_HARDSTOP_FREQUENT_OBSERVABLE_LOG`
+
+### Fixed Triggers
+
+**Confusion Signals** (from PR166):
+- `TRG_GATE_BLOCK_DOMINATES`: Gate BLOCK dominates PASS (>50%)
+- `TRG_SHOCK_RISK90_OVERUSE`: SHOCK phases with TPL_RISK_90 frequent (>30%)
+- `TRG_PRE_SHOCK_NO_SHIFT`: PRE_SHOCK without template shift
+
+**Frequency Patterns**:
+- `TRG_ORACLE_STALE_TOP`: ORACLE_STALE is top block reason
+- `TRG_IMPACT_HIGH_TOP`: IMPACT_HIGH is top block reason
+- `TRG_SLIPPAGE_HIGH_TOP`: SLIPPAGE_HIGH is top block reason
+- `TRG_DRIFT_HIGH_TOP`: DRIFT_HIGH is top block reason
+- `TRG_COOLDOWN_TOP`: COOLDOWN is top block reason
+
+**Timing Patterns**:
+- `TRG_PHASE_ESCALATION_FREQUENT`: Phase escalation blocks in top 3
+- `TRG_TRANSITIONS_FREQUENT`: Phase transitions with LAG_SHORT majority (>50%)
+- `TRG_LAG_LONG_FREQUENT`: LAG_LONG transitions frequent (>20%)
+- `TRG_HARDSTOP_FREQUENT`: HardStop in top 3 stop reasons
+
+### Proposal CLI
+
+Generate proposals from snapshot analysis:
+```bash
+# Default: 200 most recent snapshots
+npx ts-node src/cli/propose.ts
+
+# Custom tail count
+npx ts-node src/cli/propose.ts --tail 500
+
+# Filter by priority (P0 only)
+npx ts-node src/cli/propose.ts --priority P0
+
+# JSON output (sanitized)
+npx ts-node src/cli/propose.ts --json
+
+# Debug mode (allows numeric counts)
+MERIDIAN_DEBUG=true npx ts-node src/cli/propose.ts --tail 500
+
+# Built version
+node dist/cli/propose.js
+```
+
+### Normal Mode vs Debug Mode
+
+**Normal Mode** (default):
+- Label-only output (no counts, no numerics)
+- triggered_by shown as `HAS_TRIGGERS` / `NO_TRIGGERS`
+- Example: `Triggered By: HAS_TRIGGERS` (not list of IDs)
+
+**Debug Mode** (`MERIDIAN_DEBUG=true`):
+- Full trigger IDs displayed
+- Numeric counts displayed
+- Example: `Triggered By: TRG_GATE_BLOCK_DOMINATES, TRG_ORACLE_STALE_TOP`
+
+### Example Output (Normal Mode)
+
+```
+=== Improvement Proposals v1 ===
+
+Status: AVAILABLE
+Snapshot Count: HAS_SNAPSHOTS
+
+--- P0: Degrade Policy (Highest Priority) ---
+
+[P0] DEGRADE_ORACLE_STALE_THRESHOLD
+  ID: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+  Category: GATE_POLICY
+
+  Rationale:
+    - GATE_BLOCK_DOMINATES_WITH_ORACLE_CATEGORY
+    - ORACLE_STALE_IS_TOP_BLOCK_REASON
+    - REDUCING_STALE_THRESHOLD_MAY_INCREASE_PASS_RATIO
+
+  Expected Effects:
+    - REDUCE_ORACLE_STALE_BLOCKS
+    - INCREASE_GATE_PASS_RATIO
+    - ALLOW_MORE_RECENT_ORACLE_DATA
+
+  Side Effects:
+    - MAY_INCREASE_STALE_DATA_RISK
+    - MAY_DEGRADE_EXECUTION_QUALITY
+
+  Safe Guards:
+    - MONITOR_ORACLE_AGE_DISTRIBUTION
+    - TEST_IN_DRY_RUN_MODE
+    - SET_MINIMUM_THRESHOLD
+
+  Applies When: WHEN_GATE_BLOCK_RATIO_HIGH_AND_ORACLE_STALE_TOP_AND_ORACLE_CATEGORY
+
+---
+
+--- P1: Template/Gate Policy ---
+
+[P1] RESTRICT_TPL_RISK_90_IN_SHOCK_PHASES
+  ID: P1_SHOCK_RISK90_OVERUSE_TEMPLATE_POLICY_RESTRICT
+  Category: TEMPLATE_POLICY
+
+  Rationale:
+    - SHOCK_PHASES_WITH_TPL_RISK_90_FREQUENT
+    - HIGH_RISK_TEMPLATE_IN_SHOCK_IS_CONFUSION
+    - RESTRICTING_TPL_RISK_90_MAY_REDUCE_CONFUSION
+
+  Expected Effects:
+    - REDUCE_TPL_RISK_90_IN_SHOCK
+    - INCREASE_TEMPLATE_CONSISTENCY
+    - REDUCE_CONFUSION_SIGNAL
+
+  Side Effects:
+    - MAY_REDUCE_AVAILABLE_TEMPLATE_OPTIONS
+    - MAY_REQUIRE_NEW_TEMPLATE_LOGIC
+
+  Safe Guards:
+    - MONITOR_TEMPLATE_DISTRIBUTION
+    - TEST_IN_DRY_RUN_MODE
+    - ENSURE_ALTERNATIVE_TEMPLATES_EXIST
+
+  Applies When: WHEN_SHOCK_PHASES_WITH_TPL_RISK_90_RATIO_ABOVE_THRESHOLD
+
+---
+
+=== End Proposals ===
+```
+
+### Proposal Structure
+
+Each proposal includes:
+- **ID**: Fixed proposal identifier
+- **Priority**: P0 (highest) > P1 > P2
+- **Category**: GATE_POLICY / TEMPLATE_POLICY / PHASE_POLICY / COOLDOWN_POLICY / HARDSTOP_POLICY / OBSERVABLE
+- **Title**: Label-only title (no numerics)
+- **Rationale**: Why this proposal exists (label-only)
+- **Expected Effects**: What should happen (label-only)
+- **Side Effects**: Potential risks (label-only)
+- **Safe Guards**: How to mitigate side effects (label-only)
+- **Applies When**: Trigger conditions (label-only)
+- **Triggered By**: Which triggers activated this proposal (hidden in normal mode)
+
+### Usage
+
+```typescript
+import { analyzeSnapshotsV1 } from "./analyze";
+import { generateProposalsV1 } from "./propose";
+import { readRecentSnapshotsV1 } from "./snapshot";
+
+// Read and analyze snapshots
+const snapshotResult = await readRecentSnapshotsV1({}, { maxLines: 200 });
+const analysis = await analyzeSnapshotsV1(snapshotResult.snapshots);
+
+// Generate proposals
+const proposeResult = await generateProposalsV1(analysis);
+
+// Check P0 proposals (highest priority)
+const p0Proposals = proposeResult.proposals.filter((p) => p.priority === "P0");
+
+for (const proposal of p0Proposals) {
+  console.log(`[${proposal.priority}] ${proposal.title}`);
+  console.log(`  Category: ${proposal.category}`);
+  console.log(`  Expected Effects: ${proposal.expected_effects.join(", ")}`);
+  console.log(`  Safe Guards: ${proposal.safe_guards.join(", ")}`);
+}
+```
+
+### Sanitization for Display
+
+```typescript
+import { sanitizeProposeResultForDisplay, isDebugMode } from "./propose/guards";
+
+const debugMode = isDebugMode(); // MERIDIAN_DEBUG=true
+
+// Sanitize for display (removes counts in normal mode)
+const sanitized = sanitizeProposeResultForDisplay(proposeResult, debugMode);
+
+// In normal mode:
+// sanitized.ts_label → "HAS_TIMESTAMP" (not numeric timestamp)
+// sanitized.proposals[0].triggered_by_count → "HAS_TRIGGERS" (not array)
+
+// In debug mode:
+// proposeResult.ts → 1701234567890 (actual timestamp)
+// proposeResult.proposals[0].triggered_by → ["TRG_GATE_BLOCK_DOMINATES", "TRG_ORACLE_STALE_TOP"]
+```
+
+### Non-Claims
+
+**Proposals do NOT**:
+- ❌ Automatically execute changes
+- ❌ Provide trading advice
+- ❌ Predict future outcomes
+- ❌ Optimize strategies (just suggest based on observed patterns)
+- ❌ Learn from patterns (fixed rules only)
+
+**Proposals DO**:
+- ✅ Suggest policy adjustments based on fixed triggers
+- ✅ Use predetermined thresholds (deterministic)
+- ✅ Support manual strategy improvement
+- ✅ Fail gracefully (never throws)
+- ✅ Respect label-only constraints (normal mode)
+
+### Safety Guarantees
+
+**Defensive design**:
+- Proposal generation never throws exceptions
+- Invalid analysis → ERROR status with empty proposals
+- No triggers active → NO_PROPOSALS status
+- Always returns ProposeResultV1 (defensive)
+
+**Privacy protection**:
+- Normal mode: label-only (no counts)
+- Debug mode: allows trigger IDs (but not addresses/secrets)
+- Guards sanitize: token literals, trading vocab, prescriptive language
+- Addresses always REDACTED (even in debug mode)
+
+**Read-only operation**:
+- Proposals are suggestions only
+- No execution, no trading, no state modification
+- Manual review required before implementation
+
+### Environment Variables
+
+- `MERIDIAN_DEBUG`: Set to "true" to enable debug mode (full trigger IDs)
+- `MERIDIAN_SNAPSHOTS_PATH`: Snapshot log path (default: `~/.meridian/snapshots.log`)
+- `MERIDIAN_SNAPSHOTS_MAXLINES`: Max lines for analysis (default: 200)
+
+### Files
+
+- `src/propose/types.ts`: Proposal types, priority types, trigger types
+- `src/propose/guards.ts`: Sanitization, validation, label-only formatting
+- `src/propose/rules.ts`: Fixed trigger rules and proposal templates
+- `src/propose/proposer.ts`: Core proposal engine (trigger evaluation)
+- `src/propose/index.ts`: Barrel exports
+- `src/cli/propose.ts`: Proposal CLI tool
+- `tests/pr167.propose.test.ts`: 12 comprehensive tests
+
+**Purpose**: Strategy improvement through fixed-rule proposals, NOT automatic optimization or trading advice
