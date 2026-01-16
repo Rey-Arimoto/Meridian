@@ -3349,3 +3349,240 @@ MERIDIAN_DEBUG=true enables:
 - tests/pr173.decision_ack.test.ts: 12 comprehensive tests
 
 **Purpose**: Record adoption decision audit trail for accountability and traceability
+
+## PR174: Patch Effectiveness Tracker v1
+
+### Purpose
+Track patch effectiveness by measuring "did the adoption actually improve things" post-adoption.
+Compares Before/After snapshots using fixed thresholds (READ-ONLY observation only).
+
+While PR173 records adoption decisions, PR174 adds **effectiveness verification** that measures:
+- Before window: Snapshots before adoption (default: 120)
+- After windows: Short/Medium/Long-term snapshots after adoption (60/180/600)
+- Fixed metrics: Gate pass/block rate, stop rate, confusion signals
+- Fixed thresholds: 10% point change = significant
+
+This enables **post-adoption verification**: Users can objectively measure whether adopted changes actually improved operational health.
+
+### Constitutional Constraints
+- **READ-ONLY**: Observation only (no automatic adoption/execution)
+- **Fixed rules**: Fixed thresholds (10% point change, no learning/optimization)
+- **Label-only**: Display mode sanitizes numerics (debug mode allows)
+- **Defensive**: Never throws, always returns valid report
+- **NOT trading advice**: Measures operational health, not profits
+
+### Effect Model
+
+**Patch Effect Report**:
+```typescript
+{
+  kind: "PATCH_EFFECT_V1";
+  status: EffectStatus;        // AVAILABLE, PARTIAL, ERROR
+
+  decisionAckRef: {
+    proposalId?: string;       // From PR173
+    decision?: string;         // ADOPT/HOLD/REJECT from PR173
+    reviewerKind?: string;
+    timeLabel?: string;
+  };
+
+  windows: EffectWindowSummary[];  // Before + After (Short/Medium/Long)
+
+  compare: {
+    improved: string[];        // e.g., ["IMPROVED_BLOCK_RATE"]
+    worsened: string[];        // e.g., ["WORSENED_STOP_RATE"]
+    unchanged: string[];
+    unavailable: string[];
+  };
+
+  effectDecision: EffectDecision;  // EFFECT_IMPROVED/WORSENED/NO_CHANGE/MIXED/UNKNOWN
+
+  rationale: string[];         // Label-only reasons
+  warnings: string[];
+  ts: number;                  // Internal storage only
+}
+```
+
+**Window Summary**:
+```typescript
+{
+  window: WindowLabel;         // WIN_BEFORE, WIN_AFTER_SHORT, etc.
+  status: EffectStatus;
+
+  counts: {
+    nSnapshots: number;        // Internal only (debug mode displays)
+    nGatePass: number;
+    nGateBlock: number;
+    nStop: number;
+  };
+
+  rates: {
+    passRate?: number;         // Internal only (debug mode displays)
+    blockRate?: number;
+    stopRate?: number;
+  };
+
+  tops: {
+    topPhase?: string;         // Most common phase (label)
+    topTemplate?: string;
+    topBlockReason?: string;
+    topStopCategory?: string;
+  };
+
+  confusionSignals: string[];  // From PR166 patterns
+  bottlenecks: string[];       // e.g., "BOTTLENECK_ORACLE_DOMINANT"
+  warnings: string[];
+}
+```
+
+### Fixed Window Config
+
+**Default Windows**:
+- **Before**: 120 snapshots before adoption
+- **After Short**: 60 snapshots after adoption (primary evaluation)
+- **After Medium**: 180 snapshots after adoption (confirmation)
+- **After Long**: 600 snapshots after adoption (long-term trend)
+
+### Fixed Thresholds
+
+**Significant Change**: 10% point change
+
+**Improvement Signals** (10%pt decrease = improvement):
+- `IMPROVED_BLOCK_RATE`: Block rate decreased by 10%pt+
+- `IMPROVED_STOP_RATE`: Stop rate decreased by 10%pt+
+- `IMPROVED_PASS_RATE`: Pass rate increased by 10%pt+
+- `IMPROVED_CONFUSION_BLOCK_DOMINATES_RESOLVED`: Confusion signal removed
+- `IMPROVED_BOTTLENECK_RESOLVED_*`: Bottleneck removed
+
+**Worsening Signals** (10%pt increase = worsening):
+- `WORSENED_BLOCK_RATE`: Block rate increased by 10%pt+
+- `WORSENED_STOP_RATE`: Stop rate increased by 10%pt+
+- `WORSENED_PASS_RATE`: Pass rate decreased by 10%pt+
+- `WORSENED_NEW_CONFUSION_*`: New confusion signal appeared
+- `WORSENED_NEW_BOTTLENECK_*`: New bottleneck appeared
+
+### Effect Decision Rules
+
+**Priority** (fixed):
+1. No afterShort → `EFFECT_UNKNOWN`
+2. Improved only (no worsening) → `EFFECT_IMPROVED`
+3. Worsened only (no improvement) → `EFFECT_WORSENED`
+4. Both improved and worsened → `EFFECT_MIXED`
+5. No significant change → `EFFECT_NO_CHANGE`
+
+### Effect CLI
+
+Track patch effectiveness:
+```bash
+# Track most recent adoption
+npx ts-node src/cli/effect.ts
+
+# Specify snapshot window
+npx ts-node src/cli/effect.ts --tail 2000
+
+# Filter by proposal
+npx ts-node src/cli/effect.ts --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# Filter by ack decision
+npx ts-node src/cli/effect.ts --decision ADOPT
+
+# JSON output
+npx ts-node src/cli/effect.ts --json
+
+# Don't save to effects.log
+npx ts-node src/cli/effect.ts --no-save
+
+# Debug mode (show numerics)
+MERIDIAN_DEBUG=true npx ts-node src/cli/effect.ts
+```
+
+### Example Output
+
+**Normal Mode** (label-only):
+```
+=== Patch Effect Report v1 ===
+
+Status: AVAILABLE
+Effect Decision: EFFECT_IMPROVED
+
+Proposal: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+Original Decision: ADOPT
+Reviewer: AUTO_ASSISTED
+Time: T_MIN
+
+--- Time Windows ---
+
+Window: WIN_BEFORE (AVAILABLE)
+  Top Phase: PHASE_WAIT
+  Top Block Reason: BLOCK_ORACLE_STALE
+  Confusion: CONFUSION_GATE_BLOCK_DOMINATES
+
+Window: WIN_AFTER_SHORT (AVAILABLE)
+  Top Phase: PHASE_PREPARE
+  Top Block Reason: BLOCK_SLIPPAGE
+  Confusion: NONE
+
+--- Comparison ---
+
+Improved: IMPROVED_BLOCK_RATE, IMPROVED_CONFUSION_BLOCK_DOMINATES_RESOLVED
+Worsened: NONE
+Unchanged: UNCHANGED_STOP_RATE
+
+--- Rationale ---
+
+  - REASON_BLOCK_RATE_DECREASED
+  - REASON_CONFUSION_BLOCK_RESOLVED
+  - REASON_OVERALL_IMPROVED
+
+=== End Report ===
+```
+
+**Debug Mode** (with numerics):
+```
+MERIDIAN_DEBUG=true enables:
+- Numeric counts (nSnapshots, nGatePass, nGateBlock, nStop)
+- Numeric rates (passRate, blockRate, stopRate)
+- Timestamp
+```
+
+### Storage
+
+**JSONL Append-Only Log**:
+- Path: ~/.meridian/effects.log
+- Format: One JSON object per line
+- Defensive: Corrupt lines skipped with warnings
+
+**Environment Variables**:
+- MERIDIAN_EFFECT_PATH: Effect log path
+- MERIDIAN_DEBUG: Set to "true" to enable debug mode
+
+### Non-Claims
+
+**Effect Tracker does NOT**:
+- ❌ Automatically adopt changes
+- ❌ Make trading decisions
+- ❌ Guarantee profits or performance
+- ❌ Learn or optimize thresholds
+- ❌ Execute trades automatically
+
+**Effect Tracker DOES**:
+- ✅ Measure operational health changes
+- ✅ Compare Before/After snapshots objectively
+- ✅ Use fixed thresholds (10% point change)
+- ✅ Provide label-only output (normal mode)
+- ✅ Support post-adoption verification
+- ✅ Fail gracefully (defensive)
+
+### Files
+
+- src/effect/types.ts: Effect types
+- src/effect/guards.ts: Sanitization and formatting
+- src/effect/selector.ts: Window selection
+- src/effect/metrics.ts: Window metrics calculation
+- src/effect/evaluator.ts: Effect evaluation
+- src/effect/store.ts: JSONL storage
+- src/effect/index.ts: Barrel exports
+- src/cli/effect.ts: Effect tracking CLI
+- tests/pr174.effectiveness.test.ts: 12 comprehensive tests
+
+**Purpose**: Measure patch effectiveness post-adoption using READ-ONLY observation and fixed thresholds
