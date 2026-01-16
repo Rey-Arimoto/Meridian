@@ -3586,3 +3586,214 @@ MERIDIAN_DEBUG=true enables:
 - tests/pr174.effectiveness.test.ts: 12 comprehensive tests
 
 **Purpose**: Measure patch effectiveness post-adoption using READ-ONLY observation and fixed thresholds
+## PR175: Regression Guard v1 (Effect Persistence Monitor)
+
+### Purpose
+Monitor patch effectiveness persistence by detecting when improvements don't persist (regress).
+While PR174 measures "did it improve?", PR175 tracks "did the improvement last?"
+
+Reads PR174's effects.log to detect regression patterns like:
+- IMPROVED → quickly WORSENED
+- IMPROVED → dominance re-emerges (BLOCK/STOP)
+- Effect flapping (oscillation between IMPROVED/WORSENED)
+- Category shift worsening
+
+This enables **持続性の検証** (persistence verification): Users can objectively measure whether adopted changes maintain their improvements or regress over time.
+
+### Constitutional Constraints
+- **READ-ONLY**: Observation only (no automatic revert)
+- **Fixed rules**: Hardcoded thresholds and detection logic (no learning)
+- **Label-only**: Display mode sanitizes numerics (debug mode allows)
+- **Defensive**: Never throws, always returns valid report
+- **Append-only**: Audit trail in ~/.meridian/regressions.log
+
+### Regression Model
+
+**Regression Report**:
+```typescript
+{
+  kind: "REGRESSION_REPORT_V1";
+  status: RegressionStatus;    // AVAILABLE, PARTIAL, ERROR
+
+  analysis: {
+    proposalId: string;
+    decision: RegressionDecision;    // REGRESSION_DETECTED, NO_REGRESSION, REGRESSION_UNKNOWN
+    kind: RegressionKind;            // REGRESS_IMPROVED_TO_WORSENED, etc.
+    strength: RegressionStrength;    // STRONG, MEDIUM, WEAK, UNKNOWN
+    windowLabel: RegressionWindowLabel; // W_SHORT, W_MEDIUM, W_LONG
+    evidence: RegressionEvidence[];  // Max 3 pieces of evidence (label-only)
+    warnings: string[];
+  };
+
+  ts: number;                  // Internal storage only
+  warnings: string[];
+}
+```
+
+**Regression Evidence**:
+```typescript
+{
+  kind: "EVID_EFFECT" | "EVID_DECISION" | "EVID_NONE";
+  label: string;          // Label-only (no numbers/tokens)
+  strength: RegressionStrength;
+}
+```
+
+### Fixed Detection Rules
+
+**Constants**:
+- `MIN_EFFECTS_FOR_EVAL = 3`: Minimum effects needed for evaluation
+- `STRONG_REGRESS_LOOKBACK = 5`: Lookback window for strong regression
+- `FLAP_THRESHOLD = 3`: Min oscillations to detect flapping
+- `IMPROVE_TO_WORSE_WITHIN = 2`: Window for IMPROVED→WORSENED detection
+
+**Detection Priority** (first-match-wins):
+
+1. **IMPROVED → WORSENED within 2 effects**
+   - Kind: `REGRESS_IMPROVED_TO_WORSENED`
+   - Strength: `STRONG`
+   - Window: `W_SHORT`
+
+2. **IMPROVED → BLOCK dominance re-emerges**
+   - Kind: `REGRESS_IMPROVED_TO_BLOCK_DOMINANT`
+   - Strength: `MEDIUM` or `STRONG`
+   - Window: `W_MEDIUM`
+
+3. **IMPROVED → STOP dominance re-emerges**
+   - Kind: `REGRESS_IMPROVED_TO_STOP_DOMINANT`
+   - Strength: `MEDIUM` or `STRONG`
+   - Window: `W_MEDIUM`
+
+4. **Category shift worsening**
+   - Kind: `REGRESS_CATEGORY_SHIFT_WORSENED`
+   - Strength: `MEDIUM`
+   - Example: Block rate improved but stop rate worsened
+
+5. **Effect flapping** (oscillation ≥ 3 times)
+   - Kind: `REGRESS_EFFECT_FLAPPING`
+   - Strength: `MEDIUM`
+   - Window: `W_LONG`
+
+6. **NO_REGRESSION**: Recent effects are IMPROVED/NO_CHANGE
+   - Decision: `NO_REGRESSION`
+
+7. **UNKNOWN**: Ambiguous data
+   - Decision: `REGRESSION_UNKNOWN`
+
+### Regression CLI
+
+Monitor patch effectiveness persistence:
+
+```bash
+# View stored regression reports
+npx ts-node src/cli/regression.ts
+
+# Analyze effects and detect regressions
+npx ts-node src/cli/regression.ts --analyze
+
+# Specify tail
+npx ts-node src/cli/regression.ts --tail 50
+
+# Filter by proposal
+npx ts-node src/cli/regression.ts --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# Filter by regression decision
+npx ts-node src/cli/regression.ts --decision REGRESSION_DETECTED
+
+# JSON output
+npx ts-node src/cli/regression.ts --json
+
+# Debug mode (show numerics)
+MERIDIAN_DEBUG=true npx ts-node src/cli/regression.ts --analyze
+```
+
+### Example Output
+
+**Normal Mode** (label-only):
+```
+=== Regression Report V1 ===
+
+Status: AVAILABLE
+Proposal: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+Decision: REGRESSION_DETECTED
+Kind: REGRESS_IMPROVED_TO_WORSENED
+Strength: STRONG
+Window: W_SHORT
+
+Evidence:
+  - [EVID_EFFECT] IMPROVED_AT_0_WORSENED_AT_2_WITHIN_2 (STRONG)
+```
+
+**Debug Mode** (with numerics):
+```json
+{
+  "kind": "REGRESSION_REPORT_V1",
+  "status": "AVAILABLE",
+  "analysis": {
+    "proposalId": "P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE",
+    "decision": "REGRESSION_DETECTED",
+    "kind": "REGRESS_IMPROVED_TO_WORSENED",
+    "strength": "STRONG",
+    "windowLabel": "W_SHORT",
+    "evidence": [
+      {
+        "kind": "EVID_EFFECT",
+        "label": "IMPROVED_AT_0_WORSENED_AT_2_WITHIN_2",
+        "strength": "STRONG"
+      }
+    ],
+    "warnings": []
+  },
+  "ts": 1705430400000,
+  "warnings": []
+}
+```
+
+### Integration with Proposal/Review/Adopt Flow
+
+PR175 strengthens the improvement loop:
+
+1. **PR167**: Propose patch based on analysis
+2. **PR172**: Review patch with checklist
+3. **PR173**: Acknowledge adoption decision
+4. **PR174**: Measure immediate effectiveness
+5. **PR175**: Monitor persistence over time ← NEW
+6. **Back to PR167**: Use regression evidence in next proposal
+
+**Example Flow**:
+- User adopts patch to reduce oracle blocks
+- PR174: Immediate effect shows IMPROVED (block rate decreased)
+- PR175: After 5 more effects, detects REGRESS_IMPROVED_TO_WORSENED
+- Evidence: "Block rate improved initially but returned to high levels"
+- Next proposal can reference this regression evidence
+- Review checklist considers persistence history
+
+### Non-Claims
+
+PR175 does **NOT**:
+- ❌ Automatically revert adoptions (READ-ONLY observation only)
+- ❌ Predict future regressions (fixed rules, no learning)
+- ❌ Optimize thresholds (fixed constants)
+- ❌ Provide trading advice (operational health monitoring only)
+
+### What PR175 DOES
+
+- ✅ Detect regression patterns using fixed rules
+- ✅ Monitor improvement persistence objectively
+- ✅ Provide label-only evidence (normal mode)
+- ✅ Support post-adoption long-term monitoring
+- ✅ Strengthen proposal/review process with persistence data
+- ✅ Fail gracefully (defensive)
+
+### Files
+
+- src/regress/types.ts: Regression types
+- src/regress/guards.ts: Sanitization and formatting
+- src/regress/reader.ts: Read effects/decisions logs
+- src/regress/detector.ts: Regression detection logic
+- src/regress/store.ts: JSONL storage
+- src/regress/index.ts: Barrel exports
+- src/cli/regression.ts: Regression monitoring CLI
+- tests/pr175.regression_guard.test.ts: 14 comprehensive tests
+
+**Purpose**: Monitor patch effectiveness persistence using READ-ONLY observation and fixed detection rules
