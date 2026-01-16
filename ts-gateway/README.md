@@ -4211,3 +4211,197 @@ PR177 does **NOT**:
 - tests/pr177.overlay_preview_review.test.ts: 12 comprehensive tests
 
 **Purpose**: Surface known regression and interaction risks before adoption using READ-ONLY observation and fixed assessment rules
+
+## PR178: Manual Review Trigger Hook v1
+
+### Purpose
+Provide a one-command human-initiated review pipeline that runs the complete analysis and review workflow:
+**snapshot → analyze → propose → preview → review**
+
+While Meridian normally operates in fully automatic execution mode, PR178 enables humans to trigger a comprehensive inspection when they notice something unusual: "Something feels off - run a full review and generate improvement proposals."
+
+This separates **market response** (automatic, high-frequency) from **strategy improvement** (human-initiated, low-frequency).
+
+### Constitutional Constraints
+- **READ-ONLY**: No execution/policy changes, no trade stops, no state modification
+- **Analysis only**: Does not affect automatic execution logic
+- **Parallel operation**: Market response continues while review runs
+- **Defensive**: Never throws, always returns status
+
+### Architecture
+
+**Automatic Execution (Unchanged)**:
+```
+Market Events → TWAP Engine → Execution
+     ↓
+  Snapshots (passive logging)
+```
+
+**Manual Review Pipeline (PR178 adds this)**:
+```
+Human Command
+     ↓
+Snapshot Read → Analyze → Propose → Preview → Review
+     ↓
+Improvement Proposals (for human decision)
+```
+
+Key insight: These run in **separate time scales**:
+- **Automatic**: Milliseconds to seconds (market response)
+- **Manual review**: Minutes to hours (strategy improvement)
+
+### Pipeline Steps
+
+1. **Snapshot**: Read recent snapshots from ~/.meridian/snapshots.log
+2. **Analyze**: Run PR166 analysis on snapshots
+3. **Propose**: Generate PR167 proposals with PR170 evidence
+4. **Preview**: Create PR171 previews (with PR177 risk overlay)
+5. **Review**: Run PR172 review checklist
+
+**Execution Limits**:
+- Default: 200 snapshots
+- Top 3 proposals only (prevents overwhelming output)
+- Priority filtering: P0, P1, P2, or ALL
+
+### Usage
+
+Run complete review pipeline:
+
+```bash
+# Basic usage
+npx ts-node src/cli/review-trigger.ts
+
+# Specify snapshot count
+npx ts-node src/cli/review-trigger.ts --tail 300
+
+# Filter by priority
+npx ts-node src/cli/review-trigger.ts --priority P0
+
+# JSON output
+npx ts-node src/cli/review-trigger.ts --json
+
+# Debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/review-trigger.ts --json
+```
+
+### Example Output
+
+**Normal Mode**:
+```
+=== Manual Review Trigger ===
+
+REVIEW_TRIGGER: TRIGGERED
+SNAPSHOT: OK
+ANALYZE: OK
+PROPOSE: OK
+PREVIEW: OK
+REVIEW: OK
+
+Warnings: WARN_NO_RECENT_REGRESSION_DATA
+```
+
+**Partial Success**:
+```
+=== Manual Review Trigger ===
+
+REVIEW_TRIGGER: PARTIAL
+SNAPSHOT: OK
+ANALYZE: OK
+PROPOSE: FAILED
+PREVIEW: FAILED
+REVIEW: FAILED
+
+Warnings: ERROR_GENERATING_PROPOSALS, WARN_INSUFFICIENT_DATA
+```
+
+**JSON Mode** (with MERIDIAN_DEBUG=true):
+```json
+{
+  "status": "TRIGGERED",
+  "ranSnapshot": true,
+  "ranAnalyze": true,
+  "ranPropose": true,
+  "ranPreview": true,
+  "ranReview": true,
+  "warnings": []
+}
+```
+
+### Status Determination
+
+- **TRIGGERED**: All steps succeeded
+- **PARTIAL**: Some steps succeeded, some failed
+- **ERROR**: Snapshot read failed or fatal error
+
+All status transitions are defensive - the pipeline never throws exceptions.
+
+### Integration with Existing Flow
+
+PR178 leverages the complete analysis and review stack:
+
+**Data Sources**:
+- PR165: Snapshot storage
+- PR175: Regression history (for overlay)
+- PR176: Interaction history (for overlay)
+
+**Analysis Pipeline**:
+- PR166: Snapshot analysis
+- PR167: Proposal generation
+- PR170: Evidence collection
+- PR171: Preview generation
+- PR177: Risk overlay injection
+- PR172: Review checklist
+
+**Result**: Human gets comprehensive improvement proposals with:
+- Evidence from recent operation
+- Risk assessment from regression/interaction history
+- Review checklist with recommendations
+- All in one command
+
+### Non-Claims
+
+PR178 does **NOT**:
+- ❌ Stop or pause automatic execution
+- ❌ Modify trading logic or policy
+- ❌ Automatically adopt proposals
+- ❌ Affect TWAP engine or market response
+- ❌ Change any system state
+
+### What PR178 DOES
+
+- ✅ Run complete analysis pipeline on demand
+- ✅ Generate improvement proposals
+- ✅ Surface regression and interaction risks
+- ✅ Provide review checklist
+- ✅ Enable human inspection without stopping execution
+- ✅ Fail gracefully (defensive)
+
+### Operational Philosophy
+
+Meridian now operates in **two time scales**:
+
+**Market Time** (Automatic):
+- Execution: Continuous
+- Response: Real-time
+- Goal: Market participation
+
+**Strategy Time** (Manual):
+- Review: On-demand
+- Response: Hours/days
+- Goal: System improvement
+
+This separation enables:
+1. **Never miss market opportunities** (execution continues)
+2. **Thoughtful improvement** (review at human pace)
+3. **Professional risk management** (separate concerns)
+
+### Files
+
+- src/reviewTrigger/types.ts: Trigger types
+- src/reviewTrigger/guards.ts: Sanitization
+- src/reviewTrigger/pipeline.ts: Main orchestration logic
+- src/reviewTrigger/index.ts: Barrel exports
+- src/cli/review-trigger.ts: CLI tool
+- tests/pr178.review_trigger.test.ts: 14 comprehensive tests
+
+**Purpose**: Enable human-initiated comprehensive review without affecting automatic execution - separating market response from strategy improvement
