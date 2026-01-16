@@ -2,11 +2,13 @@
 /**
  * PR168: v1.4 Policy-First Adoption Loop - CLI
  * PR171: v1.4 Patch Preview Report v1 - CLI Integration
+ * PR172: v1.4 Patch Review Checklist + Decision Rationale v1 - CLI Integration
  *
  * Purpose:
  *   Policy-first adoption loop CLI that analyzes snapshots, generates proposals,
  *   builds patch plans, simulates replay compare, and decides ADOPT/HOLD/REJECT.
  *   PR171: Optionally generates preview reports before decision.
+ *   PR172: Optionally runs preview → review → decision flow with structured checklist.
  *
  * Constitutional Constraints:
  *   - READ-ONLY: No automatic application (proposals and comparison only)
@@ -22,6 +24,7 @@
  *   npx ts-node src/cli/adopt.ts --json
  *   npx ts-node src/cli/adopt.ts --preview
  *   npx ts-node src/cli/adopt.ts --preview-only
+ *   npx ts-node src/cli/adopt.ts --review
  *   MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --tail 500
  *   node dist/cli/adopt.js
  */
@@ -37,6 +40,8 @@ import { AdoptPriority } from "../adopt/types";
 import { generatePreviewV1 } from "../preview/previewer";
 import { appendPreviewV1 } from "../preview/store";
 import { formatPreviewLines } from "../preview/guards";
+import { reviewPatchPreviewV1 } from "../review/reviewer";
+import { formatReviewLines } from "../review/guards";
 
 /**
  * Parse CLI arguments
@@ -47,6 +52,7 @@ function parseArgs(): {
   json?: boolean;
   preview?: boolean;
   previewOnly?: boolean;
+  review?: boolean;
 } {
   const args = process.argv.slice(2);
   const result: {
@@ -55,6 +61,7 @@ function parseArgs(): {
     json?: boolean;
     preview?: boolean;
     previewOnly?: boolean;
+    review?: boolean;
   } = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -75,6 +82,8 @@ function parseArgs(): {
       result.preview = true;
     } else if (arg === "--preview-only") {
       result.previewOnly = true;
+    } else if (arg === "--review") {
+      result.review = true;
     }
   }
 
@@ -120,6 +129,46 @@ async function main(): Promise<void> {
       args.priority,
       tailN
     );
+
+    // PR172: Generate preview + review + decision if requested
+    if (args.review) {
+      // 1. Generate preview report
+      const previewReport = generatePreviewV1({
+        patchOps: adoptResult.patchPlan?.ops || [],
+        proposalId: adoptResult.proposalId,
+        priority: adoptResult.priority,
+        decisionCandidate: adoptResult.decision,
+        evidence: [], // Evidence would need to be passed from proposer if available
+        compareSignals: adoptResult.compare?.signals || [],
+      });
+
+      // Append to store
+      appendPreviewV1(previewReport);
+
+      // 2. Review the preview
+      const reviewReport = reviewPatchPreviewV1(previewReport);
+
+      // 3. Display: Preview summary → Review checklist → Decision rationale → Adoption decision
+      console.log("\n=== Preview Summary ===\n");
+      const previewLines = formatPreviewLines(previewReport, debugMode);
+      for (const line of previewLines) {
+        console.log(line);
+      }
+
+      console.log("\n=== Review Checklist ===\n");
+      const reviewLines = formatReviewLines(reviewReport, debugMode);
+      for (const line of reviewLines) {
+        console.log(line);
+      }
+
+      console.log("\n=== Adoption Decision (PR168) ===\n");
+      const adoptLines = formatAdoptResultLabelOnlyLines(adoptResult, debugMode);
+      for (const line of adoptLines) {
+        console.log(line);
+      }
+
+      return;
+    }
 
     // PR171: Generate preview report if requested
     if (args.preview || args.previewOnly) {

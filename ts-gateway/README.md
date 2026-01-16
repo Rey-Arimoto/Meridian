@@ -2956,3 +2956,201 @@ MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --preview
 - tests/pr171.preview.test.ts: 12 comprehensive tests
 
 **Purpose**: Show human-readable change previews before adoption, supporting Policy-First review
+
+## PR172: Patch Review Checklist + Decision Rationale v1
+
+### Purpose
+Add structured review checklists and decision rationale to PR171's previews.
+Provides standardized safety checks and reasoning before adoption (READ-ONLY, no automatic adoption).
+
+While PR171 generates human-readable previews, PR172 adds **structured review** that evaluates:
+- 6 fixed safety checklist items (PASS/FAIL/UNKNOWN)
+- Decision rationale (CANDIDATE_ADOPT/HOLD/REJECT)
+- Supporting reasons (label-only)
+
+This enables **policy-first review**: Users see checklist results and rationale before deciding to adopt changes.
+
+### Constitutional Constraints
+- **READ-ONLY**: Review generation only (suggests decision, does not auto-adopt)
+- **Fixed rules**: All checklist items predetermined (no learning, no optimization)
+- **Label-only**: All output is sanitized (no numerics in normal mode)
+- **Defensive**: Never throws, always returns result
+- **Safety-first**: NOT_REVIEWABLE checks have highest priority
+- **Forbidden patterns**: Token literals, trading vocab, addresses, prescriptive language
+
+### Review Model
+
+**Review Checklist Item**:
+```typescript
+{
+  id: string;                    // Check ID (e.g., "CHECK_NO_NOT_ALLOWED_PATCH")
+  label: string;                 // Human-readable label
+  status: ChecklistItemStatus;   // PASS, FAIL, UNKNOWN
+  detail?: string;               // Optional detail (label-only)
+}
+```
+
+**Decision Rationale**:
+```typescript
+{
+  decisionCandidate: DecisionCandidate;  // CANDIDATE_ADOPT, CANDIDATE_HOLD, CANDIDATE_REJECT
+  reasons: string[];                      // Supporting reasons (label-only)
+}
+```
+
+**Review Report** (full review result):
+```typescript
+{
+  kind: "PATCH_REVIEW_V1";
+  status: ReviewStatus;           // REVIEWABLE, NOT_REVIEWABLE, ERROR
+  checklist: ReviewChecklistItem[];  // 6 fixed checks
+  rationale: DecisionRationale;      // Decision + reasons
+  warnings: string[];                // Non-fatal issues
+  ts: number;                        // Timestamp
+}
+```
+
+### Fixed Checklist Items (6 Checks)
+
+1. **CHECK_NO_NOT_ALLOWED_PATCH**: No safety-reducing patches present
+   - FAIL if PATCH_NOT_ALLOWED in patchOps
+   - PASS otherwise
+
+2. **CHECK_PREVIEW_REVIEWABLE**: Preview marked as reviewable
+   - FAIL if NOT_REVIEWABLE in readiness
+   - PASS otherwise
+
+3. **CHECK_HAS_EVIDENCE**: Supporting evidence present
+   - FAIL if evidence.length === 0
+   - PASS otherwise
+
+4. **CHECK_NO_WORSENING_SIGNAL**: No worsening signals in comparison
+   - FAIL if WORSENED in compareSignals
+   - PASS otherwise
+
+5. **CHECK_SCOPE_NOT_MULTI**: Change scope limited to single area
+   - FAIL if patchOps.length > 2
+   - PASS otherwise
+
+6. **CHECK_PRIORITY_P0_SAFE**: P0 priority has strong evidence
+   - FAIL if priority === "P0" and no strong evidence
+   - PASS otherwise
+
+### Decision Rationale Rules
+
+**Priority Order** (highest to lowest):
+
+1. **CANDIDATE_REJECT** (safety issues):
+   - REASON_PREVIEW_NOT_REVIEWABLE
+   - REASON_PATCH_NOT_ALLOWED_PRESENT
+   - REASON_COMPARE_SHOWS_WORSENING
+
+2. **CANDIDATE_HOLD** (weak evidence or multi-area):
+   - REASON_CHECKLIST_FAILURES
+   - REASON_INSUFFICIENT_CONFIRMATION
+   - REASON_EVIDENCE_WEAK_ONLY
+   - REASON_NO_EVIDENCE
+   - REASON_MULTI_AREA_CHANGE
+
+3. **CANDIDATE_ADOPT** (all checks pass):
+   - REASON_STRONG_EVIDENCE_PRESENT
+   - REASON_NO_WORSENING_SIGNAL
+   - REASON_CHANGE_SCOPE_LIMITED
+
+### Review CLI
+
+Review patch preview reports:
+```bash
+# Review most recent preview
+npx ts-node src/cli/review.ts
+
+# Review specific proposal
+npx ts-node src/cli/review.ts --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# JSON output
+npx ts-node src/cli/review.ts --json
+
+# Debug mode (shows check details)
+MERIDIAN_DEBUG=true npx ts-node src/cli/review.ts
+```
+
+### Adopt CLI with Review
+
+Run preview → review → decision flow:
+```bash
+# Full review flow (preview + review + decision)
+npx ts-node src/cli/adopt.ts --review
+
+# Display order:
+# 1. Preview summary
+# 2. Review checklist
+# 3. Decision rationale
+# 4. Adoption decision (PR168)
+
+# With debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --review
+```
+
+### Example Output
+
+**Normal Mode** (label-only):
+```
+=== Preview Summary ===
+Proposal: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+Priority: P0
+Status: COMPLETE
+...
+
+=== Review Checklist ===
+✓ [PASS] No safety-reducing patches present
+✓ [PASS] Preview marked as reviewable
+✓ [PASS] Supporting evidence present
+✓ [PASS] No worsening signals in comparison
+✓ [PASS] Change scope limited to single area
+✓ [PASS] P0 priority has strong evidence
+
+=== Decision Rationale ===
+Suggested Decision: CANDIDATE_ADOPT
+
+Reasons:
+  - REASON_STRONG_EVIDENCE_PRESENT
+  - REASON_NO_WORSENING_SIGNAL
+  - REASON_CHANGE_SCOPE_LIMITED
+```
+
+**Debug Mode** (with details):
+```
+MERIDIAN_DEBUG=true enables:
+- Check evaluation details
+- Numeric timestamps
+- Additional warnings
+```
+
+### Non-Claims
+
+**Review does NOT**:
+- ❌ Automatically adopt changes
+- ❌ Learn from patterns or optimize rules
+- ❌ Make final decisions (READ-ONLY suggestions only)
+- ❌ Display numeric values in normal mode
+- ❌ Use prescriptive language ("should", "must", "will")
+
+**Review DOES**:
+- ✅ Evaluate 6 fixed checklist items
+- ✅ Generate decision rationale (ADOPT/HOLD/REJECT)
+- ✅ Use predetermined rules only
+- ✅ Sanitize all output (label-only)
+- ✅ Fail gracefully (defensive)
+
+### Files
+
+- src/review/types.ts: Review types
+- src/review/rules.ts: Fixed checklist items and decision rules
+- src/review/guards.ts: Sanitization and formatting
+- src/review/reviewer.ts: Review engine
+- src/review/index.ts: Barrel exports
+- src/cli/review.ts: Review viewing CLI
+- src/cli/adopt.ts: Updated with --review option
+- tests/pr172.review_checklist.test.ts: 12 comprehensive tests
+
+**Purpose**: Provide structured safety checklists and decision rationale before adoption, supporting Policy-First review
