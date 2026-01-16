@@ -3797,3 +3797,237 @@ PR175 does **NOT**:
 - tests/pr175.regression_guard.test.ts: 14 comprehensive tests
 
 **Purpose**: Monitor patch effectiveness persistence using READ-ONLY observation and fixed detection rules
+
+## PR176: Change Interaction Detector v1 (Patch Coupling Risk)
+
+### Purpose
+Detect patch coupling/interaction risks when multiple patches are adopted close together in time.
+While individual patches may test well in isolation, combining them can create unexpected problems.
+
+PR176 reads PR173 decisions.log and PR174 effects.log (and optionally PR175 regressions.log) to detect patterns like:
+- Multiple adoptions in tight time window (≤30min)
+- Regression appearing after pair of adoptions
+- Effect worsening after pair of adoptions
+- Coupling risk score exceeding threshold
+
+This enables **相互作用リスク検知** (interaction risk detection): Users can objectively identify when patch combinations may be harmful.
+
+### Constitutional Constraints
+- **READ-ONLY**: Observation only (no automatic adoption/revert)
+- **Fixed rules**: Hardcoded detection logic and thresholds (no learning)
+- **Label-only**: Display mode sanitizes numerics (debug mode allows)
+- **Defensive**: Never throws, always returns valid report
+- **Append-only**: Audit trail in ~/.meridian/interactions.log
+
+### Interaction Model
+
+**Interaction Report**:
+```typescript
+{
+  kind: "INTERACTION_REPORT_V1";
+  status: InteractionStatus;        // AVAILABLE, PARTIAL, ERROR
+
+  // Patch pair identity
+  primaryProposalId?: string;
+  secondaryProposalId?: string;
+  primaryDecision?: "ADOPT" | "HOLD" | "REJECT" | "UNKNOWN";
+  secondaryDecision?: "ADOPT" | "HOLD" | "REJECT" | "UNKNOWN";
+
+  // Interaction analysis
+  interaction: InteractionDecision;  // INTERACTION_DETECTED, NO_INTERACTION, UNKNOWN
+  interactionKind: InteractionKind;  // INT_PATCH_PAIR_REGRESSION, etc.
+  strength: InteractionStrength;     // STRONG, MEDIUM, WEAK, UNKNOWN
+
+  // Time labels only
+  window: InteractionWindowLabel;    // W_TIGHT, W_NORMAL, W_WIDE
+  timeLabel: InteractionTimeLabel;   // T_RECENT, T_MIN, T_HOUR, T_OLD
+
+  // Explainability
+  evidence: InteractionEvidence[];   // Max 3 pieces (label-only)
+  warnings: string[];
+
+  ts: number;                        // Internal storage only
+}
+```
+
+**Interaction Evidence**:
+```typescript
+{
+  kind: "EVID_DECISION" | "EVID_EFFECT" | "EVID_REGRESSION" | "EVID_NONE";
+  label: string;          // Label-only (no numbers/tokens)
+  strength: InteractionStrength;
+}
+```
+
+### Fixed Detection Parameters
+
+**Time Windows** (coarse classification):
+- `W_TIGHT`: ≤ 30 minutes between adoptions
+- `W_NORMAL`: ≤ 6 hours between adoptions
+- `W_WIDE`: ≤ 24 hours between adoptions
+- Beyond 24h: Not considered for interaction
+
+**Scoring** (internal only, not displayed):
+- Window scoring: W_TIGHT +2, W_NORMAL +1
+- Regression involved: +3
+- Effect worsened: +2
+- Coupling risk threshold: ≥ 4 points
+
+**Minimum Requirements**:
+- At least 2 ADOPT decisions for pairing
+- Effects/regressions are optional (improve evidence if available)
+
+### Detection Priority (first-match-wins)
+
+1. **INT_PATCH_PAIR_REGRESSION** (STRONG)
+   - Regression detected after pair adoption
+   - Evidence: EVID_REGRESSION with "REGRESSION_DETECTED_AFTER_PAIR"
+
+2. **INT_COUPLING_RISK_HIGH** (STRONG/MEDIUM)
+   - Internal coupling risk score ≥ threshold
+   - Multiple evidence pieces combined
+
+3. **INT_PATCH_FOLLOWS_WORSENING** (MEDIUM)
+   - Effect worsened observed after pair
+   - Evidence: EVID_EFFECT with "EFFECT_WORSENED_AFTER_PAIR"
+
+4. **INT_MULTIPLE_ADOPTS_SAME_WINDOW** (MEDIUM/WEAK)
+   - Multiple adoptions in tight/normal window
+   - Evidence: EVID_DECISION with window label
+
+5. **INT_UNKNOWN**
+   - Ambiguous or insufficient data
+
+### Interaction CLI
+
+Detect patch coupling risks:
+
+```bash
+# View stored interaction reports
+npx ts-node src/cli/interaction.ts
+
+# Analyze decisions and detect new interactions
+npx ts-node src/cli/interaction.ts --analyze
+
+# Specify tail
+npx ts-node src/cli/interaction.ts --tail 50
+
+# Filter by proposal (matches primary or secondary)
+npx ts-node src/cli/interaction.ts --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# JSON output
+npx ts-node src/cli/interaction.ts --json
+
+# Debug mode (show numerics)
+MERIDIAN_DEBUG=true npx ts-node src/cli/interaction.ts --analyze
+```
+
+### Example Output
+
+**Normal Mode** (label-only):
+```
+=== Interaction Report V1 ===
+
+Status: AVAILABLE
+Primary: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+Secondary: P0_ANOTHER_PATCH
+
+Primary Decision: ADOPT
+Secondary Decision: ADOPT
+
+Interaction: INTERACTION_DETECTED
+Kind: INT_PATCH_PAIR_REGRESSION
+Strength: STRONG
+Window: W_TIGHT
+Time: T_RECENT
+
+Evidence:
+  - [EVID_REGRESSION] REGRESSION_DETECTED_AFTER_PAIR (STRONG)
+  - [EVID_DECISION] ADOPT_WINDOW_TIGHT (MEDIUM)
+```
+
+**Debug Mode** (with numerics):
+```json
+{
+  "kind": "INTERACTION_REPORT_V1",
+  "status": "AVAILABLE",
+  "primaryProposalId": "P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE",
+  "secondaryProposalId": "P0_ANOTHER_PATCH",
+  "primaryDecision": "ADOPT",
+  "secondaryDecision": "ADOPT",
+  "interaction": "INTERACTION_DETECTED",
+  "interactionKind": "INT_PATCH_PAIR_REGRESSION",
+  "strength": "STRONG",
+  "window": "W_TIGHT",
+  "timeLabel": "T_RECENT",
+  "evidence": [
+    {
+      "kind": "EVID_REGRESSION",
+      "label": "REGRESSION_DETECTED_AFTER_PAIR",
+      "strength": "STRONG"
+    },
+    {
+      "kind": "EVID_DECISION",
+      "label": "ADOPT_WINDOW_TIGHT",
+      "strength": "MEDIUM"
+    }
+  ],
+  "warnings": [],
+  "ts": 1705430400000
+}
+```
+
+### Integration with Proposal/Review/Adopt Flow
+
+PR176 strengthens the improvement loop by identifying coupling risks:
+
+1. **PR167**: Propose patch based on analysis
+2. **PR171**: Preview shows known interaction risks ← PR176 data
+3. **PR172**: Review checklist considers coupling risk ← PR176 data
+4. **PR168**: Adopt planning avoids simultaneous adoption ← PR176 data
+5. **PR173**: Acknowledge adoption decision
+6. **PR174**: Measure immediate effectiveness
+7. **PR175**: Monitor persistence over time
+8. **PR176**: Detect coupling when multiple patches interact ← NEW
+9. **Back to PR167**: Use interaction evidence in next proposal
+
+**Example Flow**:
+- User adopts Patch A (reduce oracle blocks)
+- 15 minutes later, adopts Patch B (adjust slippage limits)
+- PR174: Both show IMPROVED immediately
+- PR175: A shows regression after B adoption
+- PR176: Detects INT_PATCH_PAIR_REGRESSION
+- Evidence: "Patches A and B adopted in W_TIGHT window, regression detected"
+- Next review: Checklist warns about coupling risk
+- Adopt planning: Suggests spacing out similar patches
+
+### Non-Claims
+
+PR176 does **NOT**:
+- ❌ Perform causal inference (correlation only, not causation)
+- ❌ Automatically prevent adoptions (READ-ONLY observation only)
+- ❌ Learn or optimize thresholds (fixed rules)
+- ❌ Predict future interactions (pattern detection only)
+- ❌ Provide trading advice (operational health monitoring only)
+
+### What PR176 DOES
+
+- ✅ Detect coupling patterns using fixed rules
+- ✅ Identify adoption pairs close in time
+- ✅ Correlate pairs with regressions/worsening
+- ✅ Provide label-only evidence (normal mode)
+- ✅ Strengthen proposal/review with coupling data
+- ✅ Fail gracefully (defensive)
+
+### Files
+
+- src/interaction/types.ts: Interaction types
+- src/interaction/guards.ts: Sanitization and formatting
+- src/interaction/reader.ts: Read decisions/effects/regressions logs
+- src/interaction/detector.ts: Interaction detection logic
+- src/interaction/store.ts: JSONL storage
+- src/interaction/index.ts: Barrel exports
+- src/cli/interaction.ts: Interaction detection CLI
+- tests/pr176.interaction_detector.test.ts: 14 comprehensive tests
+
+**Purpose**: Detect patch coupling/interaction risks using READ-ONLY observation and fixed detection rules
