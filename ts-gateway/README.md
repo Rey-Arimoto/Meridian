@@ -4528,3 +4528,173 @@ Append-only JSONL logs:
 5. **Human control**: Activation requires explicit ACK
 
 **Purpose**: Require human ACK to activate new specs while maintaining real-time execution with stable ACKed specs - separating spec generation from spec activation.
+
+---
+
+## PR180: Spec Change Digest v1
+
+### Purpose
+
+PR179 introduced human ACK gates for spec activation. However, if the "reading cost" of ACK is high, improvement stalls. PR180 compresses pre-ACK information into a single screen (label-only) to answer:
+- **What is changing?**
+- **Why change it?**
+- **Are there risks?**
+- **What is the expected impact?**
+
+Execution (trading) never stops. Only "reading spec changes without understanding" is prevented. PR180 makes "reading" dramatically lighter.
+
+### Problem
+
+Without PR180:
+- ACK requires reading: spec lock + patch plan + preview + review + decision
+- Too much information → ACK backlog → improvement stalls
+- Reading cost becomes adoption bottleneck
+
+With PR180:
+- All information compressed into single digest (label-only)
+- HEADLINE/WHY/WHAT/RISKS/CHECKLIST/RATIONALE in one view
+- Reading time: seconds instead of minutes
+- ACK throughput increases → improvement loop accelerates
+
+### Digest Structure
+
+```
+HEADLINE: What is happening
+  - PENDING_ACK
+  - HAS_PREVIEW
+  - HAS_REVIEW
+  - HAS_PATCHPLAN
+
+WHY: Why change
+  - EVIDENCE_ORACLE_DOMINANT
+  - BOTTLENECK_ORACLE
+
+WHAT: What changes
+  - PATCH_GATE_ORDER
+  - PATCH_PHASE_POLICY
+
+RISKS: What to watch
+  - RISK_PATCH_NOT_ALLOWED_PRESENT
+  - RISK_CHECKLIST_FAIL_PRESENT
+
+CHECKLIST: Review summary
+  - CHECK_EVIDENCE_PASS
+  - CHECK_REGRESSION_PASS
+
+RATIONALE: Decision basis
+  - (from PR172 review rationale)
+
+SUGGESTED_NEXT: ACK_OK|ACK_HOLD|ACK_REJECT|ACK_UNKNOWN
+
+REFS: What was referenced
+  - hasSpecLock: true
+  - hasPatchPlan: true
+  - hasPreview: true
+  - hasReview: true
+```
+
+### Constitutional Constraints
+
+- **READ-ONLY**: Digest generation is observation/summary only
+- **Fixed rules**: Template/extraction/formatting are fixed rules
+- **Label-only**: No numerics, prices, addresses, tokens, specific times in normal mode
+- **Debug mode**: MERIDIAN_DEBUG=true allows internal JSON (but secrets always sanitized)
+- **Defensive**: Never throws
+- **No coupling**: Digest is "reading material", not execution instruction
+
+### CLI Usage
+
+```bash
+# View latest digest (label-only)
+npx ts-node src/cli/digest.ts
+
+# View recent digests
+npx ts-node src/cli/digest.ts --tail 20
+
+# JSON format
+npx ts-node src/cli/digest.ts --json
+
+# Debug mode (internal timestamps)
+MERIDIAN_DEBUG=true npx ts-node src/cli/digest.ts --json
+```
+
+### Inputs (Loosely Coupled)
+
+Digest can reference (when available):
+- PR179: Spec lock status
+- PR168: Patch plan
+- PR171: Preview
+- PR172: Review
+- PR173: Decision ACK
+- PR174: Effects (optional)
+- PR169: Attribution (optional)
+- PR170: Evidence (optional)
+
+All inputs are optional. Missing inputs → PARTIAL status + warnings.
+
+### Extraction Rules (Fixed)
+
+**Headline** (what is happening):
+- Spec lock status
+- Preview/review availability
+- Decision ACK presence
+
+**What** (what changes):
+- Patch ops (max 3, order preserved)
+
+**Why** (why change):
+- Strong/medium evidence (max 3)
+- Bottlenecks (max 2)
+
+**Risks** (what to watch):
+- Preview risks (max 3)
+- Checklist failures
+- NOT_ALLOWED patches
+
+**Suggested Next** (reading recommendation, not command):
+- CANDIDATE_ADOPT → ACK_OK
+- CANDIDATE_HOLD → ACK_HOLD
+- CANDIDATE_REJECT → ACK_REJECT
+
+### Non-Claims
+
+PR180 does **NOT**:
+- ❌ Make predictions or forecasts
+- ❌ Issue execution instructions
+- ❌ Automatically adopt or ACK
+- ❌ Learn or optimize
+- ❌ Modify any system state
+
+### What PR180 DOES
+
+- ✅ Compress multi-source information
+- ✅ Extract key signals using fixed rules
+- ✅ Sanitize to label-only format
+- ✅ Store digests for audit trail
+- ✅ Reduce reading cost dramatically
+- ✅ Enable faster ACK throughput
+
+### Why This Matters for Policy-First
+
+1. **PR179**: Separated execution from spec activation
+2. **PR180**: Reduced spec reading cost to near-zero
+3. **Result**: ACK throughput increases → improvement loop accelerates
+4. **Benefit**: Real-time execution maintained + fast improvement
+
+### Files
+
+- src/digest/types.ts: Digest types
+- src/digest/guards.ts: Label-only sanitization
+- src/digest/templates.ts: Fixed extraction rules
+- src/digest/digester.ts: Digest builder
+- src/digest/store.ts: Append-only JSONL logs
+- src/digest/index.ts: Barrel exports
+- src/cli/digest.ts: CLI tool
+- tests/pr180.digest.test.ts: 14 comprehensive tests
+
+### Storage
+
+Append-only JSONL log:
+- `~/.meridian/digests.log`
+
+**Purpose**: Compress pre-ACK reading cost from minutes to seconds using label-only fixed-rule extraction - enabling fast ACK throughput while maintaining execution safety.
