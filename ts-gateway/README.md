@@ -2792,3 +2792,167 @@ Same as PR167:
 - `tests/pr170.propose_evidence.test.ts`: 12 comprehensive tests
 
 **Purpose**: Identify causal chains to understand "why" outcomes occur, supporting Policy-First improvement, NOT causal inference or automatic optimization
+
+---
+
+## PR171: Patch Preview Report v1
+
+### Purpose
+Convert PR168's PatchPlan to human-readable change previews for adoption review.
+Shows "what will change" before adoption (READ-ONLY, no automatic application).
+
+While PR168 generates PatchPlan with technical operations (PATCH_PHASE_POLICY, PATCH_GATE_ORDER, etc.), PR171 converts these into **human-readable previews** that explain:
+- What will change (which policy areas affected)
+- Safety implications (Policy-First risk detection)
+- Supporting evidence (proposal + attribution + compare signals)
+
+This enables **review before adoption**: Users can read preview reports before deciding to adopt changes.
+
+### Constitutional Constraints
+- **READ-ONLY**: Report generation only (no automatic adoption, no code changes)
+- **Fixed mapping**: patch op → report sections (predetermined templates)
+- **Label-only**: All output is sanitized (no numerics in normal mode)
+- **Defensive**: Never throws, always returns result
+- **Forbidden patterns**: Token literals, trading vocab, addresses, numerics (normal mode)
+
+### Preview Model
+
+**Preview Section** (one per patch operation):
+```typescript
+{
+  title: string;        // Section title (e.g., "SECTION_GATE_PRIORITY")
+  before: string[];     // Before state (label-only)
+  after: string[];      // After state (label-only)
+  notes: string[];      // Explanatory notes (label-only)
+}
+```
+
+**Preview Report** (full change preview):
+```typescript
+{
+  kind: "PATCH_PREVIEW_V1";
+  status: PreviewStatus;              // AVAILABLE, PARTIAL, ERROR
+  proposalId?: string;                 // From PR167
+  priority?: "P0" | "P1" | "P2";      // From PR167
+  decisionCandidate?: "ADOPT" | "HOLD" | "REJECT";  // From PR168
+  patchOps: string[];                  // Patch operations (label-only)
+  sections: PreviewSection[];          // One per patchOp
+  riskLabels: string[];                // Risk warnings (label-only)
+  readiness: string[];                 // Readiness status (label-only)
+  evidence: Array<...>;                // From PR170 (max 3, strength-sorted)
+  compareSignals: string[];            // From PR168 (label-only)
+  warnings: string[];                  // Non-fatal issues
+  timeLabel: PreviewTimeLabel;         // T_RECENT, T_MIN, T_HOUR, T_OLD, T_UNKNOWN
+  ts: number;                          // Timestamp (for storage)
+}
+```
+
+### Fixed Mapping (Patch Op → Section)
+
+**PATCH_PHASE_POLICY**:
+- Title: SECTION_PHASE_POLICY
+- Before: BEFORE_STOP_RULES_CURRENT
+- After: AFTER_STOP_RULES_TUNED
+- Notes: NOTE_STOP_WAIT_BALANCE_CHANGED, NOTE_SAFETY_CONSTRAINTS_PRESERVED
+
+**PATCH_GATE_ORDER**:
+- Title: SECTION_GATE_PRIORITY
+- Before: BEFORE_GATE_PRIORITY_CURRENT
+- After: AFTER_GATE_PRIORITY_REORDERED
+- Notes: NOTE_BLOCK_REASON_SHIFT_EXPECTED
+
+**PATCH_ROUTER_TIEBREAK**:
+- Title: SECTION_ROUTER_TIEBREAK
+- Before: BEFORE_ROUTE_TIEBREAK_CURRENT
+- After: AFTER_ROUTE_TIEBREAK_CHANGED
+- Notes: NOTE_EXECUTION_PATH_VARIANCE
+
+**PATCH_NOT_ALLOWED**:
+- Title: SECTION_NOT_ALLOWED
+- Before: BEFORE_PATCH_NOT_ALLOWED_PRESENT
+- After: AFTER_PATCH_NOT_ALLOWED_REJECT_EXPECTED
+- Notes: NOTE_POLICY_FIRST_REJECT
+- Risk: RISK_PATCH_NOT_ALLOWED_PRESENT
+- Readiness: NOT_REVIEWABLE_REJECT_EXPECTED
+
+### Preview CLI
+
+View and filter preview reports from previews.log:
+```bash
+# View all recent previews
+npx ts-node src/cli/preview.ts
+
+# Tail N most recent
+npx ts-node src/cli/preview.ts --tail 10
+
+# Filter by proposal ID
+npx ts-node src/cli/preview.ts --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# Filter by priority
+npx ts-node src/cli/preview.ts --priority P0
+
+# Filter by decision
+npx ts-node src/cli/preview.ts --decision ADOPT
+
+# JSON output
+npx ts-node src/cli/preview.ts --json
+
+# Debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/preview.ts --tail 10
+```
+
+### Adopt CLI with Preview
+
+Generate preview reports during adoption loop:
+```bash
+# With preview (generates and saves preview before decision)
+npx ts-node src/cli/adopt.ts --preview
+
+# Preview only (generates preview, skips decision display)
+npx ts-node src/cli/adopt.ts --preview-only
+
+# Preview with debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --preview
+```
+
+### Storage
+
+**JSONL Append-Only Log**:
+- Path: ~/.meridian/previews.log
+- Format: One JSON object per line
+- Defensive: Corrupt lines skipped with warnings
+
+**Environment Variables**:
+- MERIDIAN_PREVIEW_PATH: Preview log path
+- MERIDIAN_DEBUG: Set to "true" to enable debug mode
+
+### Non-Claims
+
+**Preview does NOT**:
+- ❌ Automatically apply changes
+- ❌ Modify code or policies
+- ❌ Provide trading advice
+- ❌ Learn from patterns
+- ❌ Display numeric values in normal mode
+
+**Preview DOES**:
+- ✅ Convert PatchPlan to human-readable sections
+- ✅ Show what will change (before/after/notes)
+- ✅ Detect Policy-First risks
+- ✅ Include supporting evidence (max 3)
+- ✅ Use fixed templates
+- ✅ Fail gracefully
+
+### Files
+
+- src/preview/types.ts: Preview types
+- src/preview/guards.ts: Sanitization and formatting
+- src/preview/templates.ts: Fixed patch op mapping
+- src/preview/previewer.ts: Preview generation engine
+- src/preview/store.ts: JSONL storage
+- src/preview/index.ts: Barrel exports
+- src/cli/preview.ts: Preview viewing CLI
+- src/cli/adopt.ts: Updated with --preview options
+- tests/pr171.preview.test.ts: 12 comprehensive tests
+
+**Purpose**: Show human-readable change previews before adoption, supporting Policy-First review

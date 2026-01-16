@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
  * PR168: v1.4 Policy-First Adoption Loop - CLI
+ * PR171: v1.4 Patch Preview Report v1 - CLI Integration
  *
  * Purpose:
  *   Policy-first adoption loop CLI that analyzes snapshots, generates proposals,
  *   builds patch plans, simulates replay compare, and decides ADOPT/HOLD/REJECT.
+ *   PR171: Optionally generates preview reports before decision.
  *
  * Constitutional Constraints:
  *   - READ-ONLY: No automatic application (proposals and comparison only)
@@ -18,6 +20,8 @@
  *   npx ts-node src/cli/adopt.ts --tail 500
  *   npx ts-node src/cli/adopt.ts --tail 500 --priority P0
  *   npx ts-node src/cli/adopt.ts --json
+ *   npx ts-node src/cli/adopt.ts --preview
+ *   npx ts-node src/cli/adopt.ts --preview-only
  *   MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --tail 500
  *   node dist/cli/adopt.js
  */
@@ -30,6 +34,9 @@ import {
   isDebugMode,
 } from "../adopt/guards";
 import { AdoptPriority } from "../adopt/types";
+import { generatePreviewV1 } from "../preview/previewer";
+import { appendPreviewV1 } from "../preview/store";
+import { formatPreviewLines } from "../preview/guards";
 
 /**
  * Parse CLI arguments
@@ -38,10 +45,17 @@ function parseArgs(): {
   tail?: number;
   priority?: AdoptPriority;
   json?: boolean;
+  preview?: boolean;
+  previewOnly?: boolean;
 } {
   const args = process.argv.slice(2);
-  const result: { tail?: number; priority?: AdoptPriority; json?: boolean } =
-    {};
+  const result: {
+    tail?: number;
+    priority?: AdoptPriority;
+    json?: boolean;
+    preview?: boolean;
+    previewOnly?: boolean;
+  } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -57,6 +71,10 @@ function parseArgs(): {
       i++;
     } else if (arg === "--json") {
       result.json = true;
+    } else if (arg === "--preview") {
+      result.preview = true;
+    } else if (arg === "--preview-only") {
+      result.previewOnly = true;
     }
   }
 
@@ -102,6 +120,36 @@ async function main(): Promise<void> {
       args.priority,
       tailN
     );
+
+    // PR171: Generate preview report if requested
+    if (args.preview || args.previewOnly) {
+      const previewReport = generatePreviewV1({
+        patchOps: adoptResult.patchPlan?.ops || [],
+        proposalId: adoptResult.proposalId,
+        priority: adoptResult.priority,
+        decisionCandidate: adoptResult.decision,
+        evidence: [], // Evidence would need to be passed from proposer if available
+        compareSignals: adoptResult.compare?.signals || [],
+      });
+
+      // Append to store
+      appendPreviewV1(previewReport);
+
+      if (debugMode || args.previewOnly) {
+        console.log("\n=== Preview Report ===\n");
+        const previewLines = formatPreviewLines(previewReport, debugMode);
+        for (const line of previewLines) {
+          console.log(line);
+        }
+      } else {
+        console.log("\nPREVIEW_AVAILABLE: Patch preview saved to previews.log\n");
+      }
+
+      // If preview-only, stop here
+      if (args.previewOnly) {
+        return;
+      }
+    }
 
     // Display based on mode
     if (args.json) {
