@@ -63,6 +63,17 @@ export interface MeridianStateV1 {
     notes: string[]; // label-only
   };
 
+  // PR181: Observe state (1s loop updates)
+  observeState?: {
+    status: "AVAILABLE" | "PARTIAL" | "ERROR";
+    phaseLabel: string; // PHASE_*
+    trendLabel: string; // UP_TREND | DOWN_TREND | RANGE | UNKNOWN
+    labelsPresence: string; // HAS_LABELS | NO_LABELS
+    oracleStatus: string; // AVAILABLE | STALE | ERROR | UNKNOWN
+    stopSignal: string; // STOP | NO_STOP | UNKNOWN
+    warnings: string[]; // label-only
+  };
+
   // Warnings (label-only)
   warnings: string[];
 }

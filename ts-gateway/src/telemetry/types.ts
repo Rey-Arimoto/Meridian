@@ -33,6 +33,11 @@ export type TelemetryEventType =
   | "SPEC_LOCK_ERROR" // Spec lock error (PR179)
   | "SPEC_ACK_WRITTEN" // Spec ACK written (PR179)
   | "SPEC_RECORD_WRITTEN" // Spec record written (PR179)
+  | "OBSERVE_TICK" // Observe loop tick (PR181)
+  | "OBSERVE_STATE" // Observe state updated (PR181)
+  | "OBSERVE_ERROR" // Observe error (PR181)
+  | "STOP_SIGNAL_RAISED" // STOP signal raised (PR181)
+  | "STOP_SIGNAL_CLEARED" // STOP signal cleared (PR181)
   | "ERROR"; // Error occurred
 
 /**

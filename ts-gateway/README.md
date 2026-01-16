@@ -4698,3 +4698,155 @@ Append-only JSONL log:
 - `~/.meridian/digests.log`
 
 **Purpose**: Compress pre-ACK reading cost from minutes to seconds using label-only fixed-rule extraction - enabling fast ACK throughput while maintaining execution safety.
+
+---
+
+## PR181: Observe 1s Loop + Chunk 10s + Immediate STOP v1
+
+### Purpose
+
+Trading requires real-time responsiveness. Observation updates every 1 second to keep state (shock/stress/trend/labels) current. Execution uses 10-second chunk intervals (PR160 FAST profile continued). When market deterioration is detected, STOP is immediate (including sleep interruption).
+
+### Problem
+
+Without PR181:
+- Observation frequency unclear or too slow
+- State becomes stale between ticks
+- STOP detection delayed until next tick
+- Sleep cannot be interrupted → delayed response
+
+With PR181:
+- Observation: 1-second fixed interval
+- State: Always current (phase, trend, oracle, labels)
+- STOP: Immediate via AbortSignal
+- Sleep: Interruptible for instant STOP response
+
+### Fixed Rules
+
+**1. Observation Loop: 1 second**
+- OBSERVE_INTERVAL_MS = 1000 (fixed)
+- Every 1 second:
+  1. observeAndLabel() (PR154)
+  2. Shock Phase determination
+  3. Stress/Policy latest (PR150/156)
+  4. Trend (UP/DOWN/RANGE) determination
+  5. Save to ObserveStateV1 in state
+
+**2. Chunk Execution: 10 seconds**
+- CHUNK_INTERVAL_MS = 10_000 (PR160 continued)
+- Execution start: Immediate when conditions met
+- Next chunk interval: 10 seconds only
+- Large execution divided into 10-second chunks
+
+**3. STOP: Immediate (sleep interruption)**
+- Runner sleepMs(ms, signal) supports AbortSignal
+- sleepMs(ms, signal): Resolves immediately on abort
+- Observe loop detects STOP → updates global StopToken
+- Runner checks stopToken before each chunk/quote/gate/sleep
+- Immediate STOP on detection
+
+### STOP Conditions (Fixed Table)
+
+STOP signal triggered when:
+1. **Phase**: PHASE_UNKNOWN, PHASE_ERROR, PHASE_PRE_SHOCK, PHASE_UP_SHOCK, PHASE_DOWN_SHOCK, PHASE_UP_REVERSAL, PHASE_DOWN_REVERSAL
+2. **Oracle**: STALE or ERROR status
+3. **HardStop**: active=true (PR156)
+4. **Spec Lock**: LOCKED_PENDING_ACK without activeSpec (PR179)
+
+NO_STOP when:
+- Phase: PHASE_NORMAL or PHASE_RECOVERY
+- Oracle: AVAILABLE
+- HardStop: inactive
+- Spec Lock: ACKed or has activeSpec
+
+### Data Structures
+
+**ObserveStateV1** (saved to state):
+```typescript
+{
+  status: "AVAILABLE" | "PARTIAL" | "ERROR",
+  phaseLabel: "PHASE_*",
+  trendLabel: "UP_TREND" | "DOWN_TREND" | "RANGE" | "UNKNOWN",
+  labelsPresence: "HAS_LABELS" | "NO_LABELS",
+  oracleStatus: "AVAILABLE" | "STALE" | "ERROR" | "UNKNOWN",
+  stopSignal: "STOP" | "NO_STOP" | "UNKNOWN",
+  warnings: string[] // label-only
+}
+```
+
+**StopTokenV1** (in-memory):
+```typescript
+{
+  status: "STOP" | "CLEAR",
+  reason: string, // label-only
+  tsLabel: "T_RECENT" | "T_MIN" | "T_HOUR" | "T_OLD" | "T_UNKNOWN"
+}
+```
+
+### Constitutional Constraints
+
+- **Fixed rules**: No learning, optimization, or prediction
+- **READ-ONLY**: Observation updates state only
+- **Double-key preserved**: PR156 + PR179 still control execution
+- **Label-only**: No numerics in normal mode (debug only)
+- **Defensive**: Never throws, always returns result
+
+### CLI Usage
+
+```bash
+# View observe state
+npx ts-node src/cli/observe.ts status
+
+# View stop token
+npx ts-node src/cli/observe.ts stop-token
+
+# JSON format
+npx ts-node src/cli/observe.ts --json
+
+# Debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/observe.ts --json
+```
+
+### Integration Points
+
+**Supervisor (PR163)**:
+- Tick triggers observe loop if not running
+- Observe loop updates state only (no execution)
+- Supervisor references latest observeState for decisions
+
+**Runner (PR159)**:
+- Sleep uses AbortSignal: sleepMs(ms, signal)
+- Checks stopToken before each chunk/quote/gate
+- Immediate STOP when token status = "STOP"
+
+**State (PR163)**:
+- MeridianStateV1.observeState stores latest observation
+- Updated every 1 second by observe loop
+- Persistent across supervisor restarts
+
+### Telemetry Events (PR164)
+
+- OBSERVE_TICK: Loop iteration completed
+- OBSERVE_STATE: State updated successfully
+- OBSERVE_ERROR: Observation error occurred
+- STOP_SIGNAL_RAISED: STOP condition detected
+- STOP_SIGNAL_CLEARED: Conditions safe again
+
+### Files
+
+- src/observeLoop/types.ts: Observe state types
+- src/observeLoop/guards.ts: Label-only sanitization
+- src/observeLoop/loop.ts: Main observe loop logic
+- src/observeLoop/index.ts: Barrel exports
+- src/cli/observe.ts: Observe state CLI
+- tests/pr181.observe_loop.test.ts: 14 comprehensive tests
+
+### Safety Properties
+
+1. **Non-blocking**: Observation never blocks execution
+2. **Defensive**: Loop never throws, always returns state
+3. **Label-only**: All output sanitized
+4. **Immediate**: STOP response < 1 second
+5. **Interruptible**: Sleep can be aborted instantly
+
+**Purpose**: Maintain real-time market observation (1s) with safe chunked execution (10s) and immediate STOP capability - ensuring fresh state while preserving execution safety.
