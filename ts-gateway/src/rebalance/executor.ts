@@ -66,6 +66,7 @@ import {
   CooldownState,
   CooldownResult,
 } from "./cooldown";
+import { evaluateSpecLockV1, SpecLockResultV1 } from "../spec";
 
 /**
  * Executor options
@@ -268,6 +269,36 @@ export async function executeTx(
 
   // Policy allows execution
   notes.push("PR156: Policy allows execution (double-key passed)");
+
+  // PR179: Check spec lock status
+  const specLockResult = await evaluateSpecLockV1();
+
+  // Add spec lock info to draft checks (as label-only string)
+  draft.checks.push(`SPEC_LOCK_${specLockResult.status}`);
+
+  // Block execution if spec lock has issues
+  if (specLockResult.status === "ERROR") {
+    errors.push("BLOCK_SPEC_LOCK_ERROR");
+    notes.push("Execution blocked by spec lock error");
+    notes.push(...specLockResult.warnings);
+    return { ok: false, errors, notes };
+  }
+
+  if (specLockResult.status === "LOCKED_PENDING_ACK" && !specLockResult.activeSpec) {
+    errors.push("BLOCK_SPEC_ACK_REQUIRED");
+    notes.push("Execution blocked: Latest spec requires human ACK");
+    notes.push(...specLockResult.warnings);
+    return { ok: false, errors, notes };
+  }
+
+  // Allow execution with old spec if activeSpec exists
+  if (specLockResult.activeSpec) {
+    notes.push(`PR179: Using ACKed spec: ${specLockResult.activeSpec}`);
+  }
+
+  if (specLockResult.status === "LOCKED_EXPIRED") {
+    notes.push("WARN_SPEC_TTL_EXPIRED (execution continues with old ACKed spec)");
+  }
 
   // Check if draft is skipped
   if (draft.status === "SKIPPED") {

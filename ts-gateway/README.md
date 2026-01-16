@@ -4405,3 +4405,126 @@ This separation enables:
 - tests/pr178.review_trigger.test.ts: 14 comprehensive tests
 
 **Purpose**: Enable human-initiated comprehensive review without affecting automatic execution - separating market response from strategy improvement
+
+---
+
+## PR179: Spec Version Lock + Human ACK Gate v1
+
+### Purpose
+
+Spec generation (from PR166-178 analysis/propose/adopt) can be automatic, but **spec activation** requires human acknowledgement. This creates a gate between "spec produced" and "spec used for execution."
+
+### Problem
+
+Without PR179:
+- New spec generated → immediately used for execution
+- No human checkpoint before spec changes trading behavior
+- Risk: Untested specs affecting live execution
+
+With PR179:
+- New spec generated → waits for human ACK
+- Execution continues with last ACKed spec
+- Human reviews → ACKs → new spec activated
+- Real-time execution maintained (uses old ACKed spec)
+
+### Spec Lock States
+
+1. **ACTIVE_OK**: Latest spec is ACKed, execution proceeds normally
+2. **LOCKED_PENDING_ACK**: New spec exists, awaiting human ACK
+   - activeSpec = last ACKed version (execution continues)
+   - latestSpec = newest version (not yet active)
+3. **LOCKED_EXPIRED**: New spec TTL exceeded (6h default)
+   - Still requires human ACK (v1 doesn't auto-unlock)
+   - Execution continues with old ACKed spec
+4. **ERROR**: Lock evaluation failed
+
+### Constitutional Constraints
+
+- **Fixed rules**: Deterministic lock evaluation
+- **Defensive**: Never throws, always returns status
+- **Label-only**: No numerics/addresses/tokens in output
+- **Double-key preserved**: PR156 execution policy still applies
+- **READ-ONLY**: Adds gate, doesn't modify trading logic
+
+### Key Insight: Separation of Concerns
+
+**Spec Generation ≠ Spec Activation**
+
+- Analysis can run automatically
+- Proposals can be generated automatically
+- But **activation** requires human decision
+- Maintains real-time execution with stable ACKed spec
+
+### CLI Usage
+
+```bash
+# Check current spec lock status
+npx ts-node src/cli/spec.ts status
+
+# ACK the latest spec
+npx ts-node src/cli/spec.ts ack --reviewer HUMAN_PRIMARY --reason READ_AND_ACCEPT
+
+# View spec and ACK history
+npx ts-node src/cli/spec.ts log --tail 20
+
+# Debug mode (shows timestamps)
+MERIDIAN_DEBUG=true npx ts-node src/cli/spec.ts status
+```
+
+### Executor Integration
+
+The executor checks spec lock before allowing execution:
+
+**Block Conditions**:
+- status=ERROR → BLOCK_SPEC_LOCK_ERROR
+- status=LOCKED_PENDING_ACK && !activeSpec → BLOCK_SPEC_ACK_REQUIRED
+
+**Allow Conditions**:
+- status=ACTIVE_OK → OK (use activeSpec)
+- status=LOCKED_PENDING_ACK && activeSpec exists → OK (use old spec)
+- status=LOCKED_EXPIRED && activeSpec exists → OK (use old spec, warn)
+
+### TTL Design (6h Default)
+
+TTL is an **observation label**, not automatic unlock:
+- Within TTL → ttlLabel=TTL_OK
+- Beyond TTL → ttlLabel=TTL_EXPIRED
+
+**Important**: v1 does NOT auto-unlock on TTL expiration (safe default)
+- Expired specs still require human ACK
+- TTL helps humans identify "stale pending specs"
+- Future versions may add auto-unlock with constraints
+
+### Storage
+
+Append-only JSONL logs:
+- `~/.meridian/specs.log` - Spec records
+- `~/.meridian/spec_acks.log` - ACK records
+
+### Telemetry Events
+
+- SPEC_LOCK_STATUS (INFO)
+- SPEC_LOCK_EXPIRED (WARN)
+- SPEC_LOCK_ERROR (ERROR)
+- SPEC_ACK_WRITTEN (INFO)
+- SPEC_RECORD_WRITTEN (INFO)
+
+### Files
+
+- src/spec/types.ts: Spec version types
+- src/spec/guards.ts: Label-only sanitization
+- src/spec/store.ts: Append-only JSONL logs
+- src/spec/lock.ts: Lock evaluation logic
+- src/spec/index.ts: Barrel exports
+- src/cli/spec.ts: CLI tool
+- tests/pr179.spec_lock.test.ts: 14 comprehensive tests
+
+### Safety Properties
+
+1. **Non-blocking**: Execution never stops, uses last ACKed spec
+2. **Defensive**: Lock evaluation never throws
+3. **Label-only**: All output sanitized
+4. **Audit trail**: All specs and ACKs logged
+5. **Human control**: Activation requires explicit ACK
+
+**Purpose**: Require human ACK to activate new specs while maintaining real-time execution with stable ACKed specs - separating spec generation from spec activation.

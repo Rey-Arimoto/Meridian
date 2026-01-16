@@ -28,6 +28,11 @@ export type TelemetryEventType =
   | "ORACLE_STATUS" // Oracle status check
   | "SNAPSHOT_SAVED" // Snapshot saved (PR165)
   | "SNAPSHOT_ERROR" // Snapshot save error (PR165)
+  | "SPEC_LOCK_STATUS" // Spec lock status (PR179)
+  | "SPEC_LOCK_EXPIRED" // Spec lock expired (PR179)
+  | "SPEC_LOCK_ERROR" // Spec lock error (PR179)
+  | "SPEC_ACK_WRITTEN" // Spec ACK written (PR179)
+  | "SPEC_RECORD_WRITTEN" // Spec record written (PR179)
   | "ERROR"; // Error occurred
 
 /**

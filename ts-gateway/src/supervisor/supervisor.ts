@@ -22,6 +22,7 @@ import {
   appendSnapshotV1,
   SnapshotInputsV1,
 } from "../snapshot";
+import { evaluateSpecLockV1 } from "../spec";
 
 /**
  * Supervisor action (label-only)
@@ -166,6 +167,50 @@ export async function runSupervisorOnceV1(
     }
 
     notes.push(`NOTE_POLICY_STATUS_${policyResult.status}`);
+
+    // PR179: Evaluate spec lock status
+    try {
+      const specLockResult = await evaluateSpecLockV1();
+
+      // Emit telemetry based on spec lock status
+      if (specLockResult.status === "ACTIVE_OK") {
+        await appendEventV1(
+          createEventV1("SPEC_LOCK_STATUS", "INFO", {
+            status: specLockResult.status,
+            activeSpec: specLockResult.activeSpec || "SPEC_NONE",
+          })
+        ).catch(() => {});
+      } else if (specLockResult.status === "LOCKED_EXPIRED") {
+        await appendEventV1(
+          createEventV1("SPEC_LOCK_EXPIRED", "WARN", {
+            status: specLockResult.status,
+            activeSpec: specLockResult.activeSpec || "NONE",
+            latestSpec: specLockResult.latestSpec || "NONE",
+          })
+        ).catch(() => {});
+        notes.push("NOTE_SPEC_LOCK_EXPIRED");
+      } else if (specLockResult.status === "LOCKED_PENDING_ACK") {
+        await appendEventV1(
+          createEventV1("SPEC_LOCK_STATUS", "WARN", {
+            status: specLockResult.status,
+            latestSpec: specLockResult.latestSpec || "NONE",
+          })
+        ).catch(() => {});
+        notes.push("NOTE_SPEC_PENDING_ACK");
+      } else if (specLockResult.status === "ERROR") {
+        await appendEventV1(
+          createEventV1("SPEC_LOCK_ERROR", "ERROR", {
+            status: specLockResult.status,
+          })
+        ).catch(() => {});
+        warnings.push("WARN_SPEC_LOCK_ERROR");
+      }
+
+      warnings.push(...specLockResult.warnings);
+    } catch (error) {
+      // Defensive: Don't fail supervisor on spec lock error
+      warnings.push("WARN_SPEC_LOCK_EVAL_EXCEPTION");
+    }
 
     // Check if HardStop is active
     if (policyResult.hardStopActive) {
