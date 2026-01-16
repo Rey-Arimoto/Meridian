@@ -3154,3 +3154,198 @@ MERIDIAN_DEBUG=true enables:
 - tests/pr172.review_checklist.test.ts: 12 comprehensive tests
 
 **Purpose**: Provide structured safety checklists and decision rationale before adoption, supporting Policy-First review
+
+## PR173: Decision Acknowledgement + Reviewer Trace v1
+
+### Purpose
+Add adoption decision audit trail with READ-ONLY recording and viewing.
+Captures "who decided what, when, and why" for adoption accountability.
+
+While PR172 generates decision rationale, PR173 adds **adoption acknowledgement** that records:
+- Who made the decision (reviewer kind)
+- What was decided (ADOPT/HOLD/REJECT)
+- When (discretized time label)
+- Why (rationale labels from PR172)
+- What was referenced (proposal, preview, review, patch plan)
+
+This enables **adoption audit trail**: Users can view complete decision history with full traceability.
+
+### Constitutional Constraints
+- **READ-ONLY**: Records and displays only (no automatic adoption)
+- **Fixed rules**: Deterministic record building
+- **Label-only**: All output sanitized (no numerics in normal mode)
+- **Defensive**: Never throws, always returns valid record
+- **Append-only**: Immutable JSONL audit log
+
+### Decision Ack Model
+
+**Decision Acknowledgement Record**:
+```typescript
+{
+  kind: "DECISION_ACK_V1";
+  status: DecisionAckStatus;        // AVAILABLE, PARTIAL, ERROR
+
+  ts: number;                       // Internal storage only
+  timeLabel: TimeLabel;             // Display-safe (T_RECENT, T_MIN, T_HOUR, T_OLD)
+
+  reviewer: ReviewerKind;           // HUMAN_PRIMARY, HUMAN_SECONDARY, AUTO_ASSISTED, POLICY_ONLY
+  source: AckSource;                // CLI_ADOPT, CLI_ACK, UNKNOWN
+
+  refs: {
+    proposalId?: string;            // e.g., "P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE"
+    previewId?: string;             // e.g., "PREVIEW_PRESENT"
+    reviewId?: string;              // e.g., "REVIEW_PRESENT"
+    patchPlanId?: string;           // e.g., "PATCHPLAN_PRESENT"
+  };
+
+  rationale: {
+    decision: AckDecision;          // ADOPT, HOLD, REJECT, UNKNOWN
+    rationaleLabels: string[];      // e.g., ["REASON_STRONG_EVIDENCE_PRESENT"]
+    checklistSummary: string[];     // e.g., ["CHECK_NO_NOT_ALLOWED_PATCH:PASS"]
+    evidenceSummary: string[];      // e.g., ["EVIDENCE_STRONG"]
+    compareSummary: string[];       // e.g., ["IMPROVED_BLOCK_DOMINANCE"]
+  };
+
+  warnings: string[];               // Label-only
+}
+```
+
+### Reviewer Kinds
+
+- **HUMAN_PRIMARY**: Primary human decision maker
+- **HUMAN_SECONDARY**: Secondary human reviewer
+- **AUTO_ASSISTED**: Human with automated assistance (e.g., PR172 checklist)
+- **POLICY_ONLY**: Policy-first automated decision (PR168)
+- **UNKNOWN**: Reviewer kind not specified
+
+### Decision Building Rules
+
+**Decision Priority** (fixed):
+1. `decisionResult.decision` (from PR168)
+2. `reviewReport.rationale.decisionCandidate` (from PR172)
+3. Fallback to `UNKNOWN`
+
+**Status**:
+- `AVAILABLE`: proposalId + decision present
+- `PARTIAL`: decision is UNKNOWN
+- `ERROR`: input shape corrupted (but returns valid record)
+
+**Rationale Building**:
+- `rationaleLabels`: From PR172 review report reasons (max 3)
+- `checklistSummary`: From PR172 checklist items (PASS/FAIL/UNKNOWN)
+- `evidenceSummary`: From PR171 preview evidence (max 3)
+- `compareSummary`: From PR171 preview compare signals (max 3)
+
+### Decisions CLI
+
+View decision acknowledgement audit trail:
+```bash
+# View recent decisions
+npx ts-node src/cli/decisions.ts
+
+# Tail N most recent
+npx ts-node src/cli/decisions.ts --tail 50
+
+# Filter by proposal
+npx ts-node src/cli/decisions.ts --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# Filter by decision
+npx ts-node src/cli/decisions.ts --decision ADOPT
+
+# Filter by reviewer
+npx ts-node src/cli/decisions.ts --reviewer HUMAN_PRIMARY
+
+# JSON output
+npx ts-node src/cli/decisions.ts --json
+
+# Debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/decisions.ts
+```
+
+### Adopt CLI with Acknowledgement
+
+Record decision acknowledgements during adoption:
+```bash
+# Full flow with acknowledgement (preview + review + decision + ack)
+npx ts-node src/cli/adopt.ts --ack
+
+# Ack-only mode (read existing preview/review, create ack only)
+npx ts-node src/cli/adopt.ts --ack-only
+
+# Display order (--ack):
+# 1. Preview summary
+# 2. Review checklist
+# 3. Adoption decision (PR168)
+# 4. Decision acknowledgement (PR173)
+
+# With debug mode
+MERIDIAN_DEBUG=true npx ts-node src/cli/adopt.ts --ack
+```
+
+### Example Output
+
+**Normal Mode** (label-only):
+```
+DECISION_ACK_V1 AVAILABLE T_MIN
+REVIEWER HUMAN_PRIMARY SOURCE CLI_ADOPT
+PROPOSAL P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+PREVIEW PREVIEW_PRESENT
+REVIEW REVIEW_PRESENT
+PATCHPLAN PATCHPLAN_PRESENT
+DECISION ADOPT
+RATIONALE REASON_STRONG_EVIDENCE_PRESENT, REASON_NO_WORSENING_SIGNAL
+CHECKLIST CHECK_NO_NOT_ALLOWED_PATCH:PASS, CHECK_HAS_EVIDENCE:PASS, ...
+EVIDENCE EVIDENCE_STRONG
+COMPARE IMPROVED_BLOCK_DOMINANCE, NO_WORSENING
+WARNINGS NONE
+---
+```
+
+**Debug Mode** (with timestamp):
+```
+MERIDIAN_DEBUG=true enables:
+- Numeric timestamp (DEBUG_TS)
+- Additional warnings
+- Raw record structure
+```
+
+### Storage
+
+**JSONL Append-Only Log**:
+- Path: ~/.meridian/decisions.log
+- Format: One JSON object per line
+- Defensive: Corrupt lines skipped with warnings
+
+**Environment Variables**:
+- MERIDIAN_DECISION_PATH: Decision log path
+- MERIDIAN_DEBUG: Set to "true" to enable debug mode
+
+### Non-Claims
+
+**Decision Ack does NOT**:
+- ❌ Automatically adopt changes
+- ❌ Modify code or policies
+- ❌ Make decisions (only records them)
+- ❌ Learn from patterns or optimize rules
+- ❌ Display numeric values in normal mode
+
+**Decision Ack DOES**:
+- ✅ Record adoption decisions with full context
+- ✅ Provide audit trail for accountability
+- ✅ Link to proposal, preview, review, patch plan
+- ✅ Use label-only output (sanitized)
+- ✅ Fail gracefully (defensive)
+- ✅ Support filtering by proposal/decision/reviewer
+
+### Files
+
+- src/decision/types.ts: Decision ack types
+- src/decision/guards.ts: Sanitization and formatting
+- src/decision/ack.ts: Ack record builder
+- src/decision/store.ts: JSONL storage
+- src/decision/index.ts: Barrel exports
+- src/cli/decisions.ts: Decision viewing CLI
+- src/cli/adopt.ts: Updated with --ack and --ack-only options
+- tests/pr173.decision_ack.test.ts: 12 comprehensive tests
+
+**Purpose**: Record adoption decision audit trail for accountability and traceability
