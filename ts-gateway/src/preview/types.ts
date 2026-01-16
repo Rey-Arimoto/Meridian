@@ -12,6 +12,8 @@
  *   - Defensive: Never throws, always returns result
  */
 
+import { RiskOverlayV1 } from "../overlay/types"; // PR177
+
 /**
  * Preview Status
  *
@@ -151,6 +153,14 @@ export interface PatchPreviewReportV1 {
    * Example: ["IMPROVED_PASS_RATIO", "NO_WORSENING"]
    */
   compareSignals: string[];
+
+  /**
+   * Risk overlay (from PR177, label-only)
+   *
+   * Pre-adoption risk assessment from PR175 regressions and PR176 interactions.
+   * Optional - may be absent if overlay generation failed or disabled.
+   */
+  riskOverlay?: RiskOverlayV1;
 
   /**
    * Warnings (non-fatal issues)

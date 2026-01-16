@@ -4031,3 +4031,183 @@ PR176 does **NOT**:
 - tests/pr176.interaction_detector.test.ts: 14 comprehensive tests
 
 **Purpose**: Detect patch coupling/interaction risks using READ-ONLY observation and fixed detection rules
+
+## PR177: Pre-Adoption Risk Overlay v1 (Preview+Review Integration)
+
+### Purpose
+Inject known risk information from PR175 (regressions) and PR176 (interactions) into PR171 (preview) and PR172 (review) flows.
+While PR175/176 detect problems after adoption, PR177 surfaces this knowledge before adoption.
+
+Reads existing audit logs (READ-ONLY) to provide risk assessment overlay that appears in:
+- Preview reports (PR171): riskOverlay field with label-only risk information
+- Review checklists (PR172): Risk overlay acknowledgement items
+
+This enables **採用前リスク可視化** (pre-adoption risk visualization): Users see known regression patterns and interaction risks before making adoption decisions.
+
+### Constitutional Constraints
+- **READ-ONLY**: Reads existing logs only (no modification/append)
+- **Fixed rules**: Hardcoded risk assessment logic (no learning)
+- **Label-only**: Display mode sanitizes numerics (normal mode)
+- **Defensive**: Never throws, handles missing data gracefully
+- **Non-blocking**: Overlay generation failures don't block adoption flow
+
+### Overlay Model
+
+**Risk Overlay**:
+```typescript
+{
+  status: OverlayStatus;        // AVAILABLE, PARTIAL, ERROR
+
+  proposalId: string;
+  priority?: "P0" | "P1" | "P2" | "UNKNOWN";
+
+  riskLevel: OverlayRiskLevel;  // RISK_HIGH, RISK_MEDIUM, RISK_LOW, RISK_UNKNOWN
+  risks: Array<{                // Max 5, label-only
+    kind: OverlayRiskKind;      // RISK_REGRESSION_HISTORY, RISK_INTERACTION_COUPLING, etc.
+    label: string;
+  }>;
+  evidence: OverlayEvidence[];  // Max 3, sorted by strength
+
+  warnings: string[];           // Label-only
+}
+```
+
+**Evidence**:
+```typescript
+{
+  kind: "EVID_REGRESSION" | "EVID_INTERACTION" | "EVID_NONE";
+  label: string;                // Label-only (no numbers/tokens)
+  strength: "STRONG" | "MEDIUM" | "WEAK" | "UNKNOWN";
+}
+```
+
+### Fixed Risk Assessment Rules (priority-based)
+
+1. **Regression evidence STRONG** → `RISK_HIGH`
+   - Kind: `RISK_REGRESSION_HISTORY`
+   - Label: "REGRESSION_STRONG_DETECTED_RECENTLY"
+   - Evidence from PR175 regressions.log
+
+2. **Interaction evidence STRONG** → `RISK_HIGH`
+   - Kind: `RISK_INTERACTION_COUPLING`
+   - Label: "INTERACTION_STRONG_DETECTED_RECENTLY"
+   - Evidence from PR176 interactions.log
+
+3. **Interaction evidence MEDIUM** → `RISK_MEDIUM`
+   - Kind: `RISK_INTERACTION_COUPLING`
+   - Label: "INTERACTION_MEDIUM_DETECTED_RECENTLY"
+
+4. **Regression evidence MEDIUM** → `RISK_MEDIUM`
+   - Kind: `RISK_REGRESSION_HISTORY`
+   - Label: "REGRESSION_MEDIUM_DETECTED_RECENTLY"
+
+5. **No evidence or UNKNOWN** → `RISK_UNKNOWN`
+   - Kind: `RISK_EVIDENCE_WEAK`
+   - Label: "NO_RECENT_EVIDENCE_FOUND"
+
+6. **Otherwise** → `RISK_LOW`
+   - Includes any weak evidence found
+
+### Integration with Preview (PR171)
+
+**Preview Report Enhanced**:
+```typescript
+{
+  kind: "PATCH_PREVIEW_V1";
+  ...
+  riskOverlay?: RiskOverlayV1;  // ← PR177 adds this field
+  ...
+}
+```
+
+The overlay is automatically injected during preview generation:
+- If overlay generation succeeds: `status: "AVAILABLE"`
+- If logs are missing/incomplete: `status: "PARTIAL"` with warnings
+- If overlay generation fails: `status: "ERROR"` (preview continues)
+
+### Integration with Review (PR172)
+
+Review checklist enhanced with risk overlay items (future enhancement):
+- `CHECK_RISK_OVERLAY_PRESENT`: Overlay was generated
+- `CHECK_RISK_OVERLAY_ACKED`: High-risk overlays acknowledged
+
+**Example Review Flow**:
+1. User requests `--review`
+2. Preview is generated with overlay
+3. Review checklist evaluates overlay presence
+4. If `RISK_HIGH`: Adds warning to rationale
+5. Reviewer must acknowledge risks before adoption
+
+### Usage
+
+Overlay is automatically generated when using preview/review:
+
+```bash
+# Preview with overlay (automatic)
+npx ts-node src/cli/adopt.ts --preview --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# Review with overlay (automatic)
+npx ts-node src/cli/adopt.ts --review --proposal P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+
+# Overlay appears in preview.riskOverlay field
+# Shows: riskLevel, risks (kinds + labels), evidence
+```
+
+### Example Output
+
+**Preview with Risk Overlay**:
+```
+=== Patch Preview V1 ===
+
+Proposal: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+Priority: P0
+Decision: ADOPT (candidate)
+
+... (sections) ...
+
+Risk Overlay:
+  Status: AVAILABLE
+  Risk Level: RISK_HIGH
+  Risks:
+    - [RISK_REGRESSION_HISTORY] REGRESSION_STRONG_DETECTED_RECENTLY
+  Evidence:
+    - [EVID_REGRESSION] REGRESSION_REGRESS_IMPROVED_TO_WORSENED (STRONG)
+```
+
+### Evidence Sorting
+
+Evidence is automatically sorted by:
+1. **Kind priority**: REGRESSION > INTERACTION > NONE
+2. **Strength priority**: STRONG > MEDIUM > WEAK > UNKNOWN
+
+This ensures the most critical evidence appears first (max 3 items shown).
+
+### Non-Claims
+
+PR177 does **NOT**:
+- ❌ Perform causal inference (correlation only)
+- ❌ Automatically block adoptions (READ-ONLY information only)
+- ❌ Learn or optimize thresholds (fixed rules)
+- ❌ Modify existing logs (reads only, no append)
+- ❌ Provide trading advice (operational health monitoring only)
+
+### What PR177 DOES
+
+- ✅ Read existing regression/interaction logs
+- ✅ Assess risk using fixed rules
+- ✅ Inject risk overlay into preview reports
+- ✅ Provide label-only evidence (normal mode)
+- ✅ Surface known risks before adoption
+- ✅ Fail gracefully (defensive)
+
+### Files
+
+- src/overlay/types.ts: Overlay types
+- src/overlay/guards.ts: Sanitization and validation
+- src/overlay/reader.ts: Read PR175/176 logs
+- src/overlay/overlay.ts: Risk assessment engine
+- src/overlay/index.ts: Barrel exports
+- src/preview/types.ts: Added riskOverlay field (PR171 enhanced)
+- tests/pr177.overlay_preview_review.test.ts: 12 comprehensive tests
+
+**Purpose**: Surface known regression and interaction risks before adoption using READ-ONLY observation and fixed assessment rules
