@@ -15,6 +15,7 @@ import {
   ImprovementProposalV1,
   ProposeResultV1,
   ProposalPriority,
+  ProposalEvidence,
 } from "./types";
 
 /**
@@ -91,11 +92,29 @@ export function sanitizeProposalLabel(value: string): string {
 }
 
 /**
+ * Sanitize evidence for display (PR170)
+ *
+ * Sanitizes evidence labels and keeps only label-only fields.
+ *
+ * @param evidence - Evidence record
+ * @returns Sanitized evidence
+ */
+export function sanitizeEvidence(evidence: ProposalEvidence): ProposalEvidence {
+  return {
+    kind: evidence.kind,
+    label: sanitizeProposalLabel(evidence.label),
+    strength: evidence.strength,
+    context: evidence.context ? sanitizeProposalLabel(evidence.context) : undefined,
+  };
+}
+
+/**
  * Sanitize proposal for display
  *
  * In normal mode:
  * - Keeps labels only
  * - Removes triggered_by details (keeps label count only)
+ * - Sanitizes evidence (PR170)
  *
  * In debug mode (MERIDIAN_DEBUG=true):
  * - Returns raw proposal with all details
@@ -126,6 +145,8 @@ export function sanitizeProposalForDisplay(
     applies_when: sanitizeProposalLabel(proposal.applies_when),
     triggered_by_count:
       proposal.triggered_by.length > 0 ? "HAS_TRIGGERS" : "NO_TRIGGERS",
+    evidence_count:
+      proposal.evidence.length > 0 ? "HAS_EVIDENCE" : "NO_EVIDENCE",
   };
 }
 
@@ -299,6 +320,22 @@ function formatSingleProposal(
     lines.push(
       `  Triggered By: ${proposal.triggered_by.join(", ") || "NONE"}`
     );
+    lines.push("");
+  }
+
+  // PR170: Display evidence
+  if (proposal.evidence && proposal.evidence.length > 0) {
+    lines.push(`  Evidence (PR170):`);
+    for (const evid of proposal.evidence) {
+      const strengthLabel = debugMode ? ` [${evid.strength}]` : "";
+      lines.push(`    - [${evid.kind}]${strengthLabel} ${evid.label}`);
+      if (evid.context && debugMode) {
+        lines.push(`      Context: ${evid.context}`);
+      }
+    }
+    lines.push("");
+  } else if (debugMode) {
+    lines.push(`  Evidence: NO_EVIDENCE`);
     lines.push("");
   }
 

@@ -175,6 +175,14 @@ export interface ImprovementProposalV1 {
    * Which fixed triggers activated this proposal.
    */
   triggered_by: TriggerId[];
+
+  /**
+   * Evidence (PR170: linked from attribution)
+   *
+   * Attribution evidence (bottlenecks, paths, edges) that support this proposal.
+   * Empty array if no evidence available or not requested.
+   */
+  evidence: ProposalEvidence[];
 }
 
 /**
@@ -227,3 +235,78 @@ export interface ProposeResultV1 {
  * Status of proposal generation.
  */
 export type ProposeStatus = "AVAILABLE" | "PARTIAL" | "NO_PROPOSALS" | "ERROR";
+
+/**
+ * PR170: Evidence-Linked Proposals v1 - Evidence Types
+ *
+ * Purpose:
+ *   Link PR169 attribution results (bottlenecks, paths, edges) as "evidence"
+ *   to proposals, making them explainable.
+ */
+
+/**
+ * Evidence Kind
+ *
+ * Types of evidence from attribution:
+ * - EVID_BOTTLENECK: Dominant pattern (>30% threshold)
+ * - EVID_WEAKLINK: Rare pattern
+ * - EVID_TOP_PATH: Frequent causal chain
+ * - EVID_TOP_EDGE: Frequent transition
+ * - EVID_NONE: No evidence available
+ */
+export type EvidenceKind =
+  | "EVID_BOTTLENECK"
+  | "EVID_WEAKLINK"
+  | "EVID_TOP_PATH"
+  | "EVID_TOP_EDGE"
+  | "EVID_NONE";
+
+/**
+ * Evidence Strength
+ *
+ * Strength of evidence (based on fixed thresholds):
+ * - EVIDENCE_STRONG: Clear match (bottleneck → proposal)
+ * - EVIDENCE_MEDIUM: Partial match (top path → proposal)
+ * - EVIDENCE_WEAK: Indirect match (top edge → proposal)
+ * - EVIDENCE_UNKNOWN: No match or unavailable
+ */
+export type EvidenceStrength =
+  | "EVIDENCE_STRONG"
+  | "EVIDENCE_MEDIUM"
+  | "EVIDENCE_WEAK"
+  | "EVIDENCE_UNKNOWN";
+
+/**
+ * Proposal Evidence
+ *
+ * Evidence record linking attribution to proposal.
+ * All fields are label-only (no numerics in normal mode).
+ */
+export interface ProposalEvidence {
+  /**
+   * Evidence kind (bottleneck, path, edge, etc.)
+   */
+  kind: EvidenceKind;
+
+  /**
+   * Evidence label (sanitized, label-only)
+   *
+   * Examples:
+   * - "BOTTLENECK_ORACLE_DOMINANT"
+   * - "PATH_PHASE_NORMAL_TO_GATE_BLOCK"
+   * - "EDGE_ORACLE_STALE_TO_BLOCK"
+   */
+  label: string;
+
+  /**
+   * Evidence strength (STRONG, MEDIUM, WEAK, UNKNOWN)
+   */
+  strength: EvidenceStrength;
+
+  /**
+   * Optional context (additional label-only info)
+   *
+   * Example: "FROM_ATTRIBUTION_BOTTLENECK_ANALYSIS"
+   */
+  context?: string;
+}

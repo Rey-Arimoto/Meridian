@@ -13,21 +13,26 @@
  */
 
 import { AnalysisResultV1 } from "../analyze/types";
+import { AttributionResultV1 } from "../attribution/types";
 import { ProposeResultV1, TriggerId } from "./types";
 import { TRIGGER_RULES, getProposalsForTriggers } from "./rules";
 import { getPriorityOrder } from "./guards";
+import { extractEvidenceForProposal } from "./evidence";
 
 /**
  * Generate improvement proposals from analysis results
  *
  * Purpose:
  *   Evaluate all fixed trigger rules and generate matching proposals.
+ *   PR170: Optionally attach evidence from attribution results.
  *
  * @param analysis - Analysis result from PR166
+ * @param attribution - Optional attribution result from PR169 (for evidence)
  * @returns Propose result (never throws)
  */
 export async function generateProposalsV1(
-  analysis: AnalysisResultV1
+  analysis: AnalysisResultV1,
+  attribution?: AttributionResultV1 | null
 ): Promise<ProposeResultV1> {
   const warnings: string[] = [];
 
@@ -88,6 +93,15 @@ export async function generateProposalsV1(
 
     // Get proposals for active triggers
     const proposals = getProposalsForTriggers(activeTriggers);
+
+    // PR170: Attach evidence to each proposal (if attribution is available)
+    for (const proposal of proposals) {
+      if (attribution) {
+        proposal.evidence = extractEvidenceForProposal(proposal.id, attribution);
+      } else {
+        proposal.evidence = [];
+      }
+    }
 
     // Sort by priority (P0 > P1 > P2)
     proposals.sort((a, b) => {

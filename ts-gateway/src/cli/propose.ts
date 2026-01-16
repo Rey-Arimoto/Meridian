@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
  * PR167: v1.4 Improvement Proposal Generator v1 - CLI
+ * PR170: v1.4 Evidence-Linked Proposals v1 - CLI
  *
  * Purpose:
  *   Generate fixed-rule improvement proposals from snapshot analysis.
  *   READ-ONLY suggestions based on deterministic triggers.
+ *   PR170: Optionally attach evidence from attribution results.
  *
  * Constitutional Constraints:
  *   - READ-ONLY: Proposals are suggestions, not actions
@@ -17,12 +19,15 @@
  *   npx ts-node src/cli/propose.ts --tail 200
  *   npx ts-node src/cli/propose.ts --tail 500 --priority P0
  *   npx ts-node src/cli/propose.ts --json
- *   MERIDIAN_DEBUG=true npx ts-node src/cli/propose.ts --tail 500
+ *   npx ts-node src/cli/propose.ts --with-evidence
+ *   npx ts-node src/cli/propose.ts --with-evidence --focus evidence
+ *   MERIDIAN_DEBUG=true npx ts-node src/cli/propose.ts --tail 500 --with-evidence
  *   node dist/cli/propose.js
  */
 
 import { readRecentSnapshotsV1 } from "../snapshot/exporter";
 import { analyzeSnapshotsV1 } from "../analyze/analyzer";
+import { attributeSnapshotsV1 } from "../attribution/attributor";
 import { generateProposalsV1 } from "../propose/proposer";
 import {
   formatProposalLines,
@@ -38,10 +43,17 @@ function parseArgs(): {
   tail?: number;
   priority?: ProposalPriority;
   json?: boolean;
+  withEvidence?: boolean;
+  focus?: "evidence";
 } {
   const args = process.argv.slice(2);
-  const result: { tail?: number; priority?: ProposalPriority; json?: boolean } =
-    {};
+  const result: {
+    tail?: number;
+    priority?: ProposalPriority;
+    json?: boolean;
+    withEvidence?: boolean;
+    focus?: "evidence";
+  } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -57,6 +69,14 @@ function parseArgs(): {
       i++;
     } else if (arg === "--json") {
       result.json = true;
+    } else if (arg === "--with-evidence") {
+      result.withEvidence = true;
+    } else if (arg === "--focus" && i + 1 < args.length) {
+      const focus = args[i + 1].toLowerCase();
+      if (focus === "evidence") {
+        result.focus = "evidence";
+      }
+      i++;
     }
   }
 
@@ -103,14 +123,56 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Generate proposals
-    const proposeResult = await generateProposalsV1(analysis);
+    // PR170: Optionally run attribution for evidence
+    let attribution = null;
+    if (args.withEvidence) {
+      attribution = attributeSnapshotsV1(snapshotResult.snapshots);
+
+      if (debugMode && attribution.warnings.length > 0) {
+        console.log(
+          `ATTRIBUTION_WARNINGS: ${attribution.warnings.join(", ")}\n`
+        );
+      }
+    }
+
+    // Generate proposals (with or without evidence)
+    const proposeResult = await generateProposalsV1(analysis, attribution);
 
     // Filter by priority if specified
     if (args.priority) {
       proposeResult.proposals = proposeResult.proposals.filter(
         (p) => p.priority === args.priority
       );
+    }
+
+    // Handle --focus evidence mode
+    if (args.focus === "evidence") {
+      console.log("=== Proposal Evidence Focus ===\n");
+
+      if (proposeResult.proposals.length === 0) {
+        console.log("NO_PROPOSALS");
+        return;
+      }
+
+      for (const proposal of proposeResult.proposals) {
+        console.log(`[${proposal.priority}] ${proposal.id}`);
+
+        if (proposal.evidence.length === 0) {
+          console.log("  NO_EVIDENCE\n");
+        } else {
+          for (const evid of proposal.evidence) {
+            const strengthLabel = debugMode ? ` [${evid.strength}]` : "";
+            console.log(`  - [${evid.kind}]${strengthLabel} ${evid.label}`);
+            if (evid.context && debugMode) {
+              console.log(`    Context: ${evid.context}`);
+            }
+          }
+          console.log("");
+        }
+      }
+
+      console.log("=== End Evidence Focus ===");
+      return;
     }
 
     // Display based on mode

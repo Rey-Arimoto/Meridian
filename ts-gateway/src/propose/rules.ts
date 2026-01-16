@@ -617,6 +617,7 @@ export function getProposalsForTriggers(
         triggered_by: template.triggered_by.filter((t) =>
           activeTriggers.includes(t)
         ),
+        evidence: [], // PR170: Evidence will be attached by proposer.ts
       });
     }
   }

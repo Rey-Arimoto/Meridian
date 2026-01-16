@@ -2607,4 +2607,188 @@ for (const weakLink of attributionResult.weakLinks) {
 - `src/cli/attribution.ts`: Attribution CLI tool
 - `tests/pr169.attribution.test.ts`: 12 comprehensive tests
 
+---
+
+## PR170: Evidence-Linked Proposals v1
+
+### Purpose
+Link PR169 attribution results (bottlenecks, paths, edges) as **"evidence"** to PR167 proposals, making proposals explainable with "why they were generated".
+
+While PR167 generates proposals based on PR166 analysis (confusion/timing patterns), PR170 attaches **attribution evidence** to show the causal chains that support each proposal:
+- Example: `P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE` has evidence `BOTTLENECK_ORACLE_DOMINANT` (STRONG)
+- Example: `P1_PHASE_ESCALATION_DOMINATES_PHASE_POLICY_REVIEW` has evidence from path `PHASE_PRE_SHOCK → STOP` (MEDIUM)
+- Example: Proposals can have multiple evidence records from different sources
+
+This makes proposals **answerable**: "Why was this proposed?" → "Because ORACLE blocks dominate the attribution graph (STRONG evidence)".
+
+### Constitutional Constraints
+- **READ-ONLY**: Evidence extraction is analysis only (no execution, no changes)
+- **Fixed rules**: Deterministic mapping from attribution to evidence
+- **Policy-first**: Evidence strengthens proposals, but doesn't change priority (P0 > P1 > P2)
+- **Label-only**: All evidence labels are sanitized (no counts in normal mode)
+- **Defensive**: Malformed attribution → empty evidence (never throws)
+
+### Evidence Model
+
+**Evidence Types** (EvidenceKind):
+- `EVID_BOTTLENECK`: From attribution bottlenecks (>30% threshold)
+- `EVID_TOP_PATH`: From attribution top paths (frequent causal chains)
+- `EVID_TOP_EDGE`: From attribution top edges (frequent transitions)
+- `EVID_NONE`: No evidence available
+
+**Evidence Strength** (fixed levels):
+- `EVIDENCE_STRONG`: Clear match (bottleneck → proposal)
+- `EVIDENCE_MEDIUM`: Partial match (top path → proposal)
+- `EVIDENCE_WEAK`: Indirect match (top edge → proposal)
+- `EVIDENCE_UNKNOWN`: No match or unavailable
+
+**Evidence Record** (ProposalEvidence):
+```typescript
+{
+  kind: EvidenceKind;           // Evidence type
+  label: string;                 // Sanitized label (e.g., "BOTTLENECK_ORACLE_DOMINANT")
+  strength: EvidenceStrength;    // STRONG, MEDIUM, WEAK, UNKNOWN
+  context?: string;              // Optional context (e.g., "FROM_ATTRIBUTION_BOTTLENECK_ANALYSIS")
+}
+```
+
+### Evidence Mapping (Fixed Rules)
+
+**Bottleneck → Proposal (STRONG)**:
+- `BOTTLENECK_ORACLE_DOMINANT` → `P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE`
+- `BOTTLENECK_MARKET_IMPACT_DOMINANT` → `P0_REDUCE_IMPACT_BLOCKS_DEGRADE`, `P0_REDUCE_SLIPPAGE_BLOCKS_DEGRADE`
+- `BOTTLENECK_GATE_BLOCK_FREQUENT` → `P1_GATE_BLOCK_DOMINATES_GATE_POLICY_REVIEW`
+- `BOTTLENECK_PHASE_POLICY_DOMINANT` → `P1_PHASE_ESCALATION_DOMINATES_PHASE_POLICY_REVIEW`
+
+**Path Pattern → Proposal (MEDIUM)**:
+- Paths matching `/ORACLE/i` → `P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE`
+- Paths matching `/IMPACT/i` → `P0_REDUCE_IMPACT_BLOCKS_DEGRADE`
+- Paths matching `/SLIPPAGE/i` → `P0_REDUCE_SLIPPAGE_BLOCKS_DEGRADE`
+- Paths matching `/PHASE.*ESCALATION/i` → `P1_PHASE_ESCALATION_DOMINATES_PHASE_POLICY_REVIEW`
+
+**Edge Pattern → Proposal (WEAK)**:
+- Edges matching `/ORACLE.*BLOCK/i` → `P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE`
+- Edges matching `/IMPACT.*BLOCK/i` → `P0_REDUCE_IMPACT_BLOCKS_DEGRADE`
+- Edges matching `/GATE.*BLOCK/i` → `P1_GATE_BLOCK_DOMINATES_GATE_POLICY_REVIEW`
+
+### Proposal CLI with Evidence
+
+Generate proposals with evidence attached:
+```bash
+# Default: no evidence (backward compatible)
+npx ts-node src/cli/propose.ts
+
+# With evidence (runs attribution analysis automatically)
+npx ts-node src/cli/propose.ts --with-evidence
+
+# Focus on evidence only
+npx ts-node src/cli/propose.ts --with-evidence --focus evidence
+
+# JSON output with evidence
+npx ts-node src/cli/propose.ts --with-evidence --json
+
+# Debug mode (shows strength and context)
+MERIDIAN_DEBUG=true npx ts-node src/cli/propose.ts --with-evidence
+
+# Built version
+node dist/cli/propose.js --with-evidence
+```
+
+### Example Output with Evidence
+
+**Normal Mode** (--with-evidence):
+```
+[P0] DEGRADE_ORACLE_STALE_THRESHOLD
+  ID: P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+  Category: GATE_POLICY
+
+  ...
+
+  Evidence (PR170):
+    - [EVID_BOTTLENECK] BOTTLENECK_ORACLE_DOMINANT
+    - [EVID_TOP_PATH] PATH_ORACLE_PATH
+    - [EVID_TOP_EDGE] EDGE_ORACLE_BLOCK_EDGE
+```
+
+**Debug Mode** (MERIDIAN_DEBUG=true --with-evidence):
+```
+[P0] DEGRADE_ORACLE_STALE_THRESHOLD
+  ...
+
+  Evidence (PR170):
+    - [EVID_BOTTLENECK] [EVIDENCE_STRONG] BOTTLENECK_ORACLE_DOMINANT
+      Context: FROM_ATTRIBUTION_BOTTLENECK_ANALYSIS
+    - [EVID_TOP_PATH] [EVIDENCE_MEDIUM] PATH_ORACLE_PATH
+      Context: FROM_ATTRIBUTION_TOP_PATHS
+    - [EVID_TOP_EDGE] [EVIDENCE_WEAK] EDGE_ORACLE_BLOCK_EDGE
+      Context: FROM_ATTRIBUTION_TOP_EDGES
+```
+
+**Focus Evidence Mode** (--focus evidence):
+```
+=== Proposal Evidence Focus ===
+
+[P0] P0_REDUCE_ORACLE_STALE_BLOCKS_DEGRADE
+  - [EVID_BOTTLENECK] BOTTLENECK_ORACLE_DOMINANT
+  - [EVID_TOP_PATH] PATH_ORACLE_PATH
+  - [EVID_TOP_EDGE] EDGE_ORACLE_BLOCK_EDGE
+
+[P1] P1_GATE_BLOCK_DOMINATES_GATE_POLICY_REVIEW
+  - [EVID_BOTTLENECK] BOTTLENECK_GATE_BLOCK_FREQUENT
+
+=== End Evidence Focus ===
+```
+
+### Non-Claims
+
+**Evidence does NOT**:
+- ❌ Prove causation (only shows observed correlations)
+- ❌ Change proposal priority (P0 > P1 > P2 remains fixed)
+- ❌ Create new proposals (only links existing proposals to evidence)
+- ❌ Provide trading advice
+- ❌ Predict future patterns
+
+**Evidence DOES**:
+- ✅ Explain why proposals were generated
+- ✅ Use fixed mapping rules (deterministic)
+- ✅ Support multiple evidence per proposal
+- ✅ Respect label-only constraints (normal mode)
+- ✅ Fail gracefully (empty evidence on error)
+
+### Safety Guarantees
+
+**Defensive design**:
+- Evidence extraction never throws exceptions
+- Malformed attribution → empty evidence array
+- Missing attribution → empty evidence array
+- Always returns valid ProposalEvidence[]
+
+**Privacy protection**:
+- Normal mode: label-only (no counts, no strength in display)
+- Debug mode: shows strength and context
+- Guards sanitize: token literals, trading vocab, prescriptive language
+- Addresses always REDACTED (even in debug mode)
+
+**Read-only operation**:
+- Evidence extraction is analysis only (no execution, no trading)
+- No automatic adoption or policy changes
+
+### Environment Variables
+
+Same as PR167:
+- `MERIDIAN_DEBUG`: Set to "true" to enable debug mode (shows evidence strength/context)
+- `MERIDIAN_SNAPSHOTS_PATH`: Snapshot log path (default: `~/.meridian/snapshots.log`)
+- `MERIDIAN_SNAPSHOTS_MAXLINES`: Max lines for analysis (default: 200)
+
+### Files
+
+- `src/propose/types.ts`: Updated with EvidenceKind, EvidenceStrength, ProposalEvidence types
+- `src/propose/guards.ts`: Updated with evidence sanitization (sanitizeEvidence)
+- `src/propose/evidence.ts`: Evidence extraction logic (extractEvidenceForProposal)
+- `src/propose/proposer.ts`: Updated to attach evidence from attribution
+- `src/propose/rules.ts`: Updated to initialize evidence field
+- `src/propose/index.ts`: Updated to export evidence functions
+- `src/cli/propose.ts`: Updated with --with-evidence and --focus evidence options
+- `tests/pr170.propose_evidence.test.ts`: 12 comprehensive tests
+
 **Purpose**: Identify causal chains to understand "why" outcomes occur, supporting Policy-First improvement, NOT causal inference or automatic optimization
