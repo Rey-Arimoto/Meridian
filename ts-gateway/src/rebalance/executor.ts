@@ -130,7 +130,45 @@ export function computeMinOutFloor(
 }
 
 /**
- * PR191/PR191e: Derive execution reason codes for TxDraft (label-only)
+ * PR191f: Normalize slippage label suffix (label-only, defensive)
+ *
+ * @param label - Raw slippage label (e.g., "SLIPPAGE_ELEVATED")
+ * @returns Normalized suffix (e.g., "ELEVATED")
+ *
+ * Purpose:
+ *   Remove redundant "SLIPPAGE_" prefix to avoid "REASON_SLIPPAGE_SLIPPAGE_*" duplication.
+ *
+ * Examples:
+ *   - "SLIPPAGE_ELEVATED" → "ELEVATED"
+ *   - "SLIPPAGE_NORMAL" → "NORMAL"
+ *   - "ELEVATED" → "ELEVATED" (pass-through)
+ *   - undefined/null → "UNKNOWN"
+ *   - "" → "UNKNOWN"
+ *
+ * Constitutional: READ-ONLY, defensive (never throws)
+ */
+export function normalizeSlippageLabelSuffixV1(label?: string): string {
+  try {
+    // Falsy → UNKNOWN
+    if (!label || label.trim() === "") {
+      return "UNKNOWN";
+    }
+
+    // Remove "SLIPPAGE_" prefix if present
+    if (label.startsWith("SLIPPAGE_")) {
+      return label.slice("SLIPPAGE_".length);
+    }
+
+    // Pass-through (already normalized)
+    return label;
+  } catch (error) {
+    // Defensive: Never throw
+    return "UNKNOWN";
+  }
+}
+
+/**
+ * PR191/PR191e/PR191f: Derive execution reason codes for TxDraft (label-only)
  *
  * @param args - Draft context
  * @returns Array of reason code strings (label-only, no numerics)
@@ -138,6 +176,17 @@ export function computeMinOutFloor(
  * Constitutional: READ-ONLY, fixed rules, defensive (never throws)
  *
  * PR191e: slippageLabel source of truth is draft.slippageLabel only
+ * PR191f: Normalized slippage reason codes with backward compatibility
+ *
+ * Slippage reason code mapping:
+ *   - draft.slippageLabel="SLIPPAGE_ELEVATED" →
+ *     NEW: "REASON_SLIPPAGE_ELEVATED" (normalized)
+ *     LEGACY: "REASON_SLIPPAGE_SLIPPAGE_ELEVATED" (backward compat)
+ *   - draft.slippageLabel="ELEVATED" →
+ *     NEW: "REASON_SLIPPAGE_ELEVATED"
+ *     LEGACY: "REASON_SLIPPAGE_ELEVATED" (same, deduped)
+ *   - draft.slippageLabel=undefined →
+ *     NEW: "REASON_SLIPPAGE_UNKNOWN"
  */
 export function deriveExecutionReasonCodesV1(args: {
   draft: TxDraft;
@@ -175,6 +224,16 @@ export function deriveExecutionReasonCodesV1(args: {
 
     // 4) Slippage / MinOut
     // PR191e: slippageLabel source of truth is draft.slippageLabel only
+    // PR191f: Normalized slippage reason codes with backward compatibility
+    const normalizedSuffix = normalizeSlippageLabelSuffixV1(
+      args.draft.slippageLabel
+    );
+
+    // NEW: Normalized code (e.g., "REASON_SLIPPAGE_ELEVATED")
+    codes.add(`REASON_SLIPPAGE_${normalizedSuffix}`);
+
+    // LEGACY: Backward compatibility (e.g., "REASON_SLIPPAGE_SLIPPAGE_ELEVATED")
+    // Only add legacy code if slippageLabel exists and differs from normalized
     if (args.draft.slippageLabel) {
       codes.add(`REASON_SLIPPAGE_${args.draft.slippageLabel}`);
     }
