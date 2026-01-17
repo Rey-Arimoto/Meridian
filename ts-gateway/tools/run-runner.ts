@@ -3,42 +3,57 @@ import { buildChunkPlansV1 } from "../src/rebalance/chunking";
 import { runChunkedExecutionV1 } from "../src/rebalance/runner";
 
 async function main() {
-  // 1) ここが重要：chunks を自作しない。必ず builder を使う。
+  // NOTE:
+  // - MIN_CHUNK_NOTIONAL_USD を満たすため大きめにする（現行コードの閾値に追随）
+  // - NOOP を避けて必ず chunk が出るようにする
   const runPlan = buildChunkPlansV1({
-    totalNotionalUsd: 30000, // >0 (must exceed MIN_CHUNK_NOTIONAL_USD=10k per chunk)
+    totalNotionalUsd: 30000,
     templateId: "TPL_RISK_50",
-    baseIntent: "INCREASE_WBTC", // NOOP だと chunks が空になり得る
-    maxChunks: 2, // 1以上
-    chunkNotionalUsd: 15000, // >0 (must exceed MIN_CHUNK_NOTIONAL_USD=10k)
+    baseIntent: "INCREASE_WBTC",
+    maxChunks: 2,
+    chunkNotionalUsd: 15000,
     runId: `run-${Date.now()}`,
     getNowMs: () => Date.now(),
   });
 
   const res = await runChunkedExecutionV1(runPlan as any, {
-    // --- PR161/PR184: 通電証拠を増やす（任意だが推奨） ---
-    getPhaseLabel: async () => "PHASE_NORMAL" as any,
-    getObserveState: async () => ({ status: "AVAILABLE" } as any),
-
     // ---- 必須 deps ----
     getPortfolioSnapshot: async () =>
       ({
         balances: { SUI: "1", USDC: "1000", WBTC: "0" },
         weights: { USDC: 1, WBTC: 0 },
-        pricesUsd: { USDC: 1, WBTC: 45000, SUI: 1 }, // 最低限
-        timestamp: Date.now(), // 必須
+        pricesUsd: { USDC: 1, WBTC: 45000, SUI: 1 },
+        timestamp: Date.now(),
       } as any),
 
-    evaluateGate: async () => ({ status: "PASS", blockReasons: [], warnings: [] }),
+    // PR184: observe degrade を出すための最低限（NONE を返す）
+    getObserveState: async () =>
+      ({
+        status: "AVAILABLE",
+        sdkHealth: "WS_ALIVE",
+        sourceStatus: "AVAILABLE",
+        warnings: [],
+      } as any),
 
-    evaluatePolicy: async () => ({
-      allowExecution: false, // SIM_ONLY
-      status: "SIM_ONLY",
-      reasons: ["SIM_ONLY"],
+    // ---- Gate: 通電用に PASS ----
+    // (ここで BLOCK すると CHUNK が止まるのでまずは PASS)
+    evaluateGate: async () => ({
+      status: "PASS",
+      blockReasons: [],
+      warnings: [],
     }),
 
-    // ---- PR187 QuoteSources（通電用スタブ：最低限）----
-    // Runner の型に寄せて args を受け取る（将来 as any を外しやすい）
-    getQuoteSources: async (_args: any) =>
+    // ---- Policy: ALLOW で STOP させない ----
+    // ただし executeTx は SIMULATED で実取引しない
+    evaluatePolicy: async () =>
+      ({
+        allowExecution: true,
+        status: "ALLOW",
+        reasons: [],
+      } as any),
+
+    // ---- PR187 QuoteSources（通電用スタブ：router が必ず CETUS を選べる形）----
+    getQuoteSources: async () =>
       ({
         deepbookWs: { bids: [], asks: [], ts: Date.now(), status: "UNAVAILABLE" },
         deepbookHttp: { bids: [], asks: [], ts: Date.now(), status: "UNAVAILABLE" },
@@ -50,7 +65,8 @@ async function main() {
         },
       } as any),
 
-    // ---- 通電用：Draft/Execute はダミーでOK ----
+    // ---- TxDraft: simulateOnly true を固定（安全）----
+    // runner 側の wiring を検証したいので args は受ける（使わなくてOK）
     buildTxDraft: async (_args: any) =>
       ({
         status: "DRAFT",
@@ -62,23 +78,39 @@ async function main() {
         slippageBps: 200,
         deadlineSeconds: 120,
         checks: [],
-        notes: [],
+        notes: ["NOTE_HARNESS_DUMMY_DRAFT"],
         errors: [],
       } as any),
 
-    executeTx: async () => ({ status: "SIMULATED", reasons: ["SIM_ONLY"] } as any),
+    // ---- Execute: 常に SIMULATED（実行しない）----
+    executeTx: async (_args: any) =>
+      ({
+        status: "SIMULATED",
+        reasons: ["SIM_ONLY_HARNESS"],
+      } as any),
 
-    // 速度上げたいなら sleep は 0 に
+    // 高速化
     sleepMs: async () => {},
   } as any);
 
   console.log("RUN RESULT:");
   console.log(JSON.stringify(res, null, 2));
 
-  console.log("\nEVENTS (tail):");
-  console.log(
-    "Run: grep -nE 'QUOTE_NORMALIZED|OBSERVE_DEGRADED_LEVEL|RUN_' ~/.meridian/events.log | tail -n 200"
-  );
+  // 便利：最後に events の主要タイプを表示
+  console.log("\n--- Tail events.log (last 40) ---");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const os = require("os");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require("path");
+    const p = path.join(os.homedir(), ".meridian", "events.log");
+    const txt = fs.readFileSync(p, "utf8").trim().split("\n").slice(-40).join("\n");
+    console.log(txt);
+  } catch (e) {
+    console.log("(events.log not found or unreadable)");
+  }
 }
 
 main().catch((e) => {
