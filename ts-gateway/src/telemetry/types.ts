@@ -45,6 +45,9 @@ export type TelemetryEventType =
   | "OBSERVE_WS_STATUS" // DeepBook WS status (PR182)
   | "OBSERVE_HTTP_STATUS" // DeepBook HTTP status (PR182)
   | "OBSERVE_CETUS_STATUS" // Cetus pool status (PR182)
+  | "OBSERVE_DEGRADE_STATUS" // Observation degrade status (PR183)
+  | "OBSERVE_TIER_CHANGED" // Observation tier changed (PR183)
+  | "OBSERVE_FETCH_SKIPPED" // Observation fetch skipped (PR183)
   | "ERROR"; // Error occurred
 
 /**

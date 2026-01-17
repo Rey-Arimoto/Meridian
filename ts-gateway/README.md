@@ -5185,3 +5185,169 @@ if (snapshot.status === "AVAILABLE" && snapshot.snapshot) {
 7. **SDK optional**: Works without real SDK (stubs + warnings)
 
 **Purpose**: Enable real market observation while maintaining defensive safety - providing actual DeepBook WS/HTTP and Cetus Pool data with robust fallback chain and label-only output.
+
+⸻
+
+## PR183: Observation Load + Cost Control (Fixed Rules) v1
+
+### Purpose
+
+Control observation API load and costs using fixed tier-based rules. Maintain PR181 1s observe tick while preventing unnecessary HTTP fetches when WebSocket is alive. Use degradation tiers (1s → 2s → 5s → 10s) to manage HTTP polling frequency based on rate limiting and backoff conditions.
+
+### Problem
+
+**Before PR183**:
+- PR182 real observation sources can fetch every tick
+- WebSocket alive + HTTP polling = redundant API calls
+- No rate limit handling = potential API abuse
+- No cost control = unbounded HTTP requests
+
+**After PR183**:
+- WS alive → no HTTP fetch (rely on WS cache)
+- WS dead → tier-based fetch intervals
+- Rate limited → automatically degrade tier
+- HTTP OK streak → improve tier back to optimal
+
+### Fixed Rules (Tier-Based Degradation)
+
+**Tier System** (minimum HTTP fetch interval):
+- TIER_1S: 1 second (optimal)
+- TIER_2S: 2 seconds
+- TIER_5S: 5 seconds
+- TIER_10S: 10 seconds (maximum degradation)
+
+**Rule 1: WS Alive Logic**
+- When WS_ALIVE → nextFetchAllowed=NO
+- No HTTP fetch (use WS cache instead)
+- observeDegraded=NO (WS is not degraded)
+
+**Rule 2: WS Dead + Tier-Based Fetch**
+- Check: `nowMs - lastFetchMs >= tierInterval`
+- If YES → allow HTTP fetch
+- If NO → skip fetch (wait for tier interval)
+
+**Rule 3: Tier Degradation**
+- Trigger: httpHealth=RATE_LIMITED or BACKOFF
+- Action: Degrade tier by 1 level
+- Sequence: 1S → 2S → 5S → 10S (stops at 10S)
+- Effect: okStreak reset to 0
+
+**Rule 4: Tier Improvement**
+- Trigger: httpHealth=HTTP_OK for 2 consecutive times
+- Action: Improve tier by 1 level
+- Sequence: 10S → 5S → 2S → 1S (stops at 1S)
+- Effect: okStreak reset to 0 after improvement
+
+**Rule 5: observeDegraded Flag**
+- WS_ALIVE: NO
+- WS_DEAD + tier > 1S: YES
+- WS_DEAD + tier = 1S: NO
+- UNKNOWN: UNKNOWN
+
+### Data Structures
+
+**DegradeStateV1** (internal, saved to state):
+```typescript
+{
+  tier: "TIER_1S" | "TIER_2S" | "TIER_5S" | "TIER_10S",
+  lastFetchMs?: number, // Internal numeric (never displayed)
+  okStreak?: number // Internal numeric (never displayed)
+}
+```
+
+**ObserveStateV1** (updated with tier fields):
+```typescript
+{
+  // ... existing fields ...
+  observeTier?: "TIER_1S" | "TIER_2S" | "TIER_5S" | "TIER_10S",
+  observeDegraded?: "YES" | "NO" | "UNKNOWN",
+  nextFetchAllowed?: "YES" | "NO" | "UNKNOWN" // Optional diagnostics
+}
+```
+
+### Integration with observeLoop
+
+**runObserveTick** (updated):
+1. Get degradeState from state store
+2. Get wsAlive and httpHealth status
+3. Call `updateDegradeState()` to evaluate next fetch
+4. If `nextFetchAllowed=YES` → fetch observation snapshot
+5. If `nextFetchAllowed=NO` → skip fetch, emit FETCH_SKIPPED telemetry
+6. Update degradeState.lastFetchMs after successful fetch
+7. Save updated degradeState to state store
+8. Add observeTier/observeDegraded to observeState
+
+### Degradation Flow Example
+
+```
+Initial state: TIER_1S, okStreak=0
+
+Tick 1: httpHealth=RATE_LIMITED
+→ TIER_1S → TIER_2S (degraded)
+→ okStreak=0 (reset)
+
+Tick 2: httpHealth=BACKOFF
+→ TIER_2S → TIER_5S (degraded)
+→ okStreak=0
+
+Tick 3: httpHealth=HTTP_OK
+→ Tier stays TIER_5S
+→ okStreak=1
+
+Tick 4: httpHealth=HTTP_OK
+→ TIER_5S → TIER_2S (improved, 2 consecutive OK)
+→ okStreak=0 (reset)
+
+Tick 5: httpHealth=HTTP_OK
+→ Tier stays TIER_2S
+→ okStreak=1
+
+Tick 6: httpHealth=HTTP_OK
+→ TIER_2S → TIER_1S (improved)
+→ okStreak=0
+```
+
+### Telemetry Events (PR164)
+
+- **OBSERVE_DEGRADE_STATUS**: Tier/degraded/nextFetchAllowed status
+- **OBSERVE_TIER_CHANGED**: Tier changed (fromTier/toTier) - emitted via warnings
+- **OBSERVE_FETCH_SKIPPED**: Fetch skipped (reason=WS_ALIVE/TIER_WAIT/UNKNOWN)
+
+### Files
+
+- src/observeLoop/degrade.ts: Tier management logic (NEW)
+- src/observeLoop/types.ts: Added tier types to ObserveStateV1
+- src/observeLoop/loop.ts: Integrated degrade logic
+- src/observeLoop/index.ts: Export degrade functions
+- src/state/types.ts: Added degradeState to MeridianStateV1
+- src/telemetry/types.ts: Added degrade events
+- tests/pr183.observe_degrade.test.ts: 14 comprehensive tests
+
+### Constitutional Constraints
+
+- **Fixed rules**: No learning, optimization, or prediction
+- **READ-ONLY**: Observation only, no trading execution
+- **Label-only**: All output sanitized (numerics internal only)
+- **Defensive**: Never throws, always returns result
+- **No STOP**: Degradation is info only, not a STOP condition
+- **Separation**: Load control ≠ market risk STOP
+
+### Downstream Impact
+
+**observeDegraded Flag**:
+- Visible to gate/policy for decision-making
+- Suggested use: Treat as UNKNOWN/PARTIAL quality
+- Example: observeDegraded=YES → stricter slippage limits
+- Implementation: v1 uses WARN telemetry only (not blocking)
+
+### Safety Properties
+
+1. **WS priority**: Never fetch HTTP while WS is alive
+2. **Cost control**: Tier-based limits prevent API abuse
+3. **Auto-recovery**: HTTP OK streak improves tier automatically
+4. **Max degradation**: Stops at TIER_10S (10 second intervals)
+5. **Min tier**: Improves back to TIER_1S when stable
+6. **State persistence**: Tier/streak saved across restarts
+7. **Defensive**: All inputs validated, errors return safe defaults
+
+**Purpose**: Control observation load and API costs using fixed tier-based degradation rules - preventing unnecessary HTTP fetches when WS is alive, and automatically managing fetch frequency based on rate limiting conditions.

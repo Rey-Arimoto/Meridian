@@ -1,16 +1,19 @@
 /**
  * PR181: v1.4 Observe 1s Loop + Chunk 10s + Immediate STOP v1 - Loop
  * PR181a: v1.4 Spec Lock ≠ STOP (Run-on-Old-Spec) v1
+ * PR183: v1.4 Observation Load + Cost Control (Fixed Rules) v1
  *
  * Purpose:
  *   1-second observation loop for state updates with immediate STOP capability.
  *   Spec lock status is visible but NOT a STOP reason (execution continues with activeSpec).
+ *   Tier-based load control: WS alive → no HTTP fetch. WS dead → tier-based intervals.
  *
  * Constitutional Constraints:
  *   - Fixed rules: No learning, optimization, or prediction
  *   - READ-ONLY: Observation updates state only
  *   - Defensive: Never throws, always returns result
  *   - Separation: Market risk STOP vs spec ACK requirements
+ *   - No STOP: Degradation is info only, not a STOP condition
  */
 
 import {
@@ -25,6 +28,12 @@ import {
   ObserveLoopConfig,
 } from "./types";
 import { sanitizeStringArray, formatTimeLabel } from "./guards";
+import {
+  DegradeStateV1,
+  initDegradeState,
+  updateDegradeState,
+  updateLastFetchTimestamp,
+} from "./degrade";
 
 /**
  * Global stop token (in-memory)
@@ -233,19 +242,47 @@ export async function runObserveTick(deps?: {
   getSpecLockStatus?: () => Promise<string>; // PR181a: spec lock status
   getHasActiveSpec?: () => Promise<boolean>; // PR181a: activeSpec presence
   fetchObservationSnapshotV1?: () => Promise<any>; // PR182: real observation source
+  getDegradeState?: () => Promise<DegradeStateV1 | undefined>; // PR183: degrade state
+  getWsAlive?: () => Promise<boolean | "UNKNOWN">; // PR183: WS alive status
+  getHttpHealth?: () => Promise<string>; // PR183: HTTP health label
 }): Promise<ObserveStateV1> {
   try {
-    // PR182: Fetch real observation snapshot first (if available)
+    // PR183: Get degrade state and evaluate load control
+    const degradeState =
+      (await deps?.getDegradeState?.()) || initDegradeState();
+    const wsAlive = (await deps?.getWsAlive?.()) ?? "UNKNOWN";
+    const httpHealthRaw = (await deps?.getHttpHealth?.()) || "UNKNOWN";
+    const httpHealth: "HTTP_OK" | "RATE_LIMITED" | "BACKOFF" | "UNKNOWN" =
+      httpHealthRaw === "HTTP_OK" ||
+      httpHealthRaw === "RATE_LIMITED" ||
+      httpHealthRaw === "BACKOFF"
+        ? httpHealthRaw
+        : "UNKNOWN";
+    const nowMs = Date.now();
+
+    const degradeResult = updateDegradeState({
+      prev: degradeState,
+      wsAlive,
+      httpHealth,
+      nowMs,
+    });
+
+    // PR183: Only fetch if nextFetchAllowed=YES
     let sourceStatus: string = "UNKNOWN";
     let sdkHealth: string = "UNKNOWN";
     let sourceWarnings: string[] = [];
+    let didFetch = false;
 
-    if (deps?.fetchObservationSnapshotV1) {
+    if (
+      degradeResult.nextFetchAllowed === "YES" &&
+      deps?.fetchObservationSnapshotV1
+    ) {
       try {
         const snapshot = await deps.fetchObservationSnapshotV1();
         sourceStatus = snapshot.status || "UNKNOWN";
         sdkHealth = snapshot.sdkHealth || "UNKNOWN";
         sourceWarnings = snapshot.warnings || [];
+        didFetch = true;
 
         // Emit telemetry for source status (defensive)
         if (deps?.telemetryLogger) {
@@ -263,6 +300,51 @@ export async function runObserveTick(deps?: {
         sourceStatus = "ERROR";
         sdkHealth = "UNKNOWN";
         sourceWarnings = ["SNAPSHOT_FETCH_FAILED"];
+        didFetch = true; // Attempted fetch
+      }
+    } else if (degradeResult.nextFetchAllowed === "NO") {
+      // Fetch skipped due to tier/WS logic
+      const skipReason =
+        wsAlive === true
+          ? "WS_ALIVE"
+          : degradeResult.observeTier !== "TIER_1S"
+          ? "TIER_WAIT"
+          : "UNKNOWN";
+
+      sourceWarnings.push(`FETCH_SKIPPED_${skipReason}`);
+
+      // Emit telemetry for skipped fetch (defensive)
+      if (deps?.telemetryLogger) {
+        try {
+          await deps.telemetryLogger.log("OBSERVE_FETCH_SKIPPED", {
+            reason: skipReason,
+            tier: degradeResult.observeTier,
+          });
+        } catch {
+          // Non-fatal
+        }
+      }
+    }
+
+    // PR183: Update degrade state if fetch was attempted
+    let updatedDegradeState = degradeResult.next;
+    if (didFetch) {
+      updatedDegradeState = updateLastFetchTimestamp(
+        degradeResult.next,
+        nowMs
+      );
+    }
+
+    // PR183: Emit degrade telemetry (defensive)
+    if (deps?.telemetryLogger) {
+      try {
+        await deps.telemetryLogger.log("OBSERVE_DEGRADE_STATUS", {
+          tier: degradeResult.observeTier,
+          degraded: degradeResult.observeDegraded,
+          nextFetchAllowed: degradeResult.nextFetchAllowed,
+        });
+      } catch {
+        // Non-fatal
       }
     }
 
@@ -278,6 +360,12 @@ export async function runObserveTick(deps?: {
     observeState.sourceStatus = sourceStatus;
     observeState.sdkHealth = sdkHealth;
     observeState.warnings.push(...sourceWarnings);
+
+    // PR183: Add degrade status to observe state (label-only)
+    observeState.observeTier = degradeResult.observeTier;
+    observeState.observeDegraded = degradeResult.observeDegraded;
+    observeState.nextFetchAllowed = degradeResult.nextFetchAllowed;
+    observeState.warnings.push(...degradeResult.warnings);
 
     // Get hardStop status
     const hardStopActive = deps?.getHardStopActive
@@ -358,7 +446,10 @@ export async function runObserveTick(deps?: {
     // Save to state store (defensive)
     if (deps?.stateStore) {
       try {
-        await deps.stateStore.patchState({ observeState });
+        await deps.stateStore.patchState({
+          observeState,
+          degradeState: updatedDegradeState, // PR183: Save degrade state
+        });
       } catch {
         // Non-fatal
       }

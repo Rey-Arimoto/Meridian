@@ -78,6 +78,9 @@ export interface ObserveStateV1 {
   specAckStatus?: SpecAckStatusLabel; // PR181a: spec ACK status (not a STOP reason)
   sourceStatus?: string; // PR182: observation source status (AVAILABLE/PARTIAL/ERROR)
   sdkHealth?: string; // PR182: SDK health label (WS_ALIVE/WS_DEAD/HTTP_OK/etc)
+  observeTier?: string; // PR183: TIER_1S | TIER_2S | TIER_5S | TIER_10S (label-only)
+  observeDegraded?: string; // PR183: YES | NO | UNKNOWN (label-only)
+  nextFetchAllowed?: string; // PR183: YES | NO | UNKNOWN (optional diagnostics, label-only)
   warnings: string[]; // label-only
 }
 

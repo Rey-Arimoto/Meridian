@@ -77,6 +77,13 @@ export interface MeridianStateV1 {
     warnings: string[]; // label-only
   };
 
+  // PR183: Degrade state (load control, internal)
+  degradeState?: {
+    tier: string; // TIER_1S | TIER_2S | TIER_5S | TIER_10S (label-only)
+    lastFetchMs?: number; // Internal numeric (never displayed)
+    okStreak?: number; // Internal numeric (never displayed)
+  };
+
   // Warnings (label-only)
   warnings: string[];
 }
