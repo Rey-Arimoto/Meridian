@@ -415,6 +415,21 @@ export function runSafetyGateWithSimulation(
     blockReasons.push("BLOCK_DEPTH_THIN");
   }
 
+  // D7: MinOut unavailable (PR186 - slippage protection)
+  // Conservative: If we can't compute minOut, BLOCK execution
+  if (plan.intent !== "NOOP") {
+    const canComputeMinOut =
+      route.chosenQuote &&
+      route.chosenQuote.status === "AVAILABLE" &&
+      typeof route.chosenQuote.amountOut === "number" &&
+      !isNaN(route.chosenQuote.amountOut) &&
+      route.chosenQuote.amountOut > 0;
+
+    if (!canComputeMinOut) {
+      blockReasons.push("BLOCK_MINOUT_UNAVAILABLE");
+    }
+  }
+
   // ===== Determine status =====
 
   if (blockReasons.length > 0) {

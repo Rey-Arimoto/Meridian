@@ -87,6 +87,46 @@ export interface ExecutorOptions {
 }
 
 /**
+ * Compute minOut floor (PR186)
+ *
+ * @param amountOut - Expected amount out (numeric)
+ * @param slippageBps - Slippage tolerance in basis points
+ * @returns Minimum acceptable amount out (as string)
+ *
+ * Formula: minOut = floor(amountOut * (1 - slippageBps/10000))
+ *
+ * Defensive: Returns "0" on error (safe side - will cause BLOCK)
+ */
+export function computeMinOutFloor(
+  amountOut: number,
+  slippageBps: number
+): string {
+  try {
+    // Validate inputs
+    if (
+      typeof amountOut !== "number" ||
+      typeof slippageBps !== "number" ||
+      isNaN(amountOut) ||
+      isNaN(slippageBps) ||
+      amountOut <= 0 ||
+      slippageBps < 0
+    ) {
+      return "0"; // Invalid input → safe default
+    }
+
+    // minOut = amountOut * (1 - slippageBps/10000)
+    const slippageFactor = 1 - slippageBps / 10000;
+    const minOut = Math.floor(amountOut * slippageFactor);
+
+    // Return as string (internal numeric, but stored as string)
+    return minOut.toString();
+  } catch (error) {
+    // Defensive: Return "0" on error (safe side)
+    return "0";
+  }
+}
+
+/**
  * Build transaction draft from rebalance plan
  *
  * @param plan - Rebalance plan

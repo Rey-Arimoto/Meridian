@@ -129,10 +129,16 @@ export interface RunnerDeps {
     portfolio: PortfolioSnapshot;
   }) => Promise<PolicyResultSimple>;
 
-  // Build transaction draft
+  // Build transaction draft (PR186: enhanced with context)
   buildTxDraft: (args: {
     chunkPlan: ChunkPlan;
     portfolio: PortfolioSnapshot;
+    venue?: "CETUS" | "DEEPBOOK" | "NONE"; // PR161/PR186: route venue
+    phaseLabel?: string; // PR161/PR186: phase label
+    stressLabel?: string; // PR186: stress label
+    impactLabel?: string; // PR186: impact label (from chosenQuote)
+    observeDegradeLevel?: string; // PR184/PR186: observe degrade level
+    chosenQuote?: any; // PR186: quote object for minOut calculation
   }) => Promise<TxDraft>;
 
   // Execute transaction
@@ -762,10 +768,18 @@ export async function runChunkedExecutionV1(
         };
       }
 
-      // Step 5: Build transaction draft
+      // Step 5: Build transaction draft (PR186: pass context for slippage/minOut)
       let txDraft: TxDraft;
       try {
-        txDraft = await deps.buildTxDraft({ chunkPlan: chunk, portfolio });
+        txDraft = await deps.buildTxDraft({
+          chunkPlan: chunk,
+          portfolio,
+          venue: selectedRoute, // PR186: route venue for slippage
+          phaseLabel: currentPhase, // PR186: phase for slippage
+          observeDegradeLevel, // PR186: degrade level for slippage
+          // stressLabel and impactLabel: not readily available in runner loop
+          // chosenQuote: would need to be obtained from routing/gate
+        });
       } catch (error) {
         // Defensive: If draft building fails, STOP
         chunkResults.push({

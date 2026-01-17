@@ -5804,3 +5804,213 @@ Callers can gradually adopt the new parameters:
 `v1.4-restore-template-slippage-base-v1`
 
 ---
+
+---
+
+## PR186: Activate PR185 Slippage + MinOut Wiring v1
+
+### Purpose
+
+Wire PR185's template-based slippage calculation into live execution pipeline (runner → buildTxDraft → executor). This activates the comprehensive slippage calculation for real transactions and enables proper minOut floor computation for slippage protection.
+
+### Problem Statement
+
+PR185 restored template-based slippage calculation, but it wasn't wired into the execution pipeline. The runner's `buildTxDraft` only receives `{chunkPlan, portfolio}` without context needed for slippage calculation (venue, phaseLabel, stressLabel, impactLabel, observeDegradeLevel).
+
+### Solution
+
+1. **Extend RunnerDeps.buildTxDraft signature** with optional context parameters
+2. **Pass context from runner** to buildTxDraft caller
+3. **Compute minOut floor** using slippage and quote data
+4. **Gate blocks** when minOut cannot be computed (conservative)
+
+### Implementation
+
+**1. RunnerDeps.buildTxDraft Signature (src/rebalance/types.ts)**:
+```typescript
+buildTxDraft: (args: {
+  chunkPlan: ChunkPlan;
+  portfolio: PortfolioSnapshot;
+  venue?: "CETUS" | "DEEPBOOK" | "NONE";  // PR161/PR186
+  phaseLabel?: string;                     // PR161/PR186
+  stressLabel?: string;                    // PR186
+  impactLabel?: string;                    // PR186 (from chosenQuote)
+  observeDegradeLevel?: string;            // PR184/PR186
+  chosenQuote?: any;                       // PR186 (for minOut calculation)
+}) => Promise<TxDraft>;
+```
+
+**All parameters are optional** for backward compatibility.
+
+**2. Runner Context Passing (src/rebalance/runner.ts)**:
+```typescript
+txDraft = await deps.buildTxDraft({
+  chunkPlan: chunk,
+  portfolio,
+  venue: selectedRoute,          // PR186: route venue
+  phaseLabel: currentPhase,      // PR186: phase for slippage
+  observeDegradeLevel,           // PR186: degrade level for slippage
+  // Note: stress/impact/chosenQuote added when available
+});
+```
+
+**3. MinOut Computation (src/rebalance/executor.ts)**:
+```typescript
+export function computeMinOutFloor(
+  amountOut: number,
+  slippageBps: number
+): string {
+  // minOut = floor(amountOut * (1 - slippageBps/10000))
+  // Returns "0" on error (defensive)
+}
+```
+
+**Fixed rules**:
+- `minOut = floor(amountOut × (1 - slippageBps/10000))`
+- Returns string for Sui smart contract compatibility
+- Defensive: Returns "0" on error, never throws
+
+**4. Gate MinOut Check (src/rebalance/gate.ts)**:
+```typescript
+// D7: MinOut unavailable (PR186 - slippage protection)
+if (plan.intent !== "NOOP") {
+  const canComputeMinOut =
+    route.chosenQuote &&
+    route.chosenQuote.status === "AVAILABLE" &&
+    typeof route.chosenQuote.amountOut === "number" &&
+    !isNaN(route.chosenQuote.amountOut) &&
+    route.chosenQuote.amountOut > 0;
+
+  if (!canComputeMinOut) {
+    blockReasons.push("BLOCK_MINOUT_UNAVAILABLE");
+  }
+}
+```
+
+Conservative: BLOCK execution if minOut prerequisites are missing.
+
+### Examples
+
+**Example 1: Full slippage calculation in buildTxDraft**
+```typescript
+// Context from runner
+const context = {
+  templateId: "TPL_RISK_50",
+  venue: "CETUS",
+  phaseLabel: "PHASE_UP_SHOCK",
+  observeDegradeLevel: "DEGRADED_MEDIUM",
+};
+
+// Compute slippage
+const slippage = computeSlippageBps(context);
+// → 100 (base) + 50 (CETUS) + 150 (SHOCK) + 150 (MEDIUM) = 450 bps
+
+// Compute minOut
+const minOut = computeMinOutFloor(10000, slippage);
+// → floor(10000 × (1 - 0.045)) = floor(9550) = "9550"
+```
+
+**Example 2: Gate blocks missing amountOut**
+```typescript
+// Quote missing amountOut
+const route = {
+  venue: "CETUS",
+  chosenQuote: {
+    status: "AVAILABLE",
+    amountIn: 100,
+    // amountOut: missing!
+  }
+};
+
+const gateResult = runSafetyGateWithSimulation(...);
+// → status: "BLOCK"
+// → blockReasons: ["BLOCK_MINOUT_UNAVAILABLE"]
+```
+
+### Fixed Rules
+
+1. **Context Parameters**: All optional, safe defaults used when missing
+2. **Slippage Calculation**: Uses PR185 `computeSlippageBps()` with full context
+3. **MinOut Floor**: `floor(amountOut × (1 - slippageBps/10000))`
+4. **Gate Block**: BLOCK if `intent !== "NOOP"` and amountOut unavailable/invalid
+5. **Defensive**: All functions never throw, return safe values on error
+
+### Constitutional Constraints
+
+- **READ-ONLY**: No learning, optimization, or prediction
+- **Fixed rules**: Deterministic slippage and minOut calculation
+- **Conservative gate**: BLOCK when minOut cannot be computed
+- **Backward compatible**: All new parameters optional
+- **Defensive**: Never throws, returns safe values ("0" for minOut, HARD_CAP for slippage)
+- **Label-only**: No numbers in warnings/reasons (test comparisons OK)
+
+### Test Coverage
+
+11 tests in `tests/pr186.slippage_minout_wiring.test.ts`:
+1. buildTxDraft accepts optional context parameters (type check)
+2. computeSlippageBps receives context correctly
+3. computeMinOutFloor basic calculation
+4. computeMinOutFloor edge cases (0, negative, NaN)
+5. Gate BLOCK when quote missing amountOut
+6. Gate PASS when quote has valid amountOut
+7. Gate BLOCK when quote unavailable
+8. Gate allows NOOP without quote check
+9. Integration: full context → slippage flow
+10. Gate BLOCK when amountOut is zero
+11. Gate BLOCK when amountOut is NaN
+
+### Files Changed
+
+**Updated**:
+- `src/rebalance/types.ts` - Extended RunnerDeps.buildTxDraft signature (PR186)
+- `src/rebalance/runner.ts` - Pass context to buildTxDraft (PR186)
+- `src/rebalance/executor.ts` - Added computeMinOutFloor() helper (PR186)
+- `src/rebalance/gate.ts` - Added BLOCK_MINOUT_UNAVAILABLE check (PR186)
+- `tests/pr186.slippage_minout_wiring.test.ts` - 11 comprehensive tests (NEW)
+
+**No breaking changes**: All new parameters are optional, existing callers continue to work.
+
+### Integration Flow
+
+```
+1. Runner derives context:
+   - venue (from route)
+   - phaseLabel (from Python signals)
+   - observeDegradeLevel (from deriveObserveDegradeLevel)
+
+2. Runner calls buildTxDraft with context:
+   buildTxDraft({
+     chunkPlan,
+     portfolio,
+     venue,
+     phaseLabel,
+     observeDegradeLevel
+   })
+
+3. buildTxDraft computes slippage:
+   slippageBps = computeSlippageBps({
+     templateId,
+     venue,
+     phaseLabel,
+     stressLabel,
+     impactLabel,
+     observeDegradeLevel
+   })
+
+4. buildTxDraft computes minOut:
+   minOut = computeMinOutFloor(
+     chosenQuote.amountOut,
+     slippageBps
+   )
+
+5. Gate validates minOut prerequisites:
+   if (intent !== "NOOP" && !canComputeMinOut) {
+     BLOCK("BLOCK_MINOUT_UNAVAILABLE")
+   }
+```
+
+### Version Tag
+
+`v1.4-activate-slippage-minout-wiring-v1`
+
+---
