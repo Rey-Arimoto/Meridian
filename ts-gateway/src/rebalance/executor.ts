@@ -168,7 +168,7 @@ export function normalizeSlippageLabelSuffixV1(label?: string): string {
 }
 
 /**
- * PR191/PR191e/PR191f: Derive execution reason codes for TxDraft (label-only)
+ * PR191/PR191e/PR191f/PR191f': Derive execution reason codes for TxDraft (label-only)
  *
  * @param args - Draft context
  * @returns Array of reason code strings (label-only, no numerics)
@@ -177,16 +177,18 @@ export function normalizeSlippageLabelSuffixV1(label?: string): string {
  *
  * PR191e: slippageLabel source of truth is draft.slippageLabel only
  * PR191f: Normalized slippage reason codes with backward compatibility
+ * PR191f': Legacy slippage reason code always emits forced duplicated form
  *
  * Slippage reason code mapping:
  *   - draft.slippageLabel="SLIPPAGE_ELEVATED" →
  *     NEW: "REASON_SLIPPAGE_ELEVATED" (normalized)
- *     LEGACY: "REASON_SLIPPAGE_SLIPPAGE_ELEVATED" (backward compat)
+ *     LEGACY: "REASON_SLIPPAGE_SLIPPAGE_ELEVATED" (forced duplicated)
  *   - draft.slippageLabel="ELEVATED" →
  *     NEW: "REASON_SLIPPAGE_ELEVATED"
- *     LEGACY: "REASON_SLIPPAGE_ELEVATED" (same, deduped)
+ *     LEGACY: "REASON_SLIPPAGE_SLIPPAGE_ELEVATED" (forced duplicated)
  *   - draft.slippageLabel=undefined →
  *     NEW: "REASON_SLIPPAGE_UNKNOWN"
+ *     LEGACY: (none - skip to avoid noise)
  */
 export function deriveExecutionReasonCodesV1(args: {
   draft: TxDraft;
@@ -224,7 +226,7 @@ export function deriveExecutionReasonCodesV1(args: {
 
     // 4) Slippage / MinOut
     // PR191e: slippageLabel source of truth is draft.slippageLabel only
-    // PR191f: Normalized slippage reason codes with backward compatibility
+    // PR191f/PR191f': Normalized slippage reason codes with forced legacy duplicated form
     const normalizedSuffix = normalizeSlippageLabelSuffixV1(
       args.draft.slippageLabel
     );
@@ -232,10 +234,12 @@ export function deriveExecutionReasonCodesV1(args: {
     // NEW: Normalized code (e.g., "REASON_SLIPPAGE_ELEVATED")
     codes.add(`REASON_SLIPPAGE_${normalizedSuffix}`);
 
-    // LEGACY: Backward compatibility (e.g., "REASON_SLIPPAGE_SLIPPAGE_ELEVATED")
-    // Only add legacy code if slippageLabel exists and differs from normalized
-    if (args.draft.slippageLabel) {
-      codes.add(`REASON_SLIPPAGE_${args.draft.slippageLabel}`);
+    // LEGACY: Forced duplicated form for backward compatibility
+    // Always emit the legacy duplicated pattern for non-UNKNOWN suffix,
+    // regardless of whether slippageLabel is "SLIPPAGE_ELEVATED" or "ELEVATED".
+    // This ensures parsers always see "REASON_SLIPPAGE_SLIPPAGE_<SUFFIX>".
+    if (normalizedSuffix !== "UNKNOWN") {
+      codes.add(`REASON_SLIPPAGE_SLIPPAGE_${normalizedSuffix}`);
     }
 
     if (args.draft.minOut === null || args.draft.minOut === undefined) {
