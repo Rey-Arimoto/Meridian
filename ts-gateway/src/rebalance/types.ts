@@ -305,6 +305,9 @@ export interface ChunkResult {
   // PR161: Route selection diagnostics (label-only)
   routeSelected?: "CETUS" | "DEEPBOOK" | "NONE";
   routeChanged?: boolean;
+
+  // PR184: Observe degrade level diagnostics (label-only)
+  observeDegradeLevel?: string;
 }
 
 /**

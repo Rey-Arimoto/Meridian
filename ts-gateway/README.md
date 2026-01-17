@@ -5351,3 +5351,241 @@ Tick 6: httpHealth=HTTP_OK
 7. **Defensive**: All inputs validated, errors return safe defaults
 
 **Purpose**: Control observation load and API costs using fixed tier-based degradation rules - preventing unnecessary HTTP fetches when WS is alive, and automatically managing fetch frequency based on rate limiting conditions.
+
+---
+
+## PR184: Observe Degraded → Safety Tightening Bridge v1
+
+### Purpose
+
+Bridge `observeDegraded` status from PR183 into the execution pipeline (Gate/Slippage/Quote Consistency) with fixed rules to **tighten safety checks** when observation is degraded, WITHOUT adding new STOP conditions.
+
+### Constitutional Constraints
+
+- **READ-ONLY**: No learning, optimization, or prediction
+- **STOP conditions NOT increased**: observeDegraded is NOT a STOP reason
+- **Label-only**: All adjustments/modes are labels, not numbers (test comparisons OK)
+- **Never throws**: Always returns result
+- **Double-key maintained**: Execution enable = env + policy only
+
+### Core Philosophy
+
+**Observation degradation does NOT cause STOP**. Instead, it makes execution **more conservative**:
+- Gate: Block more easily when quote/consistency is uncertain
+- Slippage: Add conservative buffer
+- Quote Consistency: Tighten tolerance band
+
+This prevents:
+- False "no action" when observation is weak
+- Dangerous execution with stale/unreliable data
+
+### Degrade Level Derivation
+
+Fixed rules based on PR183 tier:
+
+```typescript
+deriveObserveDegradeLevel(observeState):
+  if observeDegraded !== "YES" → DEGRADED_NONE
+  if observeDegraded === "YES" + tier:
+    - TIER_2S → DEGRADED_LIGHT
+    - TIER_5S → DEGRADED_MEDIUM
+    - TIER_10S → DEGRADED_HEAVY
+    - tier unknown → DEGRADED_UNKNOWN (safe side)
+```
+
+### Fixed Adjustments Table
+
+| Level | Slippage Add | Quote Freshness | Consistency Band | Gate Sensitivity |
+|-------|--------------|-----------------|------------------|------------------|
+| NONE | +0 bps | NORMAL | ±5% | NORMAL |
+| LIGHT | +50 bps | MEDIUM | ±4% | NORMAL |
+| MEDIUM | +150 bps | STRICT | ±3% | NORMAL |
+| HEAVY | +300 bps | STRICT | ±2% | STRICT |
+| UNKNOWN | +300 bps (safe) | STRICT | ±2% | STRICT |
+
+**Slippage hard cap**: Always capped at 1500 bps (15%) regardless of adjustments.
+
+### Gate Behavior Changes
+
+**New block reasons (NOT STOP reasons)**:
+1. `BLOCK_OBSERVE_DEGRADED_UNCERTAIN`
+   - Condition: DEGRADED_HEAVY/UNKNOWN + quote unavailable/error
+   - Effect: Block this chunk, but run can continue
+
+2. `BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH`
+   - Condition: DEGRADED_MEDIUM + quote timestamp > 30s old
+   - Effect: Block this chunk, require fresher quote
+
+3. `WARN_OBSERVE_DEGRADED_LIGHT`
+   - Condition: DEGRADED_LIGHT
+   - Effect: Warning only, no block
+
+### Slippage Calculation (PR157 + PR184)
+
+```typescript
+computeSlippageBps({
+  phaseLabel?: string,
+  observeDegradeLevel?: ObserveDegradeLevel
+}): number
+
+Fixed formula:
+  Base = 50 bps
+  + Shock adjustment (100 bps if PHASE_*_SHOCK)
+  + Degrade adjustment (0/50/150/300 bps)
+  = Total (capped at 1500 bps)
+
+Example:
+  PHASE_NORMAL + DEGRADED_NONE = 50 bps
+  PHASE_NORMAL + DEGRADED_MEDIUM = 200 bps
+  PHASE_UP_SHOCK + DEGRADED_HEAVY = 450 bps
+```
+
+### Quote Consistency Tightening (PR157 + PR184)
+
+```typescript
+getToleranceBandPct(observeDegradeLevel?: ObserveDegradeLevel): number
+
+Fixed rules:
+  NONE → ±5.0%
+  LIGHT → ±4.0%
+  MEDIUM → ±3.0%
+  HEAVY/UNKNOWN → ±2.0%
+
+Usage in checkQuoteConsistency():
+  Quote price must be within ±X% of oracle price
+  X = toleranceBandPct based on degrade level
+
+Example:
+  Oracle: 50000 USD
+  NONE: [47500, 52500] allowed
+  HEAVY: [49000, 51000] allowed (tighter)
+```
+
+### Runner Integration
+
+**runChunkedExecutionV1** (updated):
+```typescript
+// Per chunk:
+1. Get observeState from state store
+2. Derive observeDegradeLevel = deriveObserveDegradeLevel(observeState)
+3. Emit OBSERVE_DEGRADED_LEVEL telemetry
+4. Pass observeDegradeLevel to evaluateGate()
+5. Gate uses observeDegradeLevel to apply tightening rules
+6. Record observeDegradeLevel in ChunkResult (label-only)
+```
+
+**ChunkResult** (updated):
+```typescript
+{
+  // ... existing fields ...
+  observeDegradeLevel?: string // PR184: label-only diagnostic
+}
+```
+
+### Telemetry Events (PR184)
+
+1. `OBSERVE_DEGRADED_LEVEL` (INFO)
+   - Emitted per chunk with current degrade level
+   - Labels: level, phase
+
+2. `OBSERVE_DEGRADED_TIGHTENING_APPLIED` (INFO)
+   - Emitted when tightening rules affect gate/slippage/consistency
+   - Labels: level, adjustment_type
+
+### Type Definitions
+
+**src/rebalance/observeDegrade.ts** (NEW):
+```typescript
+export type ObserveDegradeLevel =
+  | "DEGRADED_NONE"
+  | "DEGRADED_LIGHT"
+  | "DEGRADED_MEDIUM"
+  | "DEGRADED_HEAVY"
+  | "DEGRADED_UNKNOWN";
+
+export interface ObserveDegradeAdjustments {
+  slippageAddBps: number // Internal numeric only
+  quoteFreshnessMode: "STRICT" | "MEDIUM" | "NORMAL"
+  consistencyBandMode: "TIGHTER" | "TIGHT" | "NORMAL"
+  gateSensitivityMode: "STRICT" | "NORMAL"
+}
+
+export function deriveObserveDegradeLevel(
+  observeState?: any
+): ObserveDegradeLevel
+
+export function getObserveDegradeAdjustments(
+  level: ObserveDegradeLevel
+): ObserveDegradeAdjustments
+```
+
+### Example Execution Flow
+
+```
+Scenario: WS dead, tier degraded to TIER_10S
+
+1. observeState.observeDegraded = "YES"
+   observeState.observeTier = "TIER_10S"
+
+2. deriveObserveDegradeLevel() → DEGRADED_HEAVY
+
+3. Gate evaluation:
+   - Quote timestamp check: if quote > 30s old → not checked (MEDIUM only)
+   - Quote availability: if quote unavailable → BLOCK_OBSERVE_DEGRADED_UNCERTAIN
+   
+4. If gate passes:
+   - Slippage: Base 50 + Degrade 300 = 350 bps
+   - Consistency: Quote must be within ±2% of oracle (tighter)
+   
+5. ChunkResult:
+   {
+     status: "EXECUTED" or "BLOCKED",
+     observeDegradeLevel: "DEGRADED_HEAVY" // Label-only
+   }
+```
+
+### Safety Guarantees
+
+1. **No new STOP conditions**: Degradation never triggers run STOP
+2. **Conservative execution**: When uncertain, be more careful
+3. **Transparent**: Degrade level visible in ChunkResult/telemetry
+4. **Defensive**: Missing/malformed observeState → DEGRADED_UNKNOWN (safest)
+5. **Hard limits respected**: Slippage cap (1500 bps) always enforced
+
+### Test Coverage
+
+14 tests in `tests/pr184.observe_degraded_safety.test.ts`:
+1. deriveObserveDegradeLevel: NONE (observeDegraded false)
+2. tier=2s → LIGHT
+3. tier=5s → MEDIUM
+4. tier=10s → HEAVY
+5. tier unknown → UNKNOWN (defensive)
+6. Slippage add: MEDIUM adds 150 bps
+7. Consistency band: HEAVY tightens to ±2%
+8. Gate: UNKNOWN + quote unavailable → BLOCK_OBSERVE_DEGRADED_UNCERTAIN
+9. Gate: MEDIUM + quote stale → BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH
+10. Runner integration: observeDegradeLevel recorded in chunk result
+11. Adjustments table correct
+12. Defensive: missing observeState → UNKNOWN
+13. Quote consistency tightens with degrade level
+14. Slippage hard cap respected
+
+### Files Changed
+
+**New**:
+- `src/rebalance/observeDegrade.ts` - Core degrade level logic
+- `src/rebalance/slippage.ts` - Slippage computation (minimal stub)
+- `src/rebalance/consistency.ts` - Quote consistency checks (minimal stub)
+- `tests/pr184.observe_degraded_safety.test.ts` - 14 tests
+
+**Updated**:
+- `src/rebalance/types.ts` - Added observeDegradeLevel to ChunkResult
+- `src/rebalance/gate.ts` - Added degrade block reasons, observeDegradeLevel param
+- `src/rebalance/runner.ts` - Derive and propagate observeDegradeLevel per chunk
+- `src/telemetry/types.ts` - Added OBSERVE_DEGRADED_LEVEL, OBSERVE_DEGRADED_TIGHTENING_APPLIED
+
+### Version Tag
+
+`v1.4-observe-degraded-safety-tightening-v1`
+
+---

@@ -114,10 +114,14 @@ export interface RunnerDeps {
     reasons: string[];
   }>;
 
-  // Evaluate gate (PR153/155/157/158)
+  // PR184: Get observe state (refreshed per chunk)
+  getObserveState?: () => Promise<any>;
+
+  // Evaluate gate (PR153/155/157/158/184)
   evaluateGate: (args: {
     chunkPlan: ChunkPlan;
     portfolio: PortfolioSnapshot;
+    observeDegradeLevel?: string;
   }) => Promise<GateResultSimple>;
 
   // Evaluate policy (PR156)
@@ -413,10 +417,38 @@ export async function runChunkedExecutionV1(
         }
       }
 
-      // Step 2: Evaluate gate
+      // Step 1.7 (PR184): Get observe state and derive degrade level
+      let observeDegradeLevel: string = "DEGRADED_NONE";
+      if (deps.getObserveState) {
+        try {
+          const observeState = await deps.getObserveState();
+          // Import deriveObserveDegradeLevel function
+          const { deriveObserveDegradeLevel } = await import(
+            "./observeDegrade"
+          );
+          observeDegradeLevel = deriveObserveDegradeLevel(observeState);
+
+          // PR184: Emit OBSERVE_DEGRADED_LEVEL event (defensive)
+          await appendEventV1(
+            createEventV1("OBSERVE_DEGRADED_LEVEL", "INFO", {
+              level: observeDegradeLevel,
+              phase: currentPhase,
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+        } catch (error) {
+          // Defensive: Failed to get observe state → UNKNOWN (safe side)
+          observeDegradeLevel = "DEGRADED_UNKNOWN";
+        }
+      }
+
+      // Step 2: Evaluate gate (PR184: with observeDegradeLevel)
       let gateResult: GateResultSimple;
       try {
-        gateResult = await deps.evaluateGate({ chunkPlan: chunk, portfolio });
+        gateResult = await deps.evaluateGate({
+          chunkPlan: chunk,
+          portfolio,
+            observeDegradeLevel,
+        });
       } catch (error) {
         // Defensive: If gate evaluation fails, STOP
         chunkResults.push({
@@ -481,6 +513,7 @@ export async function runChunkedExecutionV1(
             phaseLabel: currentPhase, // PR161
             routeSelected: selectedRoute, // PR161
             routeChanged, // PR161
+            observeDegradeLevel, // PR184
           });
 
           reasons.push("REASON_CRITICAL_BLOCK_STOP");
@@ -546,6 +579,7 @@ export async function runChunkedExecutionV1(
             phaseLabel: currentPhase, // PR161
             routeSelected: selectedRoute, // PR161
             routeChanged, // PR161
+            observeDegradeLevel, // PR184
           });
 
           consecutiveBlockCount = 0; // Reset streak
@@ -562,6 +596,7 @@ export async function runChunkedExecutionV1(
             phaseLabel: currentPhase, // PR161
             routeSelected: selectedRoute, // PR161
             routeChanged, // PR161
+            observeDegradeLevel, // PR184
           });
 
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
@@ -603,6 +638,7 @@ export async function runChunkedExecutionV1(
           phaseLabel: currentPhase, // PR161
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
+            observeDegradeLevel, // PR184
         });
 
         continue;
@@ -616,6 +652,7 @@ export async function runChunkedExecutionV1(
           phaseLabel: currentPhase, // PR161
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
+            observeDegradeLevel, // PR184
         });
 
         reasons.push("REASON_GATE_ERROR_STOP");
@@ -806,6 +843,7 @@ export async function runChunkedExecutionV1(
           phaseLabel: currentPhase, // PR161
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
+            observeDegradeLevel, // PR184
         });
 
         // PR164: Emit CHUNK_RESULT event
@@ -826,6 +864,7 @@ export async function runChunkedExecutionV1(
           phaseLabel: currentPhase, // PR161
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
+            observeDegradeLevel, // PR184
         });
 
         // PR164: Emit CHUNK_RESULT event
@@ -845,6 +884,7 @@ export async function runChunkedExecutionV1(
           phaseLabel: currentPhase, // PR161
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
+            observeDegradeLevel, // PR184
         });
 
         // PR164: Emit CHUNK_RESULT event
@@ -865,6 +905,7 @@ export async function runChunkedExecutionV1(
           phaseLabel: currentPhase, // PR161
           routeSelected: selectedRoute, // PR161
           routeChanged, // PR161
+            observeDegradeLevel, // PR184
         });
 
         // PR164: Emit CHUNK_RESULT event

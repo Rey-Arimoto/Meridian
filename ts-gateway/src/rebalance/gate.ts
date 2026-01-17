@@ -212,6 +212,7 @@ export function isGatePassed(result: GateResult): boolean {
 
 /**
  * Run safety gate with simulation (PR156)
+ * PR184: Updated with observe degrade block reasons
  *
  * @param plan - Rebalance plan
  * @param route - Route plan
@@ -219,11 +220,16 @@ export function isGatePassed(result: GateResult): boolean {
  * @param constraints - Rebalance constraints
  * @param portfolio - Portfolio snapshot
  * @param simulation - Execution simulation record (PR156)
+ * @param observeDegradeLevel - Observe degrade level (PR184, optional)
  * @returns Gate result
  *
  * Adds simulation checks to existing gate logic.
  * Simulation checks run AFTER upper-level prohibitions but BEFORE trade safety.
  * Conservative: Simulation missing → BLOCK.
+ *
+ * PR184: Adds degrade-based tightening:
+ *   - HEAVY/UNKNOWN + quote/consistency UNKNOWN → BLOCK_OBSERVE_DEGRADED_UNCERTAIN
+ *   - MEDIUM + quote stale → BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH
  */
 export function runSafetyGateWithSimulation(
   plan: RebalancePlan,
@@ -231,7 +237,8 @@ export function runSafetyGateWithSimulation(
   signals: PythonSignals,
   constraints: RebalanceConstraints,
   portfolio: PortfolioSnapshot,
-  simulation?: ExecutionSimulationRecord
+  simulation?: ExecutionSimulationRecord,
+  observeDegradeLevel?: string
 ): GateResult {
   const blockReasons: string[] = [];
   const warnings: string[] = [];
@@ -297,6 +304,46 @@ export function runSafetyGateWithSimulation(
     if (simulation.warnings.length > 0) {
       warnings.push(...simulation.warnings);
     }
+  }
+
+  // ===== B-DEGRADE) Observe degrade checks (PR184) =====
+
+  // DEGRADE1: HEAVY/UNKNOWN + quote unavailable → BLOCK
+  if (
+    observeDegradeLevel === "DEGRADED_HEAVY" ||
+    observeDegradeLevel === "DEGRADED_UNKNOWN"
+  ) {
+    // Check if quote is unavailable
+    const quoteUnavailable =
+      !route.chosenQuote ||
+      route.chosenQuote.status === "UNAVAILABLE" ||
+      route.chosenQuote.status === "ERROR";
+
+    if (quoteUnavailable) {
+      blockReasons.push("BLOCK_OBSERVE_DEGRADED_UNCERTAIN");
+      warnings.push("WARN_OBSERVE_DEGRADED_QUOTE_UNAVAILABLE");
+    }
+  }
+
+  // DEGRADE2: MEDIUM + quote stale → BLOCK
+  // Note: "Stale" is determined by timestamp freshness (>30s old)
+  if (observeDegradeLevel === "DEGRADED_MEDIUM") {
+    // Check if quote is stale (older than 30 seconds)
+    const nowMs = Date.now();
+    const quoteStale =
+      route.chosenQuote &&
+      route.chosenQuote.status === "AVAILABLE" &&
+      nowMs - route.chosenQuote.ts > 30000; // 30 seconds
+
+    if (quoteStale) {
+      blockReasons.push("BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH");
+      warnings.push("WARN_OBSERVE_DEGRADED_QUOTE_STALE");
+    }
+  }
+
+  // DEGRADE3: LIGHT → WARN only (no block)
+  if (observeDegradeLevel === "DEGRADED_LIGHT") {
+    warnings.push("WARN_OBSERVE_DEGRADED_LIGHT");
   }
 
   // ===== C) Cooldown/Drift checks (PR158) =====

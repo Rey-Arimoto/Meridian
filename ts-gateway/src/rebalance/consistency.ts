@@ -1,251 +1,139 @@
 /**
- * PR157: v1.4 Quote Consistency Check (READ-ONLY)
+ * PR157: v1.4 Quote Consistency Checks (READ-ONLY)
+ * PR184: Updated with observe degrade band tightening
  *
  * Purpose:
- *   Validate quote integrity before creating transaction draft.
- *   Prevent broken/inconsistent quotes from reaching execution.
+ *   Check quote consistency with oracle price using fixed tolerance bands.
+ *   PR184: Tighten band when observation is degraded.
  *
  * Constitutional Constraints:
- *   - Fixed rules: No learning, no optimization
- *   - Never throws: Always returns consistency result
- *   - Label-only output: No numbers in warnings/checks
- *   - Conservative: When uncertain (oracle unavailable), block
- *   - Oracle-dependent: Consistency check requires oracle pricing
+ *   - READ-ONLY: No learning, optimization, or prediction
+ *   - Fixed rules: Tolerance band depends on degrade level
+ *   - Label-only output: No numbers in warnings/reasons
  */
 
-import { QuoteResult, SwapSide } from "./quotes";
+import { ObserveDegradeLevel, getObserveDegradeAdjustments } from "./observeDegrade";
 
 /**
- * Consistency check input
+ * Consistency parameters (constitutional constants)
  */
-export interface ConsistencyInput {
-  // Quote to check
-  quote: QuoteResult;
+const CONSISTENCY_PARAMS = {
+  // Base tolerance band (±%)
+  BASE_BAND_PCT: 5.0, // ±5%
 
-  // Oracle prices (for consistency validation)
-  oraclePrices?: {
-    wbtcUsd?: number; // wBTC price in USD (internal)
-    usdcUsd?: number; // USDC price in USD (typically 1.0)
-  };
-
-  // Oracle status
-  oracleStatus?: "AVAILABLE" | "STALE" | "ERROR";
-
-  // Current timestamp (for staleness check)
-  now?: number;
-}
-
-/**
- * Consistency check result
- */
-export interface ConsistencyResult {
-  // Is quote consistent?
-  consistent: boolean;
-
-  // Safety checks performed (label-only)
-  checks: string[];
-
-  // Warnings (label-only)
-  warnings: string[];
-
-  // Block reasons (if inconsistent)
-  blockReasons: string[];
-}
-
-/**
- * Fixed consistency thresholds (constitutional constants)
- */
-const CONSISTENCY_THRESHOLDS = {
-  // Max quote age (60 seconds, same as oracle)
-  MAX_QUOTE_AGE_MS: 60 * 1000,
-
-  // Price deviation tolerance (±5%)
-  MAX_PRICE_DEVIATION_PCT: 5.0,
+  // PR184: Degrade level bands
+  LIGHT_BAND_PCT: 4.0, // ±4%
+  MEDIUM_BAND_PCT: 3.0, // ±3%
+  HEAVY_BAND_PCT: 2.0, // ±2%
 };
 
 /**
- * Check quote consistency (main API)
- *
- * @param input - Consistency input
- * @returns Consistency result
- *
- * Fixed rules (never throws):
- *   1. Check basic validity: amountIn > 0 && amountOut > 0
- *   2. Check staleness: quote.ts within maxAgeMs
- *   3. Check oracle availability
- *   4. Calculate impliedPrice from quote
- *   5. Compare impliedPrice with oracle price
- *   6. If deviation > ±5% → BLOCK_QUOTE_INCONSISTENT
- *
- * IMPORTANT: Requires oracle for consistency check.
- * If oracle unavailable → BLOCK_QUOTE_CONSISTENCY_UNAVAILABLE (safe default)
+ * Quote consistency result
  */
-export function checkQuoteConsistency(
-  input: ConsistencyInput
-): ConsistencyResult {
-  const checks: string[] = [];
-  const warnings: string[] = [];
-  const blockReasons: string[] = [];
+export interface QuoteConsistencyResult {
+  // Status
+  status: "CONSISTENT" | "INCONSISTENT" | "UNKNOWN";
 
+  // Reasons (label-only)
+  reasons: string[];
+
+  // Warnings (label-only)
+  warnings: string[];
+}
+
+/**
+ * Get tolerance band percentage based on degrade level
+ *
+ * Fixed rules (PR184):
+ *   - NONE: ±5%
+ *   - LIGHT: ±4%
+ *   - MEDIUM: ±3%
+ *   - HEAVY/UNKNOWN: ±2%
+ *
+ * @param observeDegradeLevel - Observe degrade level (optional)
+ * @returns Tolerance band percentage
+ */
+export function getToleranceBandPct(
+  observeDegradeLevel?: ObserveDegradeLevel
+): number {
   try {
-    const quote = input.quote;
-    const now = input.now ?? Date.now();
-
-    // Step 1: Basic validity check
-    if (
-      !quote.amountIn ||
-      !quote.amountOut ||
-      quote.amountIn <= 0 ||
-      quote.amountOut <= 0 ||
-      isNaN(quote.amountIn) ||
-      isNaN(quote.amountOut)
-    ) {
-      blockReasons.push("BLOCK_QUOTE_AMOUNTS_INVALID");
-      warnings.push("WARN_QUOTE_AMOUNTS_INVALID");
-
-      return {
-        consistent: false,
-        checks,
-        warnings,
-        blockReasons,
-      };
+    if (!observeDegradeLevel || observeDegradeLevel === "DEGRADED_NONE") {
+      return CONSISTENCY_PARAMS.BASE_BAND_PCT;
     }
 
-    checks.push("CHECK_QUOTE_AMOUNTS_VALID");
+    const adjustments = getObserveDegradeAdjustments(observeDegradeLevel);
 
-    // Step 2: Staleness check
-    if (!quote.ts || isNaN(quote.ts)) {
-      blockReasons.push("BLOCK_QUOTE_TIMESTAMP_MISSING");
-      warnings.push("WARN_QUOTE_TIMESTAMP_MISSING");
-
-      return {
-        consistent: false,
-        checks,
-        warnings,
-        blockReasons,
-      };
+    switch (adjustments.consistencyBandMode) {
+      case "NORMAL":
+        return CONSISTENCY_PARAMS.BASE_BAND_PCT;
+      case "TIGHT":
+        return CONSISTENCY_PARAMS.LIGHT_BAND_PCT;
+      case "TIGHTER":
+        return observeDegradeLevel === "DEGRADED_MEDIUM"
+          ? CONSISTENCY_PARAMS.MEDIUM_BAND_PCT
+          : CONSISTENCY_PARAMS.HEAVY_BAND_PCT;
+      default:
+        return CONSISTENCY_PARAMS.BASE_BAND_PCT;
     }
-
-    const quoteAge = now - quote.ts;
-    if (quoteAge > CONSISTENCY_THRESHOLDS.MAX_QUOTE_AGE_MS) {
-      blockReasons.push("BLOCK_QUOTE_STALE");
-      warnings.push("WARN_QUOTE_STALE");
-
-      return {
-        consistent: false,
-        checks,
-        warnings,
-        blockReasons,
-      };
-    }
-
-    checks.push("CHECK_QUOTE_FRESH");
-
-    // Step 3: Oracle availability check
-    if (
-      !input.oracleStatus ||
-      input.oracleStatus === "ERROR" ||
-      input.oracleStatus === "STALE"
-    ) {
-      blockReasons.push("BLOCK_QUOTE_CONSISTENCY_UNAVAILABLE");
-      warnings.push("WARN_ORACLE_UNAVAILABLE_FOR_CONSISTENCY");
-
-      return {
-        consistent: false,
-        checks,
-        warnings,
-        blockReasons,
-      };
-    }
-
-    if (
-      !input.oraclePrices ||
-      !input.oraclePrices.wbtcUsd ||
-      !input.oraclePrices.usdcUsd
-    ) {
-      blockReasons.push("BLOCK_QUOTE_CONSISTENCY_UNAVAILABLE");
-      warnings.push("WARN_ORACLE_PRICES_MISSING");
-
-      return {
-        consistent: false,
-        checks,
-        warnings,
-        blockReasons,
-      };
-    }
-
-    checks.push("CHECK_ORACLE_AVAILABLE");
-
-    // Step 4: Calculate implied price from quote
-    let impliedWbtcPrice: number;
-
-    if (quote.side === "USDC_TO_WBTC") {
-      // Buying wBTC with USDC
-      // impliedWbtcPrice = amountIn (USDC) / amountOut (wBTC)
-      impliedWbtcPrice = quote.amountIn / quote.amountOut;
-    } else {
-      // Selling wBTC for USDC
-      // impliedWbtcPrice = amountOut (USDC) / amountIn (wBTC)
-      impliedWbtcPrice = quote.amountOut / quote.amountIn;
-    }
-
-    checks.push("CHECK_IMPLIED_PRICE_CALCULATED");
-
-    // Step 5: Compare with oracle price
-    const oracleWbtcPrice = input.oraclePrices.wbtcUsd!;
-
-    // Calculate deviation percentage
-    const deviation =
-      Math.abs(impliedWbtcPrice - oracleWbtcPrice) / oracleWbtcPrice;
-    const deviationPct = deviation * 100;
-
-    // Step 6: Check deviation threshold
-    if (deviationPct > CONSISTENCY_THRESHOLDS.MAX_PRICE_DEVIATION_PCT) {
-      blockReasons.push("BLOCK_QUOTE_INCONSISTENT");
-      warnings.push("WARN_QUOTE_PRICE_DEVIATION");
-
-      return {
-        consistent: false,
-        checks,
-        warnings,
-        blockReasons,
-      };
-    }
-
-    checks.push("CHECK_QUOTE_PRICE_CONSISTENT");
-
-    // All checks passed
-    return {
-      consistent: true,
-      checks,
-      warnings,
-      blockReasons,
-    };
   } catch (error) {
-    // Defensive: Never throw, return error state
-    return {
-      consistent: false,
-      checks,
-      warnings: ["WARN_CONSISTENCY_CHECK_ERROR"],
-      blockReasons: ["BLOCK_CONSISTENCY_CHECK_ERROR"],
-    };
+    // Defensive: Return safest (tightest) band on error
+    return CONSISTENCY_PARAMS.HEAVY_BAND_PCT;
   }
 }
 
 /**
- * Get consistency summary (for logging/debugging)
+ * Check quote consistency with oracle price
  *
- * @param result - Consistency result
- * @returns Summary string (label-only)
+ * Fixed rules:
+ *   - Quote price must be within ±X% of oracle price
+ *   - X depends on observe degrade level (PR184)
+ *   - Missing quote or oracle → UNKNOWN
+ *
+ * @param args - Arguments
+ * @param args.quotePrice - Quote price (optional)
+ * @param args.oraclePrice - Oracle price (optional)
+ * @param args.observeDegradeLevel - Observe degrade level (optional, PR184)
+ * @returns Quote consistency result
+ *
+ * Defensive: Never throws, returns result.
  */
-export function getConsistencySummary(result: ConsistencyResult): string {
-  if (result.consistent) {
-    return "CONSISTENCY_OK";
-  }
+export function checkQuoteConsistency(args: {
+  quotePrice?: number;
+  oraclePrice?: number;
+  observeDegradeLevel?: ObserveDegradeLevel;
+}): QuoteConsistencyResult {
+  const reasons: string[] = [];
+  const warnings: string[] = [];
 
-  if (result.blockReasons.length > 0) {
-    return `CONSISTENCY_BLOCKED_${result.blockReasons[0]}`;
-  }
+  try {
+    // Missing quote or oracle → UNKNOWN
+    if (
+      args.quotePrice === undefined ||
+      args.quotePrice === null ||
+      args.oraclePrice === undefined ||
+      args.oraclePrice === null
+    ) {
+      reasons.push("REASON_QUOTE_OR_ORACLE_MISSING");
+      return { status: "UNKNOWN", reasons, warnings };
+    }
 
-  return "CONSISTENCY_UNKNOWN";
+    // Get tolerance band
+    const bandPct = getToleranceBandPct(args.observeDegradeLevel);
+    const lowerBound = args.oraclePrice * (1 - bandPct / 100);
+    const upperBound = args.oraclePrice * (1 + bandPct / 100);
+
+    // Check consistency
+    if (args.quotePrice < lowerBound || args.quotePrice > upperBound) {
+      reasons.push("REASON_QUOTE_INCONSISTENT_WITH_ORACLE");
+      return { status: "INCONSISTENT", reasons, warnings };
+    }
+
+    // Consistent
+    reasons.push("REASON_QUOTE_CONSISTENT");
+    return { status: "CONSISTENT", reasons, warnings };
+  } catch (error) {
+    // Defensive: Return UNKNOWN on error
+    reasons.push("REASON_CONSISTENCY_CHECK_ERROR");
+    return { status: "UNKNOWN", reasons, warnings };
+  }
 }

@@ -48,6 +48,8 @@ export type TelemetryEventType =
   | "OBSERVE_DEGRADE_STATUS" // Observation degrade status (PR183)
   | "OBSERVE_TIER_CHANGED" // Observation tier changed (PR183)
   | "OBSERVE_FETCH_SKIPPED" // Observation fetch skipped (PR183)
+  | "OBSERVE_DEGRADED_LEVEL" // Observe degrade level (PR184)
+  | "OBSERVE_DEGRADED_TIGHTENING_APPLIED" // Degrade tightening applied (PR184)
   | "ERROR"; // Error occurred
 
 /**
