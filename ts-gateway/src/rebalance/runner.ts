@@ -250,6 +250,11 @@ export async function runChunkedExecutionV1(
   let consecutiveBlockCount = 0;
   let finalStatus: "COMPLETED" | "STOPPED" | "ERROR" = "ERROR"; // Default to ERROR
 
+  // PR188d: Track chunk outcome counters
+  let executedCount = 0;
+  let simulatedCount = 0;
+  let chunkResultCount = 0;
+
   try {
     // Check if run plan has no chunks
     if (runPlan.chunks.length === 0) {
@@ -905,6 +910,10 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+        // PR188d: Increment outcome counters
+        executedCount++;
+        chunkResultCount++;
       } else if (executionResult.status === "SIMULATED") {
         chunkResults.push({
           chunkId: chunk.chunkId,
@@ -925,6 +934,10 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+        // PR188d: Increment outcome counters
+        simulatedCount++;
+        chunkResultCount++;
       } else if (executionResult.status === "EXECUTION_DISABLED") {
         chunkResults.push({
           chunkId: chunk.chunkId,
@@ -945,6 +958,10 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+        // PR188d: Increment outcome counters
+        simulatedCount++;
+        chunkResultCount++;
       } else {
         // ERROR
         chunkResults.push({
@@ -966,6 +983,9 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+        // PR188d: Increment outcome counters
+        chunkResultCount++;
 
         reasons.push("REASON_CHUNK_EXECUTION_ERROR");
       }
@@ -997,13 +1017,15 @@ export async function runChunkedExecutionV1(
       finishedAtMs: getNowMs(),
     };
   } finally {
-    // PR188c: Emit RUN_STOP lifecycle event (always runs)
+    // PR188c/PR188d: Emit RUN_STOP lifecycle event (always runs)
     await appendEventV1(
       createEventV1("RUN_STOP", "INFO", {
         run_id: runPlan.runId,
         run_status: finalStatus,
         total_chunks: `${runPlan.chunks.length}`,
-        executed_chunks: `${chunkResults.filter((r) => r.status === "EXECUTED").length}`,
+        executed_chunks: `${executedCount}`, // PR188d: Use counter
+        simulated_chunks: `${simulatedCount}`, // PR188d: New counter
+        chunk_results: `${chunkResultCount}`, // PR188d: New counter
       })
     ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }
