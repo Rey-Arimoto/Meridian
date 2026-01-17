@@ -255,6 +255,9 @@ export async function runChunkedExecutionV1(
   let simulatedCount = 0;
   let chunkResultCount = 0;
 
+  // PR189: Track stop attribution
+  let stopCause: "GATE" | "POLICY" | "PHASE" | "TIMEOUT" | "NONE" = "NONE";
+
   try {
     // Check if run plan has no chunks
     if (runPlan.chunks.length === 0) {
@@ -283,6 +286,10 @@ export async function runChunkedExecutionV1(
       const isFirstChunk = i === 0;
       const isLastChunk = i === runPlan.chunks.length - 1;
 
+      // PR189: Track gate/policy status for telemetry
+      let gateStatus: "PASS" | "BLOCK" | "ERROR" = "ERROR";
+      let policyStatus: "ALLOW" | "SIM_ONLY" | "BLOCKED" | "ERROR" = "ERROR";
+
       // PR164: Emit CHUNK_START event
       await appendEventV1(
         createEventV1("CHUNK_START", "INFO", {
@@ -303,6 +310,7 @@ export async function runChunkedExecutionV1(
 
         const nowMs = getNowMs();
         finalStatus = "STOPPED";
+        stopCause = "TIMEOUT"; // PR189
 
         return {
           runId: runPlan.runId,
@@ -386,6 +394,7 @@ export async function runChunkedExecutionV1(
 
           const nowMs = getNowMs();
           finalStatus = "STOPPED";
+          stopCause = "PHASE"; // PR189
 
           return {
             runId: runPlan.runId,
@@ -541,6 +550,8 @@ export async function runChunkedExecutionV1(
       }
 
       // Step 3: Check gate result
+      gateStatus = gateResult.status; // PR189: Track gate status
+
       if (gateResult.status === "BLOCK") {
         consecutiveBlockCount++;
 
@@ -596,6 +607,7 @@ export async function runChunkedExecutionV1(
           }
 
           finalStatus = "STOPPED";
+          stopCause = "GATE"; // PR189
 
           return {
             runId: runPlan.runId,
@@ -657,6 +669,7 @@ export async function runChunkedExecutionV1(
 
           const nowMs = getNowMs();
           finalStatus = "STOPPED";
+          stopCause = "GATE"; // PR189
 
           return {
             runId: runPlan.runId,
@@ -764,6 +777,9 @@ export async function runChunkedExecutionV1(
         };
       }
 
+      // PR189: Track policy status
+      policyStatus = policyResult.status;
+
       // Check if policy allows execution
       if (!policyResult.allowExecution) {
         // Policy denies execution → STOP entire run
@@ -787,6 +803,7 @@ export async function runChunkedExecutionV1(
         }
 
         finalStatus = "STOPPED";
+        stopCause = "POLICY"; // PR189
 
         return {
           runId: runPlan.runId,
@@ -902,10 +919,12 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164: Emit CHUNK_RESULT event
+        // PR164/PR189: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "EXECUTED",
+            gate_status: gateStatus, // PR189
+            policy_status: policyStatus, // PR189
             venue: txDraft.route,
             phase: currentPhase,
           })
@@ -927,10 +946,12 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164: Emit CHUNK_RESULT event
+        // PR164/PR189: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
+            gate_status: gateStatus, // PR189
+            policy_status: policyStatus, // PR189
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -951,10 +972,12 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164: Emit CHUNK_RESULT event
+        // PR164/PR189: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
+            gate_status: gateStatus, // PR189
+            policy_status: policyStatus, // PR189
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -976,10 +999,12 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164: Emit CHUNK_RESULT event
+        // PR164/PR189: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "ERROR", {
             chunk_status: "ERROR",
+            gate_status: gateStatus, // PR189
+            policy_status: policyStatus, // PR189
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1017,11 +1042,12 @@ export async function runChunkedExecutionV1(
       finishedAtMs: getNowMs(),
     };
   } finally {
-    // PR188c/PR188d: Emit RUN_STOP lifecycle event (always runs)
+    // PR188c/PR188d/PR189: Emit RUN_STOP lifecycle event (always runs)
     await appendEventV1(
       createEventV1("RUN_STOP", "INFO", {
         run_id: runPlan.runId,
         run_status: finalStatus,
+        stop_cause: stopCause, // PR189: Stop attribution
         total_chunks: `${runPlan.chunks.length}`,
         executed_chunks: `${executedCount}`, // PR188d: Use counter
         simulated_chunks: `${simulatedCount}`, // PR188d: New counter
