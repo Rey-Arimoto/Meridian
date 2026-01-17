@@ -185,6 +185,9 @@ export interface TxDraft {
   // Slippage tolerance in basis points (PR157: Calculated from fixed rules)
   slippageBps: number;
 
+  // Slippage label (PR190: Label-only for telemetry traceability)
+  slippageLabel?: string;
+
   // Transaction deadline (seconds from now)
   deadlineSeconds: number;
 

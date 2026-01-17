@@ -76,6 +76,7 @@ async function main() {
         amountIn: "100",
         minOut: "0",
         slippageBps: 200,
+        slippageLabel: "SLIPPAGE_ELEVATED", // PR190: Label-only traceability
         deadlineSeconds: 120,
         checks: [],
         notes: ["NOTE_HARNESS_DUMMY_DRAFT"],

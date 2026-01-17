@@ -290,6 +290,11 @@ export async function runChunkedExecutionV1(
       let gateStatus: "PASS" | "BLOCK" | "ERROR" = "ERROR";
       let policyStatus: "ALLOW" | "SIM_ONLY" | "BLOCKED" | "ERROR" = "ERROR";
 
+      // PR190: Track quote → slippage → minOut traceability
+      let quoteImpactLabel: string = "IMPACT_UNKNOWN";
+      let slippageLabel: string = "SLIPPAGE_UNKNOWN";
+      let minOutStatus: "OK" | "ZERO" | "UNAVAILABLE" = "UNAVAILABLE";
+
       // PR164: Emit CHUNK_START event
       await appendEventV1(
         createEventV1("CHUNK_START", "INFO", {
@@ -493,6 +498,9 @@ export async function runChunkedExecutionV1(
             side: tradeSide,
             amountIn: chunk.notionalUsd || 0,
           });
+
+          // PR190: Set quote impact label for traceability
+          quoteImpactLabel = normalizedQuote?.impactLabel ?? "IMPACT_UNKNOWN";
 
           // PR187: Emit QUOTE_NORMALIZED event (defensive, sanitized)
           const sanitized = sanitizeQuoteForLogs(normalizedQuote);
@@ -835,6 +843,16 @@ export async function runChunkedExecutionV1(
           impactLabel: normalizedQuote?.impactLabel, // PR187: impact from normalized quote
           normalizedQuote, // PR187: normalized quote for minOut calculation
         });
+
+        // PR190: Set slippage label and minOut status for traceability
+        slippageLabel = txDraft.slippageLabel ?? "SLIPPAGE_UNKNOWN";
+        if (txDraft.minOut === null || txDraft.minOut === undefined) {
+          minOutStatus = "UNAVAILABLE";
+        } else if (txDraft.minOut === "0") {
+          minOutStatus = "ZERO";
+        } else {
+          minOutStatus = "OK";
+        }
       } catch (error) {
         // Defensive: If draft building fails, STOP
         chunkResults.push({
@@ -919,12 +937,15 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "EXECUTED",
             gate_status: gateStatus, // PR189
             policy_status: policyStatus, // PR189
+            quote_impact_label: quoteImpactLabel, // PR190
+            slippage_label: slippageLabel, // PR190
+            minout_status: minOutStatus, // PR190
             venue: txDraft.route,
             phase: currentPhase,
           })
@@ -946,12 +967,15 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
             gate_status: gateStatus, // PR189
             policy_status: policyStatus, // PR189
+            quote_impact_label: quoteImpactLabel, // PR190
+            slippage_label: slippageLabel, // PR190
+            minout_status: minOutStatus, // PR190
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -972,12 +996,15 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
             gate_status: gateStatus, // PR189
             policy_status: policyStatus, // PR189
+            quote_impact_label: quoteImpactLabel, // PR190
+            slippage_label: slippageLabel, // PR190
+            minout_status: minOutStatus, // PR190
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -999,12 +1026,15 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190: Emit CHUNK_RESULT event
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "ERROR", {
             chunk_status: "ERROR",
             gate_status: gateStatus, // PR189
             policy_status: policyStatus, // PR189
+            quote_impact_label: quoteImpactLabel, // PR190
+            slippage_label: slippageLabel, // PR190
+            minout_status: minOutStatus, // PR190
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
