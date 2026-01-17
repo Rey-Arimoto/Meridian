@@ -213,6 +213,7 @@ export function isGatePassed(result: GateResult): boolean {
 /**
  * Run safety gate with simulation (PR156)
  * PR184: Updated with observe degrade block reasons
+ * PR187: Updated to use NormalizedQuoteV1
  *
  * @param plan - Rebalance plan
  * @param route - Route plan
@@ -221,6 +222,7 @@ export function isGatePassed(result: GateResult): boolean {
  * @param portfolio - Portfolio snapshot
  * @param simulation - Execution simulation record (PR156)
  * @param observeDegradeLevel - Observe degrade level (PR184, optional)
+ * @param normalizedQuote - Normalized quote (PR187, optional)
  * @returns Gate result
  *
  * Adds simulation checks to existing gate logic.
@@ -230,6 +232,8 @@ export function isGatePassed(result: GateResult): boolean {
  * PR184: Adds degrade-based tightening:
  *   - HEAVY/UNKNOWN + quote/consistency UNKNOWN → BLOCK_OBSERVE_DEGRADED_UNCERTAIN
  *   - MEDIUM + quote stale → BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH
+ *
+ * PR187: Uses NormalizedQuoteV1 for all quote-based checks.
  */
 export function runSafetyGateWithSimulation(
   plan: RebalancePlan,
@@ -238,7 +242,8 @@ export function runSafetyGateWithSimulation(
   constraints: RebalanceConstraints,
   portfolio: PortfolioSnapshot,
   simulation?: ExecutionSimulationRecord,
-  observeDegradeLevel?: string
+  observeDegradeLevel?: string,
+  normalizedQuote?: any // PR187: NormalizedQuoteV1 (imported type)
 ): GateResult {
   const blockReasons: string[] = [];
   const warnings: string[] = [];
@@ -313,11 +318,11 @@ export function runSafetyGateWithSimulation(
     observeDegradeLevel === "DEGRADED_HEAVY" ||
     observeDegradeLevel === "DEGRADED_UNKNOWN"
   ) {
-    // Check if quote is unavailable
+    // Check if quote is unavailable (PR187: use normalizedQuote)
     const quoteUnavailable =
-      !route.chosenQuote ||
-      route.chosenQuote.status === "UNAVAILABLE" ||
-      route.chosenQuote.status === "ERROR";
+      !normalizedQuote ||
+      normalizedQuote.status === "UNAVAILABLE" ||
+      normalizedQuote.status === "ERROR";
 
     if (quoteUnavailable) {
       blockReasons.push("BLOCK_OBSERVE_DEGRADED_UNCERTAIN");
@@ -328,12 +333,12 @@ export function runSafetyGateWithSimulation(
   // DEGRADE2: MEDIUM + quote stale → BLOCK
   // Note: "Stale" is determined by timestamp freshness (>30s old)
   if (observeDegradeLevel === "DEGRADED_MEDIUM") {
-    // Check if quote is stale (older than 30 seconds)
+    // Check if quote is stale (older than 30 seconds) (PR187: use normalizedQuote)
     const nowMs = Date.now();
     const quoteStale =
-      route.chosenQuote &&
-      route.chosenQuote.status === "AVAILABLE" &&
-      nowMs - route.chosenQuote.ts > 30000; // 30 seconds
+      normalizedQuote &&
+      normalizedQuote.status === "AVAILABLE" &&
+      nowMs - normalizedQuote.ts > 30000; // 30 seconds
 
     if (quoteStale) {
       blockReasons.push("BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH");
@@ -403,27 +408,27 @@ export function runSafetyGateWithSimulation(
     blockReasons.push("BLOCK_NOTIONAL_CAP");
   }
 
-  if (route.chosenQuote && route.chosenQuote.impact === "IMPACT_HIGH") {
+  // PR187: Use normalizedQuote for impact/depth checks
+  if (normalizedQuote && normalizedQuote.impactLabel === "IMPACT_HIGH") {
     blockReasons.push("BLOCK_IMPACT_HIGH");
   }
 
-  if (route.chosenQuote && route.chosenQuote.slippage === "SLIP_HIGH") {
-    blockReasons.push("BLOCK_SLIPPAGE_HIGH");
-  }
+  // Note: Old "slippage" label check removed (PR187)
+  // Slippage is now computed dynamically via computeSlippageBps
 
-  if (route.chosenQuote && route.chosenQuote.depth === "DEPTH_THIN") {
+  if (normalizedQuote && normalizedQuote.depthLabel === "DEPTH_THIN") {
     blockReasons.push("BLOCK_DEPTH_THIN");
   }
 
-  // D7: MinOut unavailable (PR186 - slippage protection)
+  // D7: MinOut unavailable (PR186/PR187 - slippage protection)
   // Conservative: If we can't compute minOut, BLOCK execution
   if (plan.intent !== "NOOP") {
     const canComputeMinOut =
-      route.chosenQuote &&
-      route.chosenQuote.status === "AVAILABLE" &&
-      typeof route.chosenQuote.amountOut === "number" &&
-      !isNaN(route.chosenQuote.amountOut) &&
-      route.chosenQuote.amountOut > 0;
+      normalizedQuote &&
+      normalizedQuote.status === "AVAILABLE" &&
+      typeof normalizedQuote.amountOut === "number" &&
+      !isNaN(normalizedQuote.amountOut) &&
+      normalizedQuote.amountOut > 0;
 
     if (!canComputeMinOut) {
       blockReasons.push("BLOCK_MINOUT_UNAVAILABLE");

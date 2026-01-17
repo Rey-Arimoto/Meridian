@@ -41,6 +41,13 @@ import {
   getPhasePolicySummary,
 } from "./phasePolicy";
 import { createEventV1, appendEventV1 } from "../telemetry";
+import {
+  selectAndNormalizeQuote,
+  type NormalizedQuoteV1,
+  type QuoteSources,
+  type TradeSide,
+  sanitizeQuoteForLogs,
+} from "../quoteNorm";
 
 /**
  * Fixed runner parameters (constitutional constants)
@@ -117,6 +124,12 @@ export interface RunnerDeps {
   // PR184: Get observe state (refreshed per chunk)
   getObserveState?: () => Promise<any>;
 
+  // PR187: Get quote sources (refreshed per chunk)
+  getQuoteSources?: (args: {
+    chunkPlan: ChunkPlan;
+    portfolio: PortfolioSnapshot;
+  }) => Promise<QuoteSources>;
+
   // Evaluate gate (PR153/155/157/158/184)
   evaluateGate: (args: {
     chunkPlan: ChunkPlan;
@@ -129,16 +142,16 @@ export interface RunnerDeps {
     portfolio: PortfolioSnapshot;
   }) => Promise<PolicyResultSimple>;
 
-  // Build transaction draft (PR186: enhanced with context)
+  // Build transaction draft (PR186/PR187: enhanced with context and normalized quote)
   buildTxDraft: (args: {
     chunkPlan: ChunkPlan;
     portfolio: PortfolioSnapshot;
     venue?: "CETUS" | "DEEPBOOK" | "NONE"; // PR161/PR186: route venue
     phaseLabel?: string; // PR161/PR186: phase label
     stressLabel?: string; // PR186: stress label
-    impactLabel?: string; // PR186: impact label (from chosenQuote)
+    impactLabel?: string; // PR186: impact label (from normalizedQuote)
     observeDegradeLevel?: string; // PR184/PR186: observe degrade level
-    chosenQuote?: any; // PR186: quote object for minOut calculation
+    normalizedQuote?: NormalizedQuoteV1; // PR187: normalized quote for minOut calculation
   }) => Promise<TxDraft>;
 
   // Execute transaction
@@ -444,6 +457,47 @@ export async function runChunkedExecutionV1(
         } catch (error) {
           // Defensive: Failed to get observe state → UNKNOWN (safe side)
           observeDegradeLevel = "DEGRADED_UNKNOWN";
+        }
+      }
+
+      // Step 1.8 (PR187): Select and normalize quote
+      let normalizedQuote: NormalizedQuoteV1 | undefined;
+      if (deps.getQuoteSources) {
+        try {
+          const quoteSources = await deps.getQuoteSources({
+            chunkPlan: chunk,
+            portfolio,
+          });
+
+          // Determine trade side from chunk plan intent
+          let tradeSide: TradeSide = "UNKNOWN";
+          if (chunk.intent.includes("INCREASE_WBTC") || chunk.intent.includes("BUY")) {
+            tradeSide = "BUY_WBTC_WITH_USDC";
+          } else if (chunk.intent.includes("DECREASE_WBTC") || chunk.intent.includes("SELL")) {
+            tradeSide = "SELL_WBTC_FOR_USDC";
+          }
+
+          // Select and normalize quote
+          normalizedQuote = selectAndNormalizeQuote({
+            quoteSources,
+            side: tradeSide,
+            amountIn: chunk.notionalUsd || 0,
+          });
+
+          // PR187: Emit QUOTE_NORMALIZED event (defensive, sanitized)
+          const sanitized = sanitizeQuoteForLogs(normalizedQuote);
+          await appendEventV1(
+            createEventV1("QUOTE_NORMALIZED", "INFO", {
+              venue: sanitized.venue,
+              status: sanitized.status,
+              impact: sanitized.impactLabel,
+              depth: sanitized.depthLabel,
+              phase: currentPhase,
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+        } catch (error) {
+          // Defensive: Quote normalization failed → undefined (buildTxDraft will handle)
+          normalizedQuote = undefined;
         }
       }
 
@@ -768,7 +822,7 @@ export async function runChunkedExecutionV1(
         };
       }
 
-      // Step 5: Build transaction draft (PR186: pass context for slippage/minOut)
+      // Step 5: Build transaction draft (PR186/PR187: pass context and normalized quote)
       let txDraft: TxDraft;
       try {
         txDraft = await deps.buildTxDraft({
@@ -777,8 +831,8 @@ export async function runChunkedExecutionV1(
           venue: selectedRoute, // PR186: route venue for slippage
           phaseLabel: currentPhase, // PR186: phase for slippage
           observeDegradeLevel, // PR186: degrade level for slippage
-          // stressLabel and impactLabel: not readily available in runner loop
-          // chosenQuote: would need to be obtained from routing/gate
+          impactLabel: normalizedQuote?.impactLabel, // PR187: impact from normalized quote
+          normalizedQuote, // PR187: normalized quote for minOut calculation
         });
       } catch (error) {
         // Defensive: If draft building fails, STOP

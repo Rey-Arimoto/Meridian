@@ -6014,3 +6014,303 @@ const gateResult = runSafetyGateWithSimulation(...);
 `v1.4-activate-slippage-minout-wiring-v1`
 
 ---
+
+---
+
+## PR187: Routing + Quote Normalization v1
+
+### Purpose
+
+Unify all quote sources (DeepBook WS/HTTP, Cetus pool) into a single deterministic **NormalizedQuoteV1** model. Route all gate/slippage/minOut/consistency logic through this unified model only. Eliminate direct dependencies on source-specific quote formats.
+
+### Problem Statement
+
+Before PR187, different quote sources (DeepBook WS/HTTP, Cetus) had different formats and were handled inconsistently. The gate/slippage/minOut logic accessed quote fields directly (e.g., `route.chosenQuote.impact`), creating tight coupling and making it difficult to:
+1. Add new quote sources
+2. Ensure consistent validation across sources
+3. Prevent numeric data leakage in logs/telemetry
+4. Implement deterministic routing with clear fallback priority
+
+### Solution
+
+Create a **unified quote normalization layer** (`src/quoteNorm/`) with:
+1. **NormalizedQuoteV1**: Single model for all sources
+2. **Deterministic routing**: DeepBook WS → HTTP → Cetus → NONE
+3. **Sanitization guards**: Prevent numeric leakage
+4. **Fixed-rule classification**: Impact/depth labels from thresholds
+
+### Package Structure: `src/quoteNorm/`
+
+**1. types.ts** - Core types:
+```typescript
+// Quote source venue
+type QuoteSourceVenue = "DEEPBOOK_WS" | "DEEPBOOK_HTTP" | "CETUS" | "NONE"
+
+// Quote status
+type QuoteStatus = "AVAILABLE" | "UNAVAILABLE" | "ERROR" | "STALE"
+
+// Impact classification (from spread thresholds)
+type QuoteImpactLabel = "IMPACT_NORMAL" | "IMPACT_MEDIUM" | "IMPACT_HIGH" | "IMPACT_UNKNOWN"
+
+// Depth classification (from volume thresholds)
+type QuoteDepthLabel = "DEPTH_OK" | "DEPTH_THIN" | "DEPTH_UNKNOWN"
+
+// Trade side
+type TradeSide = "BUY_WBTC_WITH_USDC" | "SELL_WBTC_FOR_USDC" | "UNKNOWN"
+
+// Unified quote model
+interface NormalizedQuoteV1 {
+  // Source and status
+  venue: QuoteSourceVenue
+  status: QuoteStatus
+  side: TradeSide
+
+  // NUMERIC FIELDS (NEVER LOG - use sanitizeQuoteForLogs())
+  amountIn: number      // Input amount
+  amountOut: number     // Output amount
+  price: number         // Execution price
+  mid: number           // Mid price (bid+ask)/2
+  spread: number        // Bid-ask spread (bps)
+
+  // LABEL-ONLY FIELDS (safe to log)
+  impactLabel: QuoteImpactLabel
+  depthLabel: QuoteDepthLabel
+
+  // Metadata
+  ts: number            // Timestamp (ms)
+  reasons: string[]     // Derivation reasons (LABEL-ONLY)
+}
+```
+
+**2. guards.ts** - Sanitization and validation:
+```typescript
+// Remove all numeric fields for logging
+function sanitizeQuoteForLogs(quote: NormalizedQuoteV1): SanitizedQuote
+
+// Check if quote is usable for execution
+function isQuoteUsable(quote: NormalizedQuoteV1): boolean
+
+// Check if quote is stale (>30 seconds old)
+function isQuoteStale(quote: NormalizedQuoteV1, nowMs?: number): boolean
+```
+
+**3. deepbookNormalizer.ts** - DeepBook orderbook normalization:
+```typescript
+function normalizeDeepBookQuote(
+  orderbook: DeepBookOrderbookSnapshot,
+  venue: "DEEPBOOK_WS" | "DEEPBOOK_HTTP",
+  side: TradeSide,
+  amountIn: number
+): NormalizedQuoteV1
+```
+
+Fixed rules:
+- `mid = (bestBid + bestAsk) / 2`
+- `spread = ((bestAsk - bestBid) / mid) * 10000` (bps)
+- Impact: `spread < 30 bps → NORMAL, 30-100 bps → MEDIUM, ≥100 bps → HIGH`
+- Depth: `min(bidVol, askVol) * mid < $5k → THIN, ≥$5k → OK`
+- Missing data → `UNKNOWN` labels
+
+**4. cetusNormalizer.ts** - Cetus pool normalization:
+```typescript
+function normalizeCetusQuote(
+  pool: CetusPoolSnapshot,
+  side: TradeSide,
+  amountIn: number
+): NormalizedQuoteV1
+```
+
+Fixed rules (conservative fallback):
+- `price = (sqrtPrice / 2^64)^2` (sqrtPriceX64 format)
+- `mid = price` (no orderbook)
+- `spread = 0` (no orderbook)
+- `impactLabel = MEDIUM` (conservative, no visibility)
+- Depth: `liquidity < 100k → THIN, ≥100k → OK`
+
+**5. router.ts** - Deterministic quote selection:
+```typescript
+function selectAndNormalizeQuote(args: {
+  quoteSources: QuoteSources
+  side: TradeSide
+  amountIn: number
+}): NormalizedQuoteV1
+```
+
+Priority routing (first usable quote wins):
+1. **DeepBook WS** (primary - real-time orderbook)
+2. **DeepBook HTTP** (fallback - polling orderbook)
+3. **Cetus pool** (last resort - conservative pseudo-quote)
+4. **NONE** (all sources unavailable)
+
+### Fixed Rules Tables
+
+**Impact Classification** (from spread):
+```
+spread < 30 bps      → IMPACT_NORMAL
+30 ≤ spread < 100 bps → IMPACT_MEDIUM
+spread ≥ 100 bps     → IMPACT_HIGH
+Invalid/missing      → IMPACT_UNKNOWN
+```
+
+**Depth Classification** (from volume):
+
+DeepBook:
+```
+min(bidVol, askVol) * mid < $5k → DEPTH_THIN
+min(bidVol, askVol) * mid ≥ $5k → DEPTH_OK
+```
+
+Cetus:
+```
+liquidity < 100k → DEPTH_THIN
+liquidity ≥ 100k → DEPTH_OK
+```
+
+### Integration Changes
+
+**runner.ts**:
+- Added `getQuoteSources()` to RunnerDeps
+- Step 1.8: Call `selectAndNormalizeQuote` after route selection
+- Pass `normalizedQuote` to `buildTxDraft`
+- Emit `QUOTE_NORMALIZED` telemetry event (sanitized)
+
+**gate.ts**:
+- Updated `runSafetyGateWithSimulation` signature to accept `normalizedQuote`
+- Replaced all `route.chosenQuote.*` with `normalizedQuote.*`
+- Impact check: `normalizedQuote.impactLabel === "IMPACT_HIGH"`
+- Depth check: `normalizedQuote.depthLabel === "DEPTH_THIN"`
+- MinOut check: `normalizedQuote.amountOut` validation
+- Removed old "slippage" label check (now dynamic via `computeSlippageBps`)
+
+**executor.ts**:
+- No changes needed (already uses `amountOut` parameter)
+- `computeMinOutFloor` receives `normalizedQuote.amountOut` from caller
+
+### Examples
+
+**Example 1: Normal DeepBook quote**
+```typescript
+const orderbook = {
+  bids: [{ price: 49950, volume: 0.5 }],
+  asks: [{ price: 50050, volume: 0.5 }],
+  ts: Date.now()
+}
+
+const quote = normalizeDeepBookQuote(
+  orderbook,
+  "DEEPBOOK_WS",
+  "BUY_WBTC_WITH_USDC",
+  1000 // $1000 USDC
+)
+
+// Result:
+// venue: "DEEPBOOK_WS"
+// status: "AVAILABLE"
+// impactLabel: "IMPACT_NORMAL" (20 bps spread)
+// depthLabel: "DEPTH_OK" (~$25k volume)
+// amountOut: 0.0199 WBTC
+```
+
+**Example 2: Wide spread → HIGH impact**
+```typescript
+const orderbook = {
+  bids: [{ price: 49000, volume: 0.5 }],
+  asks: [{ price: 51000, volume: 0.5 }], // 4% spread
+  ts: Date.now()
+}
+
+const quote = normalizeDeepBookQuote(orderbook, "DEEPBOOK_WS", "BUY_WBTC_WITH_USDC", 1000)
+
+// impactLabel: "IMPACT_HIGH" (400 bps spread)
+```
+
+**Example 3: Routing priority**
+```typescript
+const quoteSources = {
+  // WS available → use it (highest priority)
+  deepbookWs: { bids: [...], asks: [...], ts: Date.now() },
+
+  // HTTP also available, but WS takes precedence
+  deepbookHttp: { bids: [...], asks: [...], ts: Date.now() },
+
+  // Cetus also available, but only used if DeepBook sources fail
+  cetusPool: { sqrtPrice: ..., liquidity: ..., ts: Date.now() }
+}
+
+const quote = selectAndNormalizeQuote({
+  quoteSources,
+  side: "BUY_WBTC_WITH_USDC",
+  amountIn: 1000
+})
+
+// Result: venue = "DEEPBOOK_WS" (highest priority)
+```
+
+**Example 4: Sanitization (no numeric leakage)**
+```typescript
+const quote = normalizeDeepBookQuote(...)
+
+// NEVER log quote directly (contains numerics)
+// ❌ log(quote) - BAD
+
+// ALWAYS sanitize first
+const sanitized = sanitizeQuoteForLogs(quote)
+// ✅ log(sanitized) - GOOD
+
+// sanitized contains only:
+// { venue, status, side, impactLabel, depthLabel, ts, reasons }
+// (no amountIn, amountOut, price, mid, spread)
+```
+
+### Constitutional Constraints
+
+- **READ-ONLY**: No learning, optimization, or prediction
+- **Fixed rules**: All thresholds predetermined and deterministic
+- **Numeric never logged**: Use `sanitizeQuoteForLogs()` before any logging
+- **Unknown → conservative**: Missing data uses safe defaults (UNKNOWN labels, UNAVAILABLE status)
+- **Defensive**: Never throws, always returns valid NormalizedQuoteV1
+- **Deterministic routing**: Fixed priority (WS → HTTP → Cetus → NONE)
+
+### Test Coverage
+
+16 tests in `tests/pr187.quote_normalization.test.ts`:
+1. DeepBook WS normal spread and depth
+2. Wide spread triggers IMPACT_HIGH
+3. Low volume triggers DEPTH_THIN
+4. HTTP fallback when WS unavailable
+5. Cetus pool as last resort
+6. All sources unavailable → venue NONE
+7. Defensive handling of malformed orderbook
+8. sanitizeQuoteForLogs removes all numerics
+9. isQuoteUsable validation checks
+10. isQuoteStale validation checks
+11. WS priority over HTTP
+12. HTTP priority over Cetus
+13. SELL_WBTC_FOR_USDC direction
+14. Cetus low liquidity → DEPTH_THIN
+15. Medium spread → IMPACT_MEDIUM
+16. Defensive Cetus handling
+
+### Files Changed
+
+**New Package** (`src/quoteNorm/`):
+- `types.ts` - NormalizedQuoteV1 model and related types
+- `guards.ts` - Sanitization and validation functions
+- `deepbookNormalizer.ts` - DeepBook orderbook normalization
+- `cetusNormalizer.ts` - Cetus pool normalization
+- `router.ts` - Deterministic quote selection with priority routing
+- `index.ts` - Barrel exports
+
+**Updated**:
+- `src/rebalance/runner.ts` - Integrate quote normalization (Step 1.8)
+- `src/rebalance/gate.ts` - Use NormalizedQuoteV1 instead of chosenQuote
+- `src/telemetry/types.ts` - Add QUOTE_NORMALIZED event type
+- `tests/pr187.quote_normalization.test.ts` - Comprehensive test coverage (NEW)
+
+**No breaking changes**: All new parameters optional, existing code continues to work.
+
+### Version Tag
+
+`v1.4-routing-quote-normalization-v1`
+
+---

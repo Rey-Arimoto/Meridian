@@ -50,6 +50,7 @@ export type TelemetryEventType =
   | "OBSERVE_FETCH_SKIPPED" // Observation fetch skipped (PR183)
   | "OBSERVE_DEGRADED_LEVEL" // Observe degrade level (PR184)
   | "OBSERVE_DEGRADED_TIGHTENING_APPLIED" // Degrade tightening applied (PR184)
+  | "QUOTE_NORMALIZED" // Quote normalized (PR187)
   | "ERROR"; // Error occurred
 
 /**
