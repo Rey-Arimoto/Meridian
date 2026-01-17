@@ -5589,3 +5589,218 @@ Scenario: WS dead, tier degraded to TIER_10S
 `v1.4-observe-degraded-safety-tightening-v1`
 
 ---
+
+---
+
+## PR185: Restore Template-Based Slippage Base (PR157 Compatibility) v1
+
+### Purpose
+
+Restore PR157's template-based slippage calculation that was simplified in PR184, while maintaining PR184's observeDegrade adjustment. This ensures slippage properly reflects risk template, market conditions, and observation quality.
+
+### Problem Statement
+
+PR184 simplified `src/rebalance/slippage.ts` to a fixed 50 bps base + shock adjustment + degrade adjustment, losing PR157's template-specific base values and other adjustments (stress, impact, venue).
+
+### Solution
+
+Restore PR157's comprehensive slippage calculation while maintaining PR184's degrade adjustment:
+
+```typescript
+Slippage = baseByTemplate 
+         + phaseAdj 
+         + stressAdj 
+         + impactAdj 
+         + venueAdj 
+         + degradeAdj (PR184)
+         → capped at 1500 bps
+```
+
+### Fixed Rules Tables (PR157 Restored)
+
+**1. Base by Template**:
+```
+TPL_RISK_90 → 150 bps (highest risk, highest slippage tolerance)
+TPL_RISK_50 → 100 bps
+TPL_RISK_20 → 75 bps
+TPL_RISK_0  → 50 bps (lowest risk, tightest slippage)
+UNKNOWN     → 200 bps (safe side)
+```
+
+**2. Phase Adjustment**:
+```
+PHASE_UP_SHOCK / PHASE_DOWN_SHOCK → +150 bps
+PHASE_PRE_SHOCK                   → +100 bps
+PHASE_UP_REVERSAL / PHASE_DOWN_REVERSAL → +200 bps
+Other phases                      → +0 bps
+```
+
+**3. Stress Adjustment**:
+```
+STRESS_STRESSED → +200 bps
+STRESS_TENSE    → +100 bps
+Other           → +0 bps
+```
+
+**4. Impact Adjustment**:
+```
+IMPACT_HIGH    → +200 bps
+IMPACT_MEDIUM  → +100 bps
+IMPACT_UNKNOWN → +200 bps (safe side)
+Other          → +0 bps
+```
+
+**5. Venue Adjustment**:
+```
+CETUS    → +50 bps (higher slippage tolerance for CETUS)
+DEEPBOOK → +0 bps
+Other    → +0 bps
+```
+
+**6. Degrade Adjustment (PR184 - Maintained)**:
+```
+DEGRADED_NONE   → +0 bps
+DEGRADED_LIGHT  → +50 bps
+DEGRADED_MEDIUM → +150 bps
+DEGRADED_HEAVY / DEGRADED_UNKNOWN → +300 bps
+```
+
+**Hard Cap**: Always capped at 1500 bps (15%) regardless of total adjustments.
+
+### Function Signature
+
+```typescript
+export function computeSlippageBps(args: {
+  templateId?: string;           // PR157/PR185
+  phaseLabel?: string;            // PR157/PR185
+  stressLabel?: string;           // PR157/PR185
+  impactLabel?: string;           // PR157/PR185
+  venue?: string;                 // PR157/PR185
+  observeDegradeLevel?: ObserveDegradeLevel; // PR184 (maintained)
+}): number
+```
+
+**All parameters are optional** to avoid breaking existing callers. Missing parameters use safe defaults:
+- No `templateId` → uses UNKNOWN base (200 bps, safe side)
+- No other params → no adjustment added (0 bps)
+
+### Examples
+
+**Example 1: Minimal (backward compatible)**
+```typescript
+computeSlippageBps({}) 
+→ 200 bps (UNKNOWN base, safe side)
+```
+
+**Example 2: Template only**
+```typescript
+computeSlippageBps({ templateId: "TPL_RISK_50" }) 
+→ 100 bps
+```
+
+**Example 3: Template + Phase**
+```typescript
+computeSlippageBps({ 
+  templateId: "TPL_RISK_50",
+  phaseLabel: "PHASE_PRE_SHOCK" 
+}) 
+→ 100 + 100 = 200 bps
+```
+
+**Example 4: Full adjustments**
+```typescript
+computeSlippageBps({
+  templateId: "TPL_RISK_50",       // 100
+  phaseLabel: "PHASE_UP_SHOCK",    // +150
+  stressLabel: "STRESS_TENSE",     // +100
+  impactLabel: "IMPACT_MEDIUM",    // +100
+  venue: "CETUS",                  // +50
+  observeDegradeLevel: "DEGRADED_MEDIUM" // +150
+}) 
+→ 100 + 150 + 100 + 100 + 50 + 150 = 650 bps
+```
+
+**Example 5: Extreme scenario (capped)**
+```typescript
+computeSlippageBps({
+  templateId: undefined,           // 200 (UNKNOWN)
+  phaseLabel: "PHASE_UP_REVERSAL", // +200
+  stressLabel: "STRESS_STRESSED",  // +200
+  impactLabel: "IMPACT_UNKNOWN",   // +200
+  venue: "CETUS",                  // +50
+  observeDegradeLevel: "DEGRADED_HEAVY" // +300
+}) 
+→ 200 + 200 + 200 + 200 + 50 + 300 = 1150 bps (below cap)
+```
+
+### Constitutional Constraints
+
+- **READ-ONLY**: No learning, optimization, or prediction
+- **Fixed rules**: All adjustments are predetermined, deterministic
+- **Hard cap maintained**: Always ≤ 1500 bps
+- **Defensive**: Never throws, returns safe values on error
+- **Label-only**: No numbers in warnings/reasons (test comparisons OK)
+- **Backward compatible**: All parameters optional
+
+### Comparison: PR184 → PR185
+
+**Before (PR184 - Simplified)**:
+```typescript
+Slippage = 50 (fixed base) 
+         + shock adjustment (100 if shock phase)
+         + degrade adjustment (0/50/150/300)
+```
+
+**After (PR185 - Restored)**:
+```typescript
+Slippage = baseByTemplate (50-200, varies by risk)
+         + phase adjustment (0/100/150/200, more granular)
+         + stress adjustment (0/100/200)
+         + impact adjustment (0/100/200)
+         + venue adjustment (0/50)
+         + degrade adjustment (0/50/150/300, from PR184)
+```
+
+**Why Restore?**
+- PR157's template-based approach properly reflects different risk profiles
+- Different templates (TPL_RISK_90 vs TPL_RISK_0) should have different slippage tolerances
+- Market conditions (stress, impact) should affect slippage
+- Venue-specific characteristics (CETUS vs DEEPBOOK) matter
+- PR184's degrade adjustment is still important and maintained
+
+### Test Coverage
+
+12 tests in `tests/pr185.slippage_template_base_restore.test.ts`:
+1. TPL_RISK_90 base is 150 bps
+2. TPL_RISK_0 base is 50 bps
+3. TPL_RISK_50 + PRE_SHOCK = 100+100
+4. TPL_RISK_20 + REVERSAL = 75+200
+5. Unknown template + IMPACT_UNKNOWN = 200+200 (safe side)
+6. DEGRADED_HEAVY adds +300 bps
+7. Hard cap 1500 enforced
+8. All adjustments combine correctly
+9. CETUS venue adds 50 bps
+10. No template uses UNKNOWN base (200)
+11. STRESSED adds 200 bps
+12. Phase adjustments verified
+
+### Files Changed
+
+**Updated**:
+- `src/rebalance/slippage.ts` - Restored PR157 tables + computation logic
+- `tests/pr185.slippage_template_base_restore.test.ts` - 12 comprehensive tests (NEW)
+
+**No breaking changes**: All callers continue to work due to optional parameters.
+
+### Integration Notes
+
+Callers can gradually adopt the new parameters:
+1. **Minimal**: Just pass `templateId` to get proper base
+2. **Recommended**: Pass `templateId`, `phaseLabel`, `observeDegradeLevel` for comprehensive calculation
+3. **Full**: Pass all 6 parameters for complete slippage determination
+
+### Version Tag
+
+`v1.4-restore-template-slippage-base-v1`
+
+---
