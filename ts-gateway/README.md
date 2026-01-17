@@ -4747,17 +4747,22 @@ With PR181:
 
 ### STOP Conditions (Fixed Table)
 
+**PR181a Update**: Spec lock is NO LONGER a STOP reason. Market execution continues with activeSpec.
+
 STOP signal triggered when:
 1. **Phase**: PHASE_UNKNOWN, PHASE_ERROR, PHASE_PRE_SHOCK, PHASE_UP_SHOCK, PHASE_DOWN_SHOCK, PHASE_UP_REVERSAL, PHASE_DOWN_REVERSAL
 2. **Oracle**: STALE or ERROR status
 3. **HardStop**: active=true (PR156)
-4. **Spec Lock**: LOCKED_PENDING_ACK without activeSpec (PR179)
 
 NO_STOP when:
 - Phase: PHASE_NORMAL or PHASE_RECOVERY
 - Oracle: AVAILABLE
 - HardStop: inactive
-- Spec Lock: ACKed or has activeSpec
+
+**Spec ACK Status** (PR181a): Visible but NOT a STOP reason
+- Spec lock pending/expired does NOT stop market execution
+- Execution continues with last ACKed spec (activeSpec)
+- Exception: Bootstrap (no activeSpec) requires initial ACK
 
 ### Data Structures
 
@@ -4770,6 +4775,7 @@ NO_STOP when:
   labelsPresence: "HAS_LABELS" | "NO_LABELS",
   oracleStatus: "AVAILABLE" | "STALE" | "ERROR" | "UNKNOWN",
   stopSignal: "STOP" | "NO_STOP" | "UNKNOWN",
+  specAckStatus?: "SPEC_ACK_OK" | "SPEC_ACK_PENDING" | "SPEC_ACK_EXPIRED" | "SPEC_ACK_REQUIRED_BOOTSTRAP" | "SPEC_ACK_UNKNOWN", // PR181a
   warnings: string[] // label-only
 }
 ```
@@ -4831,6 +4837,9 @@ MERIDIAN_DEBUG=true npx ts-node src/cli/observe.ts --json
 - OBSERVE_ERROR: Observation error occurred
 - STOP_SIGNAL_RAISED: STOP condition detected
 - STOP_SIGNAL_CLEARED: Conditions safe again
+- SPEC_ACK_PENDING_WARN: Spec ACK pending (PR181a)
+- SPEC_ACK_EXPIRED_WARN: Spec ACK expired (PR181a)
+- SPEC_ACK_REQUIRED_BOOTSTRAP_WARN: Spec ACK required bootstrap (PR181a)
 
 ### Files
 
@@ -4850,3 +4859,146 @@ MERIDIAN_DEBUG=true npx ts-node src/cli/observe.ts --json
 5. **Interruptible**: Sleep can be aborted instantly
 
 **Purpose**: Maintain real-time market observation (1s) with safe chunked execution (10s) and immediate STOP capability - ensuring fresh state while preserving execution safety.
+
+⸻
+
+## PR181a: Spec Lock ≠ STOP (Run-on-Old-Spec) v1
+
+### Purpose
+
+Separate market risk STOP conditions from spec ACK requirements. Spec lock pending/expired should NOT stop market execution - execution continues with the last ACKed spec (activeSpec). This prevents conflating "don't stop in the market" with "require human ACK for spec changes".
+
+### Problem
+
+**Before PR181a**:
+- Spec lock pending/expired was treated as a STOP condition (PR181 line 103-106)
+- Market execution would halt when waiting for human ACK
+- Confuses two distinct concerns:
+  1. Market risk safety (phase errors, oracle stale, hardStop)
+  2. Human approval workflow (spec version ACK)
+
+**After PR181a**:
+- Spec lock status is VISIBLE but NOT a STOP reason
+- Execution continues with activeSpec (last ACKed spec)
+- Only bootstrap (no activeSpec) requires initial ACK
+- Spec ACK status emits WARN events for visibility
+
+### Fixed Rules
+
+**1. STOP Conditions (Market Risk Only)**
+- Phase: ERROR, UNKNOWN, or shock phases
+- Oracle: STALE or ERROR
+- HardStop: active=true
+
+**2. Spec ACK Status (Visible, Not STOP)**
+- SPEC_ACK_OK: activeSpec exists, latest spec ACKed
+- SPEC_ACK_PENDING: latest spec not ACKed, continue with activeSpec
+- SPEC_ACK_EXPIRED: TTL exceeded, continue with activeSpec
+- SPEC_ACK_REQUIRED_BOOTSTRAP: no activeSpec (initial), ACK required
+
+**3. Telemetry WARN Events**
+- SPEC_ACK_PENDING_WARN: Latest spec awaiting human ACK
+- SPEC_ACK_EXPIRED_WARN: Spec lock TTL exceeded
+- SPEC_ACK_REQUIRED_BOOTSTRAP_WARN: Bootstrap requires initial ACK
+
+### Code Changes
+
+**evaluateStopSignal()** (src/observeLoop/loop.ts):
+- Removed: specLockPending parameter
+- Removed: spec lock as STOP condition
+- Result: Only market risk conditions cause STOP
+
+**evaluateSpecAckStatus()** (src/observeLoop/loop.ts):
+- New function: Evaluates spec ACK status separately
+- Returns: SpecAckStatusLabel (not StopSignal)
+- Logic: hasActiveSpec determines if execution can continue
+
+**runObserveTick()** (src/observeLoop/loop.ts):
+- Added: getSpecLockStatus and getHasActiveSpec dependencies
+- Added: specAckStatus evaluation
+- Added: WARN event emission for spec ACK status
+- Updated: observeState includes specAckStatus field
+
+### Data Structures
+
+**SpecAckStatusLabel** (new type):
+```typescript
+type SpecAckStatusLabel =
+  | "SPEC_ACK_OK"
+  | "SPEC_ACK_PENDING"
+  | "SPEC_ACK_EXPIRED"
+  | "SPEC_ACK_REQUIRED_BOOTSTRAP"
+  | "SPEC_ACK_UNKNOWN";
+```
+
+**ObserveStateV1** (updated):
+```typescript
+{
+  // ... existing fields ...
+  specAckStatus?: SpecAckStatusLabel; // PR181a: visible but not STOP
+}
+```
+
+### Constitutional Constraints
+
+- **Separation of concerns**: Market risk vs spec approval workflow
+- **Fixed rules**: No learning, optimization, or prediction
+- **READ-ONLY**: Observation updates state only
+- **Label-only**: All status values are strings
+- **Defensive**: Never throws, always returns result
+
+### Behavioral Changes
+
+**Scenario 1**: Spec lock pending + activeSpec exists
+- Before: STOP (execution halted)
+- After: NO_STOP (continue with activeSpec, emit WARN)
+
+**Scenario 2**: Spec lock expired + activeSpec exists
+- Before: STOP (execution halted)
+- After: NO_STOP (continue with activeSpec, emit WARN)
+
+**Scenario 3**: No activeSpec (bootstrap)
+- Before: STOP (via specLockPending flag)
+- After: NO_STOP in observe, but executor/gate will BLOCK (unchanged)
+
+**Scenario 4**: Oracle STALE
+- Before: STOP
+- After: STOP (unchanged - this is market risk)
+
+### Integration
+
+**Supervisor**:
+- Observe loop updates specAckStatus in state
+- Supervisor reads observeState.specAckStatus for visibility
+- Execution decisions use activeSpec from spec store (PR179)
+
+**Executor**:
+- Spec lock check remains (PR179 executor.ts)
+- Executor uses activeSpec when available
+- Executor blocks only if no activeSpec exists
+
+**Telemetry**:
+- WARN events provide strong visibility
+- Spec ACK status always visible in logs
+- Human can monitor pending ACKs without execution stopping
+
+### CLI Usage
+
+```bash
+# View observe state (includes specAckStatus)
+npx ts-node src/cli/observe.ts status
+
+# Expected output includes:
+# - specAckStatus: SPEC_ACK_OK | SPEC_ACK_PENDING | etc
+# - Note: specAckStatus is visible but NOT a STOP reason
+```
+
+### Safety Properties
+
+1. **Market continuity**: Execution never stops due to spec ACK delay
+2. **Visibility**: Spec ACK status always visible in telemetry/state
+3. **Bootstrap safety**: Initial ACK still required (no activeSpec)
+4. **Separation**: Market risk STOP vs spec approval clearly distinct
+5. **Defensive**: All evaluations handle errors gracefully
+
+**Purpose**: Decouple market execution continuity from spec approval workflow - allowing execution to continue with proven activeSpec while maintaining strong visibility of spec ACK status.

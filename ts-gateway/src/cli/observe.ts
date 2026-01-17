@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
  * PR181: v1.4 Observe 1s Loop + Chunk 10s + Immediate STOP v1 - CLI
+ * PR181a: v1.4 Spec Lock ≠ STOP (Run-on-Old-Spec) v1
  *
  * Purpose:
  *   Display observe state and stop token status.
+ *   Show spec ACK status (visible but not a STOP reason).
  *
  * Constitutional Constraints:
  *   - READ-ONLY: Display only, no execution changes
@@ -74,7 +76,11 @@ async function statusCommand(json: boolean = false): Promise<void> {
     console.log("  - labelsPresence: HAS_LABELS | NO_LABELS");
     console.log("  - oracleStatus: AVAILABLE | STALE | ERROR | UNKNOWN");
     console.log("  - stopSignal: STOP | NO_STOP | UNKNOWN");
+    console.log("  - specAckStatus: SPEC_ACK_OK | SPEC_ACK_PENDING | etc (PR181a)");
     console.log("  - warnings: [...]");
+    console.log("");
+    console.log("Note: specAckStatus is visible but NOT a STOP reason.");
+    console.log("Execution continues with activeSpec even if latest spec is not ACKed.");
   }
 
   console.log("");

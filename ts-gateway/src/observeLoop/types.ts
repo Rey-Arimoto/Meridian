@@ -56,6 +56,16 @@ export type OracleStatus = "AVAILABLE" | "STALE" | "ERROR" | "UNKNOWN";
 export type StopSignal = "STOP" | "NO_STOP" | "UNKNOWN";
 
 /**
+ * Spec ACK status label (PR181a)
+ */
+export type SpecAckStatusLabel =
+  | "SPEC_ACK_OK" // activeSpec exists, latest spec is ACKed
+  | "SPEC_ACK_PENDING" // latest spec not ACKed, continue with activeSpec
+  | "SPEC_ACK_EXPIRED" // TTL exceeded, continue with activeSpec
+  | "SPEC_ACK_REQUIRED_BOOTSTRAP" // no activeSpec (initial), ACK required
+  | "SPEC_ACK_UNKNOWN";
+
+/**
  * Observe state v1 (saved to state)
  */
 export interface ObserveStateV1 {
@@ -65,6 +75,7 @@ export interface ObserveStateV1 {
   labelsPresence: LabelsPresence;
   oracleStatus: OracleStatus;
   stopSignal: StopSignal;
+  specAckStatus?: SpecAckStatusLabel; // PR181a: spec ACK status (not a STOP reason)
   warnings: string[]; // label-only
 }
 

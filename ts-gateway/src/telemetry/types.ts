@@ -38,6 +38,9 @@ export type TelemetryEventType =
   | "OBSERVE_ERROR" // Observe error (PR181)
   | "STOP_SIGNAL_RAISED" // STOP signal raised (PR181)
   | "STOP_SIGNAL_CLEARED" // STOP signal cleared (PR181)
+  | "SPEC_ACK_PENDING_WARN" // Spec ACK pending (PR181a)
+  | "SPEC_ACK_EXPIRED_WARN" // Spec ACK expired (PR181a)
+  | "SPEC_ACK_REQUIRED_BOOTSTRAP_WARN" // Spec ACK required bootstrap (PR181a)
   | "ERROR"; // Error occurred
 
 /**

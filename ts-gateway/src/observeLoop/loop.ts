@@ -1,19 +1,23 @@
 /**
  * PR181: v1.4 Observe 1s Loop + Chunk 10s + Immediate STOP v1 - Loop
+ * PR181a: v1.4 Spec Lock ≠ STOP (Run-on-Old-Spec) v1
  *
  * Purpose:
  *   1-second observation loop for state updates with immediate STOP capability.
+ *   Spec lock status is visible but NOT a STOP reason (execution continues with activeSpec).
  *
  * Constitutional Constraints:
  *   - Fixed rules: No learning, optimization, or prediction
  *   - READ-ONLY: Observation updates state only
  *   - Defensive: Never throws, always returns result
+ *   - Separation: Market risk STOP vs spec ACK requirements
  */
 
 import {
   ObserveStateV1,
   StopTokenV1,
   StopSignal,
+  SpecAckStatusLabel,
   PhaseLabel,
   TrendLabel,
   OracleStatus,
@@ -55,17 +59,57 @@ export function updateStopToken(status: "STOP" | "CLEAR", reason: string): void 
 }
 
 /**
+ * Evaluate spec ACK status (PR181a)
+ *
+ * @param specLockStatus - Spec lock status from PR179
+ * @param hasActiveSpec - Whether activeSpec exists
+ * @returns Spec ACK status label
+ */
+export function evaluateSpecAckStatus(
+  specLockStatus: string = "UNKNOWN",
+  hasActiveSpec: boolean = false
+): SpecAckStatusLabel {
+  try {
+    // SPEC_ACK_OK: activeSpec exists and latest spec is ACKed
+    if (specLockStatus === "ACTIVE_OK" && hasActiveSpec) {
+      return "SPEC_ACK_OK";
+    }
+
+    // SPEC_ACK_PENDING: latest spec not ACKed, but activeSpec exists
+    if (specLockStatus === "LOCKED_PENDING_ACK" && hasActiveSpec) {
+      return "SPEC_ACK_PENDING";
+    }
+
+    // SPEC_ACK_EXPIRED: TTL exceeded, but activeSpec exists
+    if (specLockStatus === "LOCKED_EXPIRED" && hasActiveSpec) {
+      return "SPEC_ACK_EXPIRED";
+    }
+
+    // SPEC_ACK_REQUIRED_BOOTSTRAP: no activeSpec (initial state)
+    if (!hasActiveSpec) {
+      return "SPEC_ACK_REQUIRED_BOOTSTRAP";
+    }
+
+    // Unknown state
+    return "SPEC_ACK_UNKNOWN";
+  } catch (error) {
+    // Defensive: Return unknown on error
+    return "SPEC_ACK_UNKNOWN";
+  }
+}
+
+/**
  * Evaluate STOP signal based on observe state (fixed rules)
+ *
+ * PR181a: Spec lock is NOT a STOP reason. Market execution continues with activeSpec.
  *
  * @param observeState - Current observe state
  * @param hardStopActive - HardStop active flag (from PR156)
- * @param specLockPending - Spec lock pending without activeSpec (from PR179)
  * @returns Stop signal
  */
 export function evaluateStopSignal(
   observeState: ObserveStateV1,
-  hardStopActive: boolean = false,
-  specLockPending: boolean = false
+  hardStopActive: boolean = false
 ): StopSignal {
   const warnings: string[] = [];
 
@@ -100,10 +144,8 @@ export function evaluateStopSignal(
       return "STOP";
     }
 
-    // 4. Spec lock pending without activeSpec (PR179)
-    if (specLockPending) {
-      return "STOP";
-    }
+    // PR181a: Spec lock is NOT a STOP reason (removed)
+    // Execution continues with activeSpec even if latest spec is not ACKed
 
     // No STOP conditions met
     return "NO_STOP";
@@ -188,7 +230,8 @@ export async function runObserveTick(deps?: {
   getOracleStatus?: () => Promise<OracleStatus>;
   getLabelsPresence?: () => Promise<"HAS_LABELS" | "NO_LABELS">;
   getHardStopActive?: () => Promise<boolean>;
-  getSpecLockPending?: () => Promise<boolean>;
+  getSpecLockStatus?: () => Promise<string>; // PR181a: spec lock status
+  getHasActiveSpec?: () => Promise<boolean>; // PR181a: activeSpec presence
 }): Promise<ObserveStateV1> {
   try {
     // Evaluate observe state
@@ -199,23 +242,52 @@ export async function runObserveTick(deps?: {
       getLabelsPresence: deps?.getLabelsPresence,
     });
 
-    // Get hardStop and specLock status
+    // Get hardStop status
     const hardStopActive = deps?.getHardStopActive
       ? await deps.getHardStopActive()
       : false;
-    const specLockPending = deps?.getSpecLockPending
-      ? await deps.getSpecLockPending()
+
+    // PR181a: Get spec lock status and activeSpec presence
+    const specLockStatus = deps?.getSpecLockStatus
+      ? await deps.getSpecLockStatus()
+      : "UNKNOWN";
+    const hasActiveSpec = deps?.getHasActiveSpec
+      ? await deps.getHasActiveSpec()
       : false;
 
-    // Evaluate STOP signal
-    const stopSignal = evaluateStopSignal(
-      observeState,
-      hardStopActive,
-      specLockPending
-    );
+    // PR181a: Evaluate spec ACK status (visible but not a STOP reason)
+    const specAckStatus = evaluateSpecAckStatus(specLockStatus, hasActiveSpec);
+    observeState.specAckStatus = specAckStatus;
+
+    // Evaluate STOP signal (PR181a: spec lock is NOT a STOP reason)
+    const stopSignal = evaluateStopSignal(observeState, hardStopActive);
 
     // Update observe state with STOP signal
     observeState.stopSignal = stopSignal;
+
+    // PR181a: Emit WARN events for spec ACK status (defensive)
+    if (deps?.telemetryLogger) {
+      try {
+        if (specAckStatus === "SPEC_ACK_PENDING") {
+          await deps.telemetryLogger.log("SPEC_ACK_PENDING_WARN", {
+            specLockStatus,
+            hasActiveSpec: hasActiveSpec ? "YES" : "NO",
+          });
+        } else if (specAckStatus === "SPEC_ACK_EXPIRED") {
+          await deps.telemetryLogger.log("SPEC_ACK_EXPIRED_WARN", {
+            specLockStatus,
+            hasActiveSpec: hasActiveSpec ? "YES" : "NO",
+          });
+        } else if (specAckStatus === "SPEC_ACK_REQUIRED_BOOTSTRAP") {
+          await deps.telemetryLogger.log("SPEC_ACK_REQUIRED_BOOTSTRAP_WARN", {
+            specLockStatus,
+            hasActiveSpec: hasActiveSpec ? "YES" : "NO",
+          });
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
 
     // Update global stop token
     if (stopSignal === "STOP") {

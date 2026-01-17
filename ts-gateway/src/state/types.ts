@@ -71,6 +71,7 @@ export interface MeridianStateV1 {
     labelsPresence: string; // HAS_LABELS | NO_LABELS
     oracleStatus: string; // AVAILABLE | STALE | ERROR | UNKNOWN
     stopSignal: string; // STOP | NO_STOP | UNKNOWN
+    specAckStatus?: string; // PR181a: SPEC_ACK_OK | SPEC_ACK_PENDING | etc (not a STOP reason)
     warnings: string[]; // label-only
   };
 

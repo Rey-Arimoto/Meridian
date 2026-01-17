@@ -22,6 +22,7 @@
 import {
   evaluateObserveState,
   evaluateStopSignal,
+  evaluateSpecAckStatus,
   runObserveTick,
   getStopToken,
   updateStopToken,
@@ -152,9 +153,9 @@ describe("PR181: Observe 1s Loop + Chunk 10s + Immediate STOP", () => {
   });
 
   /**
-   * Test 7: SpecLock pending ACK no activeSpec → stopSignal=STOP
+   * Test 7: PR181a - Spec lock is NOT a STOP reason
    */
-  test("Test 7: Spec lock pending without activeSpec triggers STOP", () => {
+  test("Test 7: PR181a - Spec lock pending does NOT trigger STOP", () => {
     const observeState: ObserveStateV1 = {
       status: "AVAILABLE",
       phaseLabel: "PHASE_NORMAL",
@@ -165,9 +166,11 @@ describe("PR181: Observe 1s Loop + Chunk 10s + Immediate STOP", () => {
       warnings: [],
     };
 
-    const stopSignal = evaluateStopSignal(observeState, false, true);
+    // PR181a: evaluateStopSignal no longer accepts specLockPending parameter
+    const stopSignal = evaluateStopSignal(observeState, false);
 
-    expect(stopSignal).toBe("STOP");
+    // Spec lock is NOT a STOP reason anymore
+    expect(stopSignal).toBe("NO_STOP");
   });
 
   /**
@@ -298,8 +301,124 @@ describe("PR181: Observe 1s Loop + Chunk 10s + Immediate STOP", () => {
       warnings: [],
     };
 
-    const stopSignal = evaluateStopSignal(observeState, false, false);
+    // PR181a: evaluateStopSignal only takes 2 parameters now
+    const stopSignal = evaluateStopSignal(observeState, false);
 
     expect(stopSignal).toBe("NO_STOP");
+  });
+
+  /**
+   * PR181a Tests: Spec Lock ≠ STOP (Run-on-Old-Spec)
+   */
+
+  /**
+   * Test 15: PR181a - LOCKED_PENDING_ACK + activeSpec → NO STOP
+   */
+  test("Test 15: PR181a - Spec pending with activeSpec does NOT stop", () => {
+    const specAckStatus = evaluateSpecAckStatus("LOCKED_PENDING_ACK", true);
+
+    expect(specAckStatus).toBe("SPEC_ACK_PENDING");
+
+    // Verify that this does NOT cause STOP
+    const observeState: ObserveStateV1 = {
+      status: "AVAILABLE",
+      phaseLabel: "PHASE_NORMAL",
+      trendLabel: "UNKNOWN",
+      labelsPresence: "NO_LABELS",
+      oracleStatus: "AVAILABLE",
+      stopSignal: "UNKNOWN",
+      specAckStatus: "SPEC_ACK_PENDING",
+      warnings: [],
+    };
+
+    const stopSignal = evaluateStopSignal(observeState, false);
+    expect(stopSignal).toBe("NO_STOP");
+  });
+
+  /**
+   * Test 16: PR181a - LOCKED_EXPIRED + activeSpec → NO STOP
+   */
+  test("Test 16: PR181a - Spec expired with activeSpec does NOT stop", () => {
+    const specAckStatus = evaluateSpecAckStatus("LOCKED_EXPIRED", true);
+
+    expect(specAckStatus).toBe("SPEC_ACK_EXPIRED");
+
+    // Verify that this does NOT cause STOP
+    const observeState: ObserveStateV1 = {
+      status: "AVAILABLE",
+      phaseLabel: "PHASE_NORMAL",
+      trendLabel: "UNKNOWN",
+      labelsPresence: "NO_LABELS",
+      oracleStatus: "AVAILABLE",
+      stopSignal: "UNKNOWN",
+      specAckStatus: "SPEC_ACK_EXPIRED",
+      warnings: [],
+    };
+
+    const stopSignal = evaluateStopSignal(observeState, false);
+    expect(stopSignal).toBe("NO_STOP");
+  });
+
+  /**
+   * Test 17: PR181a - No activeSpec → SPEC_ACK_REQUIRED_BOOTSTRAP
+   */
+  test("Test 17: PR181a - No activeSpec requires bootstrap ACK", () => {
+    const specAckStatus = evaluateSpecAckStatus("LOCKED_PENDING_ACK", false);
+
+    expect(specAckStatus).toBe("SPEC_ACK_REQUIRED_BOOTSTRAP");
+
+    // Note: observe loop does NOT stop, but executor/gate will block
+    const observeState: ObserveStateV1 = {
+      status: "AVAILABLE",
+      phaseLabel: "PHASE_NORMAL",
+      trendLabel: "UNKNOWN",
+      labelsPresence: "NO_LABELS",
+      oracleStatus: "AVAILABLE",
+      stopSignal: "UNKNOWN",
+      specAckStatus: "SPEC_ACK_REQUIRED_BOOTSTRAP",
+      warnings: [],
+    };
+
+    const stopSignal = evaluateStopSignal(observeState, false);
+    expect(stopSignal).toBe("NO_STOP");
+  });
+
+  /**
+   * Test 18: PR181a - SPEC_ACK_PENDING emits WARN event
+   */
+  test("Test 18: PR181a - Spec pending emits WARN telemetry", async () => {
+    let warnEventEmitted = false;
+    let warnEventType = "";
+
+    const mockTelemetry = {
+      log: async (type: string, data: any) => {
+        if (type === "SPEC_ACK_PENDING_WARN") {
+          warnEventEmitted = true;
+          warnEventType = type;
+        }
+      },
+    };
+
+    const result = await runObserveTick({
+      telemetryLogger: mockTelemetry,
+      getPhaseLabel: async () => "PHASE_NORMAL",
+      getSpecLockStatus: async () => "LOCKED_PENDING_ACK",
+      getHasActiveSpec: async () => true,
+    });
+
+    expect(result).toBeDefined();
+    expect(result.specAckStatus).toBe("SPEC_ACK_PENDING");
+    expect(result.stopSignal).toBe("NO_STOP");
+    expect(warnEventEmitted).toBe(true);
+    expect(warnEventType).toBe("SPEC_ACK_PENDING_WARN");
+  });
+
+  /**
+   * Test 19: PR181a - SPEC_ACK_OK status
+   */
+  test("Test 19: PR181a - Spec ACK OK with activeSpec", () => {
+    const specAckStatus = evaluateSpecAckStatus("ACTIVE_OK", true);
+
+    expect(specAckStatus).toBe("SPEC_ACK_OK");
   });
 });
