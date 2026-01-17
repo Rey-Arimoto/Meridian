@@ -238,12 +238,23 @@ export async function runChunkedExecutionV1(
   const reasons: string[] = [];
   const chunkResults: ChunkResult[] = [];
 
+  // PR188c: Emit RUN_START lifecycle event
+  await appendEventV1(
+    createEventV1("RUN_START", "INFO", {
+      run_id: runPlan.runId,
+      template_id: runPlan.templateId,
+      total_chunks: `${runPlan.chunks.length}`,
+    })
+  ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
   let consecutiveBlockCount = 0;
+  let finalStatus: "COMPLETED" | "STOPPED" | "ERROR" = "ERROR"; // Default to ERROR
 
   try {
     // Check if run plan has no chunks
     if (runPlan.chunks.length === 0) {
       reasons.push("REASON_NO_CHUNKS_TO_EXECUTE");
+      finalStatus = "COMPLETED";
 
       return {
         runId: runPlan.runId,
@@ -286,14 +297,7 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_RUN_DURATION_EXCEEDED");
 
         const nowMs = getNowMs();
-
-        // PR164: Emit RUN_STOP event
-        await appendEventV1(
-          createEventV1("RUN_STOP", "WARN", {
-            run_status: "STOPPED",
-            stop_reason: "STOP_DURATION_EXCEEDED",
-          })
-        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+        finalStatus = "STOPPED";
 
         return {
           runId: runPlan.runId,
@@ -376,15 +380,7 @@ export async function runChunkedExecutionV1(
           reasons.push(...phaseDecision.warnings);
 
           const nowMs = getNowMs();
-
-          // PR164: Emit RUN_STOP event
-          await appendEventV1(
-            createEventV1("RUN_STOP", "WARN", {
-              run_status: "STOPPED",
-              stop_reason: "STOP_PHASE_POLICY",
-              phase: currentPhase,
-            })
-          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+          finalStatus = "STOPPED";
 
           return {
             runId: runPlan.runId,
@@ -594,14 +590,7 @@ export async function runChunkedExecutionV1(
             stopReason = "STOP_IMPACT_HIGH";
           }
 
-          // PR164: Emit RUN_STOP event
-          await appendEventV1(
-            createEventV1("RUN_STOP", "WARN", {
-              run_status: "STOPPED",
-              stop_reason: stopReason,
-              gate_reason: gateResult.blockReasons[0] || "BLOCK_UNKNOWN",
-            })
-          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+          finalStatus = "STOPPED";
 
           return {
             runId: runPlan.runId,
@@ -662,14 +651,7 @@ export async function runChunkedExecutionV1(
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
 
           const nowMs = getNowMs();
-
-          // PR164: Emit RUN_STOP event
-          await appendEventV1(
-            createEventV1("RUN_STOP", "WARN", {
-              run_status: "STOPPED",
-              stop_reason: "STOP_BLOCKED_STREAK",
-            })
-          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+          finalStatus = "STOPPED";
 
           return {
             runId: runPlan.runId,
@@ -718,6 +700,8 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_GATE_ERROR_STOP");
 
         const nowMs = getNowMs();
+        finalStatus = "STOPPED";
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
@@ -755,6 +739,8 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_POLICY_EVALUATION_ERROR_STOP");
 
         const nowMs = getNowMs();
+        finalStatus = "STOPPED";
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
@@ -795,14 +781,7 @@ export async function runChunkedExecutionV1(
           stopReason = "STOP_POLICY_DENY";
         }
 
-        // PR164: Emit RUN_STOP event
-        await appendEventV1(
-          createEventV1("RUN_STOP", "WARN", {
-            run_status: "STOPPED",
-            stop_reason: stopReason,
-            policy_status: policyResult.status,
-          })
-        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+        finalStatus = "STOPPED";
 
         return {
           runId: runPlan.runId,
@@ -846,6 +825,8 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_TX_DRAFT_BUILD_ERROR_STOP");
 
         const nowMs = getNowMs();
+        finalStatus = "STOPPED";
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
@@ -881,6 +862,8 @@ export async function runChunkedExecutionV1(
         reasons.push("REASON_TX_EXECUTION_ERROR_STOP");
 
         const nowMs = getNowMs();
+        finalStatus = "STOPPED";
+
         return {
           runId: runPlan.runId,
           status: "STOPPED",
@@ -990,6 +973,7 @@ export async function runChunkedExecutionV1(
 
     // All chunks processed
     reasons.push("REASON_ALL_CHUNKS_PROCESSED");
+    finalStatus = "COMPLETED";
 
     return {
       runId: runPlan.runId,
@@ -1002,6 +986,7 @@ export async function runChunkedExecutionV1(
   } catch (error) {
     // Defensive: Unexpected error → return ERROR status
     reasons.push("REASON_RUNNER_UNEXPECTED_ERROR");
+    finalStatus = "ERROR";
 
     return {
       runId: runPlan.runId,
@@ -1011,6 +996,16 @@ export async function runChunkedExecutionV1(
       startedAtMs,
       finishedAtMs: getNowMs(),
     };
+  } finally {
+    // PR188c: Emit RUN_STOP lifecycle event (always runs)
+    await appendEventV1(
+      createEventV1("RUN_STOP", "INFO", {
+        run_id: runPlan.runId,
+        run_status: finalStatus,
+        total_chunks: `${runPlan.chunks.length}`,
+        executed_chunks: `${chunkResults.filter((r) => r.status === "EXECUTED").length}`,
+      })
+    ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }
 }
 
