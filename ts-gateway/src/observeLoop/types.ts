@@ -76,6 +76,8 @@ export interface ObserveStateV1 {
   oracleStatus: OracleStatus;
   stopSignal: StopSignal;
   specAckStatus?: SpecAckStatusLabel; // PR181a: spec ACK status (not a STOP reason)
+  sourceStatus?: string; // PR182: observation source status (AVAILABLE/PARTIAL/ERROR)
+  sdkHealth?: string; // PR182: SDK health label (WS_ALIVE/WS_DEAD/HTTP_OK/etc)
   warnings: string[]; // label-only
 }
 

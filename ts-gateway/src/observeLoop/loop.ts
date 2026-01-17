@@ -232,8 +232,40 @@ export async function runObserveTick(deps?: {
   getHardStopActive?: () => Promise<boolean>;
   getSpecLockStatus?: () => Promise<string>; // PR181a: spec lock status
   getHasActiveSpec?: () => Promise<boolean>; // PR181a: activeSpec presence
+  fetchObservationSnapshotV1?: () => Promise<any>; // PR182: real observation source
 }): Promise<ObserveStateV1> {
   try {
+    // PR182: Fetch real observation snapshot first (if available)
+    let sourceStatus: string = "UNKNOWN";
+    let sdkHealth: string = "UNKNOWN";
+    let sourceWarnings: string[] = [];
+
+    if (deps?.fetchObservationSnapshotV1) {
+      try {
+        const snapshot = await deps.fetchObservationSnapshotV1();
+        sourceStatus = snapshot.status || "UNKNOWN";
+        sdkHealth = snapshot.sdkHealth || "UNKNOWN";
+        sourceWarnings = snapshot.warnings || [];
+
+        // Emit telemetry for source status (defensive)
+        if (deps?.telemetryLogger) {
+          try {
+            await deps.telemetryLogger.log("OBSERVE_SOURCE_STATUS", {
+              status: sourceStatus,
+              sdkHealth,
+            });
+          } catch {
+            // Non-fatal
+          }
+        }
+      } catch (error) {
+        // Defensive: Snapshot fetch failed, continue with UNKNOWN
+        sourceStatus = "ERROR";
+        sdkHealth = "UNKNOWN";
+        sourceWarnings = ["SNAPSHOT_FETCH_FAILED"];
+      }
+    }
+
     // Evaluate observe state
     const observeState = await evaluateObserveState({
       getPhaseLabel: deps?.getPhaseLabel,
@@ -241,6 +273,11 @@ export async function runObserveTick(deps?: {
       getOracleStatus: deps?.getOracleStatus,
       getLabelsPresence: deps?.getLabelsPresence,
     });
+
+    // PR182: Add source status to observe state
+    observeState.sourceStatus = sourceStatus;
+    observeState.sdkHealth = sdkHealth;
+    observeState.warnings.push(...sourceWarnings);
 
     // Get hardStop status
     const hardStopActive = deps?.getHardStopActive

@@ -41,6 +41,10 @@ export type TelemetryEventType =
   | "SPEC_ACK_PENDING_WARN" // Spec ACK pending (PR181a)
   | "SPEC_ACK_EXPIRED_WARN" // Spec ACK expired (PR181a)
   | "SPEC_ACK_REQUIRED_BOOTSTRAP_WARN" // Spec ACK required bootstrap (PR181a)
+  | "OBSERVE_SOURCE_STATUS" // Observation source status (PR182)
+  | "OBSERVE_WS_STATUS" // DeepBook WS status (PR182)
+  | "OBSERVE_HTTP_STATUS" // DeepBook HTTP status (PR182)
+  | "OBSERVE_CETUS_STATUS" // Cetus pool status (PR182)
   | "ERROR"; // Error occurred
 
 /**

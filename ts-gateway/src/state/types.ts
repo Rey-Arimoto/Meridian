@@ -72,6 +72,8 @@ export interface MeridianStateV1 {
     oracleStatus: string; // AVAILABLE | STALE | ERROR | UNKNOWN
     stopSignal: string; // STOP | NO_STOP | UNKNOWN
     specAckStatus?: string; // PR181a: SPEC_ACK_OK | SPEC_ACK_PENDING | etc (not a STOP reason)
+    sourceStatus?: string; // PR182: AVAILABLE | PARTIAL | ERROR (observation source)
+    sdkHealth?: string; // PR182: WS_ALIVE | WS_DEAD | HTTP_OK | etc (label-only)
     warnings: string[]; // label-only
   };
 

@@ -77,10 +77,15 @@ async function statusCommand(json: boolean = false): Promise<void> {
     console.log("  - oracleStatus: AVAILABLE | STALE | ERROR | UNKNOWN");
     console.log("  - stopSignal: STOP | NO_STOP | UNKNOWN");
     console.log("  - specAckStatus: SPEC_ACK_OK | SPEC_ACK_PENDING | etc (PR181a)");
+    console.log("  - sourceStatus: AVAILABLE | PARTIAL | ERROR (PR182)");
+    console.log("  - sdkHealth: WS_ALIVE | WS_DEAD | HTTP_OK | etc (PR182)");
     console.log("  - warnings: [...]");
     console.log("");
     console.log("Note: specAckStatus is visible but NOT a STOP reason.");
     console.log("Execution continues with activeSpec even if latest spec is not ACKed.");
+    console.log("");
+    console.log("PR182: sourceStatus shows real observation data availability.");
+    console.log("Priority: DeepBook WS → DeepBook HTTP → Cetus Pool");
   }
 
   console.log("");
