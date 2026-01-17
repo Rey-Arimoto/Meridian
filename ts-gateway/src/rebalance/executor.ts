@@ -42,6 +42,9 @@ import {
   RebalancePlan,
   RebalanceConstraints,
   TxDraft,
+  TxDraftStatus,
+  RouteProtocol,
+  SwapAction,
   TxExecutionResult,
   SimulationResult,
   PortfolioSnapshot,
@@ -84,6 +87,9 @@ export interface ExecutorOptions {
 
   // Additional notes for debugging
   notes?: string[];
+
+  // Slippage label (PR190/PR191: For traceability)
+  slippageLabel?: string;
 }
 
 /**
@@ -127,6 +133,84 @@ export function computeMinOutFloor(
 }
 
 /**
+ * PR191: Derive execution reason codes for TxDraft (label-only)
+ *
+ * @param args - Draft context
+ * @returns Array of reason code strings (label-only, no numerics)
+ *
+ * Constitutional: READ-ONLY, fixed rules, defensive (never throws)
+ */
+export function deriveExecutionReasonCodesV1(args: {
+  status: string;
+  intent?: string;
+  simulateOnly: boolean;
+  route: string;
+  minOut: string | null;
+  slippageLabel?: string;
+  gateStatus?: "PASS" | "BLOCK" | "ERROR";
+  policyStatus?: "ALLOW" | "SIM_ONLY" | "BLOCKED" | "ERROR";
+}): string[] {
+  const codes = new Set<string>();
+
+  try {
+    // 1) Draft basic status
+    if (args.status === "SKIPPED") {
+      codes.add("REASON_INTENT_NOOP");
+    } else if (args.status === "ERROR") {
+      codes.add("REASON_DRAFT_ERROR");
+    } else if (args.status === "DRAFT") {
+      codes.add("REASON_DRAFT_OK");
+    }
+
+    // 2) Simulate-only / execution mode
+    if (args.simulateOnly === true) {
+      codes.add("REASON_SIMULATE_ONLY");
+    } else {
+      codes.add("REASON_EXECUTION_ALLOWED");
+    }
+
+    // 3) Route
+    if (args.route === "CETUS") {
+      codes.add("REASON_ROUTE_CETUS_SELECTED");
+    } else if (args.route === "DEEPBOOK") {
+      codes.add("REASON_ROUTE_DEEPBOOK_SELECTED");
+    } else {
+      codes.add("REASON_ROUTE_UNKNOWN");
+    }
+
+    // 4) Slippage / MinOut
+    if (args.slippageLabel) {
+      codes.add(`REASON_SLIPPAGE_${args.slippageLabel}`);
+    }
+
+    if (args.minOut === null || args.minOut === undefined) {
+      codes.add("REASON_MINOUT_UNAVAILABLE");
+    } else if (args.minOut === "0") {
+      codes.add("REASON_MINOUT_ZERO");
+    } else {
+      codes.add("REASON_MINOUT_OK");
+    }
+
+    // 5) Gate / Policy (if provided)
+    if (args.gateStatus === "BLOCK") {
+      codes.add("REASON_GATE_BLOCKED");
+    }
+
+    if (args.policyStatus === "SIM_ONLY") {
+      codes.add("REASON_POLICY_SIM_ONLY");
+    } else if (args.policyStatus === "BLOCKED") {
+      codes.add("REASON_POLICY_BLOCKED");
+    } else if (args.policyStatus === "ALLOW") {
+      codes.add("REASON_POLICY_ALLOW");
+    }
+  } catch (error) {
+    // Defensive: Never throw, return what we have
+  }
+
+  return Array.from(codes);
+}
+
+/**
  * Build transaction draft from rebalance plan
  *
  * @param plan - Rebalance plan
@@ -154,11 +238,11 @@ export async function buildTxDraft(
   if (plan.intent === "NOOP") {
     notes.push("Intent is NOOP, skipping transaction");
 
-    return {
-      status: "SKIPPED",
+    const draft = {
+      status: "SKIPPED" as TxDraftStatus,
       simulateOnly: opts?.simulateOnly ?? true,
-      route: "UNKNOWN",
-      action: "NOOP",
+      route: "UNKNOWN" as RouteProtocol,
+      action: "NOOP" as SwapAction,
       amountIn: "0",
       minOut: null,
       slippageBps: constraints.slippageBps,
@@ -167,6 +251,18 @@ export async function buildTxDraft(
       notes,
       errors,
     };
+
+    // PR191: Add execution reason codes
+    const executionReasonCodes = deriveExecutionReasonCodesV1({
+      status: draft.status,
+      intent: plan.intent,
+      simulateOnly: draft.simulateOnly,
+      route: draft.route,
+      minOut: draft.minOut,
+      slippageLabel: opts?.slippageLabel,
+    });
+
+    return { ...draft, executionReasonCodes };
   }
 
   // Determine action and amountIn
@@ -188,11 +284,11 @@ export async function buildTxDraft(
     // Should not reach here, but defensive
     errors.push("Invalid intent (not INCREASE_WBTC or DECREASE_WBTC)");
 
-    return {
-      status: "ERROR",
+    const draft = {
+      status: "ERROR" as TxDraftStatus,
       simulateOnly: opts?.simulateOnly ?? true,
-      route: "UNKNOWN",
-      action: "NOOP",
+      route: "UNKNOWN" as RouteProtocol,
+      action: "NOOP" as SwapAction,
       amountIn: "0",
       minOut: null,
       slippageBps: constraints.slippageBps,
@@ -201,18 +297,30 @@ export async function buildTxDraft(
       notes,
       errors,
     };
+
+    // PR191: Add execution reason codes
+    const executionReasonCodes = deriveExecutionReasonCodesV1({
+      status: draft.status,
+      intent: plan.intent,
+      simulateOnly: draft.simulateOnly,
+      route: draft.route,
+      minOut: draft.minOut,
+      slippageLabel: opts?.slippageLabel,
+    });
+
+    return { ...draft, executionReasonCodes };
   }
 
   // Route (fixed to CETUS for now - future PR will add routing logic)
-  const route = "CETUS";
+  const route: RouteProtocol = "CETUS";
   notes.push(`Route: ${route} (fixed for PR152, routing logic in future PR)`);
 
   // minOut (not calculated yet - future PR will add price/slippage calculation)
   const minOut = null;
   notes.push("minOut not calculated (will be added in routing PR)");
 
-  return {
-    status: "DRAFT",
+  const draft = {
+    status: "DRAFT" as TxDraftStatus,
     simulateOnly: opts?.simulateOnly ?? true,
     route,
     action,
@@ -224,6 +332,18 @@ export async function buildTxDraft(
     notes,
     errors,
   };
+
+  // PR191: Add execution reason codes
+  const executionReasonCodes = deriveExecutionReasonCodesV1({
+    status: draft.status,
+    intent: plan.intent,
+    simulateOnly: draft.simulateOnly,
+    route: draft.route,
+    minOut: draft.minOut,
+    slippageLabel: opts?.slippageLabel,
+  });
+
+  return { ...draft, executionReasonCodes };
 }
 
 /**
@@ -397,11 +517,11 @@ export async function buildTxDraftWithGate(
     notes.push("Gate status is BLOCK, skipping transaction");
     notes.push(`Block reasons: ${gate.blockReasons.join(", ")}`);
 
-    return {
-      status: "SKIPPED",
+    const draft = {
+      status: "SKIPPED" as TxDraftStatus,
       simulateOnly: opts?.simulateOnly ?? true,
-      route: route.venue === "NONE" ? "UNKNOWN" : route.venue,
-      action: "NOOP",
+      route: (route.venue === "NONE" ? "UNKNOWN" : route.venue) as RouteProtocol,
+      action: "NOOP" as SwapAction,
       amountIn: "0",
       minOut: null,
       slippageBps: constraints.slippageBps,
@@ -410,16 +530,29 @@ export async function buildTxDraftWithGate(
       notes,
       errors: gate.blockReasons, // Block reasons as errors
     };
+
+    // PR191: Add execution reason codes (with gate info)
+    const executionReasonCodes = deriveExecutionReasonCodesV1({
+      status: draft.status,
+      intent: plan.intent,
+      simulateOnly: draft.simulateOnly,
+      route: draft.route,
+      minOut: draft.minOut,
+      slippageLabel: opts?.slippageLabel,
+      gateStatus: gate.status,
+    });
+
+    return { ...draft, executionReasonCodes };
   }
 
   if (gate.status === "ERROR") {
     errors.push("Gate returned ERROR status");
 
-    return {
-      status: "ERROR",
+    const draft = {
+      status: "ERROR" as TxDraftStatus,
       simulateOnly: opts?.simulateOnly ?? true,
-      route: "UNKNOWN",
-      action: "NOOP",
+      route: "UNKNOWN" as RouteProtocol,
+      action: "NOOP" as SwapAction,
       amountIn: "0",
       minOut: null,
       slippageBps: constraints.slippageBps,
@@ -428,6 +561,19 @@ export async function buildTxDraftWithGate(
       notes,
       errors,
     };
+
+    // PR191: Add execution reason codes (with gate error)
+    const executionReasonCodes = deriveExecutionReasonCodesV1({
+      status: draft.status,
+      intent: plan.intent,
+      simulateOnly: draft.simulateOnly,
+      route: draft.route,
+      minOut: draft.minOut,
+      slippageLabel: opts?.slippageLabel,
+      gateStatus: gate.status,
+    });
+
+    return { ...draft, executionReasonCodes };
   }
 
   // Gate PASS → build executable draft
@@ -435,11 +581,11 @@ export async function buildTxDraftWithGate(
   if (plan.intent === "NOOP") {
     notes.push("Intent is NOOP (defensive check)");
 
-    return {
-      status: "SKIPPED",
+    const draft = {
+      status: "SKIPPED" as TxDraftStatus,
       simulateOnly: opts?.simulateOnly ?? true,
-      route: route.venue === "NONE" ? "UNKNOWN" : route.venue,
-      action: "NOOP",
+      route: (route.venue === "NONE" ? "UNKNOWN" : route.venue) as RouteProtocol,
+      action: "NOOP" as SwapAction,
       amountIn: "0",
       minOut: null,
       slippageBps: constraints.slippageBps,
@@ -448,6 +594,19 @@ export async function buildTxDraftWithGate(
       notes,
       errors,
     };
+
+    // PR191: Add execution reason codes
+    const executionReasonCodes = deriveExecutionReasonCodesV1({
+      status: draft.status,
+      intent: plan.intent,
+      simulateOnly: draft.simulateOnly,
+      route: draft.route,
+      minOut: draft.minOut,
+      slippageLabel: opts?.slippageLabel,
+      gateStatus: gate.status,
+    });
+
+    return { ...draft, executionReasonCodes };
   }
 
   // Determine action and amountIn
@@ -465,11 +624,11 @@ export async function buildTxDraftWithGate(
   } else {
     errors.push("Invalid intent (not INCREASE_WBTC or DECREASE_WBTC)");
 
-    return {
-      status: "ERROR",
+    const draft = {
+      status: "ERROR" as TxDraftStatus,
       simulateOnly: opts?.simulateOnly ?? true,
-      route: "UNKNOWN",
-      action: "NOOP",
+      route: "UNKNOWN" as RouteProtocol,
+      action: "NOOP" as SwapAction,
       amountIn: "0",
       minOut: null,
       slippageBps: constraints.slippageBps,
@@ -478,10 +637,23 @@ export async function buildTxDraftWithGate(
       notes,
       errors,
     };
+
+    // PR191: Add execution reason codes
+    const executionReasonCodes = deriveExecutionReasonCodesV1({
+      status: draft.status,
+      intent: plan.intent,
+      simulateOnly: draft.simulateOnly,
+      route: draft.route,
+      minOut: draft.minOut,
+      slippageLabel: opts?.slippageLabel,
+      gateStatus: gate.status,
+    });
+
+    return { ...draft, executionReasonCodes };
   }
 
   // Use route.venue
-  const routeVenue = route.venue === "NONE" ? "UNKNOWN" : route.venue;
+  const routeVenue = (route.venue === "NONE" ? "UNKNOWN" : route.venue) as RouteProtocol;
   notes.push(`Route: ${routeVenue}`);
 
   // Add gate warnings
@@ -493,8 +665,8 @@ export async function buildTxDraftWithGate(
   const minOut = null;
   notes.push("minOut not calculated (will be added in routing PR)");
 
-  return {
-    status: "EXECUTABLE_DRAFT", // Gate passed
+  const draft = {
+    status: "EXECUTABLE_DRAFT" as TxDraftStatus, // Gate passed
     simulateOnly: opts?.simulateOnly ?? true,
     route: routeVenue,
     action,
@@ -506,6 +678,19 @@ export async function buildTxDraftWithGate(
     notes,
     errors,
   };
+
+  // PR191: Add execution reason codes
+  const executionReasonCodes = deriveExecutionReasonCodesV1({
+    status: draft.status,
+    intent: plan.intent,
+    simulateOnly: draft.simulateOnly,
+    route: draft.route,
+    minOut: draft.minOut,
+    slippageLabel: opts?.slippageLabel,
+    gateStatus: gate.status,
+  });
+
+  return { ...draft, executionReasonCodes };
 }
 
 /**

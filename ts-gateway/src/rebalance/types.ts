@@ -199,6 +199,9 @@ export interface TxDraft {
 
   // Errors (if any)
   errors: string[];
+
+  // Execution reason codes (PR191: Label-only self-explanation)
+  executionReasonCodes?: string[];
 }
 
 /**
