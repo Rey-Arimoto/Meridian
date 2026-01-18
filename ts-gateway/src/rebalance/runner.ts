@@ -1021,6 +1021,18 @@ export async function runChunkedExecutionV1(
       // Step 6: Execute transaction
       let executionResult: ExecutionResultSimple;
       try {
+        // PR195: Emit EXECUTE_ATTEMPT telemetry (before executeTx)
+        await appendEventV1(
+          createEventV1("EXECUTE_ATTEMPT", "INFO", {
+            run_id: runPlan.runId,
+            chunk_id: chunk.chunkId,
+            route: txDraft.route || "UNKNOWN",
+            action: txDraft.action || "UNKNOWN",
+            simulate_only: txDraft.simulateOnly ? "TRUE" : "FALSE",
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
         executionResult = await deps.executeTx({ txDraft, policy: policyResult });
 
         // PR194: Emit EXECUTE_RESULT telemetry (success path)
