@@ -137,6 +137,69 @@ export function summarizeReasonCodesV1(
 }
 
 /**
+ * PR193: Summarize run-level reason codes for RUN_STOP telemetry (label-only)
+ *
+ * @param codes - Array of reason code strings from last chunk's executionReasonCodes
+ * @param maxCodes - Maximum number of codes to include (default: 8)
+ * @returns Summary object with status and joined string
+ *
+ * Purpose:
+ *   Create deterministic summary of run-level reason codes for RUN_STOP telemetry.
+ *   Uses last non-empty executionReasonCodes as source of truth for run outcome.
+ *
+ * Rules:
+ *   - Same as summarizeReasonCodesV1 but for run-level
+ *   - Empty/undefined → {status: "EMPTY", joined: ""}
+ *   - Filter to strings (defensive)
+ *   - Deduplicate via Set
+ *   - Sort alphabetically (deterministic)
+ *   - Take first maxCodes items
+ *   - If truncated, append "REASONS_TRUNCATED"
+ *   - Join with "|" separator
+ *
+ * Constitutional: READ-ONLY, defensive (never throws)
+ */
+export function summarizeRunReasonCodesV1(
+  codes?: unknown[],
+  maxCodes = 8
+): { status: "PRESENT" | "EMPTY"; joined: string } {
+  try {
+    // Empty/undefined → EMPTY
+    if (!Array.isArray(codes)) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Filter to strings only (defensive)
+    const filtered = codes.filter((c) => typeof c === "string") as string[];
+    if (filtered.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Deduplicate via Set
+    const unique = Array.from(new Set(filtered));
+
+    // Sort alphabetically (deterministic)
+    unique.sort();
+
+    // Take first maxCodes items
+    const sliced = unique.slice(0, maxCodes);
+
+    // If truncated, append REASONS_TRUNCATED
+    if (unique.length > maxCodes) {
+      sliced.push("REASONS_TRUNCATED");
+    }
+
+    // Join with "|" separator
+    const joined = sliced.join("|");
+
+    return { status: "PRESENT", joined };
+  } catch (error) {
+    // Defensive: Never throw, return EMPTY
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
  * Gate result (simplified for runner)
  */
 export interface GateResultSimple {
@@ -324,6 +387,9 @@ export async function runChunkedExecutionV1(
 
   // PR189: Track stop attribution
   let stopCause: "GATE" | "POLICY" | "PHASE" | "TIMEOUT" | "NONE" = "NONE";
+
+  // PR193: Track last non-empty reason codes for RUN_STOP summary
+  let lastChunkReasonCodes: string[] | undefined = undefined;
 
   try {
     // Check if run plan has no chunks
@@ -1008,6 +1074,13 @@ export async function runChunkedExecutionV1(
         const reasonCodesSummary = summarizeReasonCodesV1(
           txDraft.executionReasonCodes
         );
+        // PR193: Track last non-empty reason codes for RUN_STOP
+        if (
+          Array.isArray(txDraft.executionReasonCodes) &&
+          txDraft.executionReasonCodes.length > 0
+        ) {
+          lastChunkReasonCodes = txDraft.executionReasonCodes;
+        }
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "EXECUTED",
@@ -1043,6 +1116,13 @@ export async function runChunkedExecutionV1(
         const reasonCodesSummary2 = summarizeReasonCodesV1(
           txDraft.executionReasonCodes
         );
+        // PR193: Track last non-empty reason codes for RUN_STOP
+        if (
+          Array.isArray(txDraft.executionReasonCodes) &&
+          txDraft.executionReasonCodes.length > 0
+        ) {
+          lastChunkReasonCodes = txDraft.executionReasonCodes;
+        }
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
@@ -1077,6 +1157,13 @@ export async function runChunkedExecutionV1(
         const reasonCodesSummary3 = summarizeReasonCodesV1(
           txDraft.executionReasonCodes
         );
+        // PR193: Track last non-empty reason codes for RUN_STOP
+        if (
+          Array.isArray(txDraft.executionReasonCodes) &&
+          txDraft.executionReasonCodes.length > 0
+        ) {
+          lastChunkReasonCodes = txDraft.executionReasonCodes;
+        }
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
@@ -1112,6 +1199,13 @@ export async function runChunkedExecutionV1(
         const reasonCodesSummary4 = summarizeReasonCodesV1(
           txDraft.executionReasonCodes
         );
+        // PR193: Track last non-empty reason codes for RUN_STOP
+        if (
+          Array.isArray(txDraft.executionReasonCodes) &&
+          txDraft.executionReasonCodes.length > 0
+        ) {
+          lastChunkReasonCodes = txDraft.executionReasonCodes;
+        }
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "ERROR", {
             chunk_status: "ERROR",
@@ -1159,7 +1253,8 @@ export async function runChunkedExecutionV1(
       finishedAtMs: getNowMs(),
     };
   } finally {
-    // PR188c/PR188d/PR189: Emit RUN_STOP lifecycle event (always runs)
+    // PR188c/PR188d/PR189/PR193: Emit RUN_STOP lifecycle event (always runs)
+    const runReasonSummary = summarizeRunReasonCodesV1(lastChunkReasonCodes);
     await appendEventV1(
       createEventV1("RUN_STOP", "INFO", {
         run_id: runPlan.runId,
@@ -1169,6 +1264,8 @@ export async function runChunkedExecutionV1(
         executed_chunks: `${executedCount}`, // PR188d: Use counter
         simulated_chunks: `${simulatedCount}`, // PR188d: New counter
         chunk_results: `${chunkResultCount}`, // PR188d: New counter
+        run_reason_codes_status: runReasonSummary.status, // PR193
+        run_reason_codes: runReasonSummary.joined, // PR193
       })
     ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }
