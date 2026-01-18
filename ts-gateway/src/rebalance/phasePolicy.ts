@@ -300,6 +300,28 @@ export function evaluatePhasePolicyV1(inputs: PhasePolicyInputsV1): PhasePolicyD
       }
     }
 
+    // PR212d: Check timeout STOP condition (takes precedence)
+    if (timeoutStatus === "TIMEOUT_EXCEEDED") {
+      return {
+        nextPhase: currentPhase,
+        changed,
+        transitionCodes,
+        shouldStop: true,
+        stopCause: "TIMEOUT",
+      };
+    }
+
+    // PR212d: Check blocked streak STOP condition
+    if (blockedStreakStatus === "STREAK_EXCEEDED") {
+      return {
+        nextPhase: currentPhase,
+        changed,
+        transitionCodes,
+        shouldStop: true,
+        stopCause: "GATE",
+      };
+    }
+
     // Evaluate STOP policy (reuse existing logic)
     const stopDecision = evaluatePhaseStopPolicyV1(
       prevPhase as PhaseLabel,

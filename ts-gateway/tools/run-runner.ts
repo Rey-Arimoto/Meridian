@@ -29,7 +29,33 @@ async function main() {
   // - LOCKED_ENV: (no env var) + getSpecLockStatus returns "ACTIVE_OK"
   // - LOCKED_SPEC: export MERIDIAN_LIVE_UNLOCK=TRUE + getSpecLockStatus returns "LOCKED_EXPIRED"
 
+  // PR212d: Harness forced timeout for parity proof
+  // When MERIDIAN_HARNESS_FORCE_TIMEOUT=TRUE, force timeoutStatus to TIMEOUT_EXCEEDED
+  const forceTimeout = process.env.MERIDIAN_HARNESS_FORCE_TIMEOUT === "TRUE";
+  const TIMEOUT_OFFSET_MS = 61_000; // 61 seconds (exceeds MAX_RUN_DURATION_MS = 60s)
+
+  // getNowMs: Allow a few calls before forcing timeout
+  // This lets us pass the initial chunk timeout check and reach PHASE_POLICY_EVAL
+  // Call sequence: 1=startedAtMs, 2=first timeout check, 3=PHASE_POLICY_EVAL
+  let callCount = 0;
+  let startTime: number | undefined;
+  const CALLS_BEFORE_TIMEOUT = 2; // Trigger timeout on call 3 (PHASE_POLICY_EVAL)
+
+  const getNowMsForced = () => {
+    callCount++;
+    if (startTime === undefined) {
+      startTime = Date.now();
+    }
+    if (callCount <= CALLS_BEFORE_TIMEOUT) {
+      return startTime;
+    }
+    return startTime + TIMEOUT_OFFSET_MS;
+  };
+
   const res = await runChunkedExecutionV1(runPlan as any, {
+    // PR212d: Provide getNowMs to control timeout in harness
+    getNowMs: forceTimeout ? getNowMsForced : undefined, // Use default Date.now() when not forcing
+
     // ---- 必須 deps ----
     getPortfolioSnapshot: async () =>
       ({
