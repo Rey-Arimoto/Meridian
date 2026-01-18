@@ -1194,7 +1194,12 @@ export async function runChunkedExecutionV1(
 
       let executionResult: ExecutionResultSimple;
       try {
-        // PR195/PR196: Emit EXECUTE_ATTEMPT telemetry (before executeTx)
+        // PR195/PR196/PR202: Emit EXECUTE_ATTEMPT telemetry (before executeTx)
+        // PR202: Summarize TxDraft reason codes for telemetry
+        const txReasonSummaryAttempt = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
+
         await appendEventV1(
           createEventV1("EXECUTE_ATTEMPT", "INFO", {
             run_id: runPlan.runId,
@@ -1204,6 +1209,8 @@ export async function runChunkedExecutionV1(
             simulate_only: txDraft.simulateOnly ? "TRUE" : "FALSE",
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
+            tx_reason_codes_status: txReasonSummaryAttempt.status, // PR202
+            tx_reason_codes: txReasonSummaryAttempt.joined, // PR202
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1214,9 +1221,14 @@ export async function runChunkedExecutionV1(
           executionMode, // PR197: Pass execution mode to executor
         });
 
-        // PR194/PR196: Emit EXECUTE_RESULT telemetry (success path)
+        // PR194/PR196/PR202: Emit EXECUTE_RESULT telemetry (success path)
         const execReasonsSummary = summarizeReasonCodesV1(executionResult.reasons);
         const txDigestStatus = executionResult.txDigest ? "PRESENT" : "EMPTY";
+        // PR202: Summarize TxDraft reason codes for telemetry
+        const txReasonSummaryResult = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
+
         await appendEventV1(
           createEventV1("EXECUTE_RESULT", "INFO", {
             run_id: runPlan.runId,
@@ -1227,13 +1239,20 @@ export async function runChunkedExecutionV1(
             tx_digest_status: txDigestStatus,
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
+            tx_reason_codes_status: txReasonSummaryResult.status, // PR202
+            tx_reason_codes: txReasonSummaryResult.joined, // PR202
             stop_cause: stopCause,
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       } catch (error) {
-        // PR194/PR196: Emit EXECUTE_RESULT telemetry (exception path)
+        // PR194/PR196/PR202: Emit EXECUTE_RESULT telemetry (exception path)
         const execReasonsSummary = summarizeReasonCodesV1(["EXECUTE_EXCEPTION"]);
+        // PR202: Summarize TxDraft reason codes for telemetry
+        const txReasonSummaryError = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
+
         await appendEventV1(
           createEventV1("EXECUTE_RESULT", "ERROR", {
             run_id: runPlan.runId,
@@ -1244,6 +1263,8 @@ export async function runChunkedExecutionV1(
             tx_digest_status: "EMPTY",
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
+            tx_reason_codes_status: txReasonSummaryError.status, // PR202
+            tx_reason_codes: txReasonSummaryError.joined, // PR202
             stop_cause: stopCause,
             phase: currentPhase,
           })
