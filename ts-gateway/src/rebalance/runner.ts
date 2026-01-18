@@ -33,6 +33,7 @@ import {
   TxDraft,
   ResumeState,
   StopReason,
+  ExecutionMode,
 } from "./types";
 import { CHUNKING_PARAMS } from "./chunking";
 import {
@@ -368,12 +369,16 @@ export async function runChunkedExecutionV1(
   const reasons: string[] = [];
   const chunkResults: ChunkResult[] = [];
 
-  // PR188c: Emit RUN_START lifecycle event
+  // PR196: Execution mode (default: SIM_ONLY for safety)
+  const executionMode: ExecutionMode = runPlan.executionMode ?? "SIM_ONLY";
+
+  // PR188c/PR196: Emit RUN_START lifecycle event
   await appendEventV1(
     createEventV1("RUN_START", "INFO", {
       run_id: runPlan.runId,
       template_id: runPlan.templateId,
       total_chunks: `${runPlan.chunks.length}`,
+      execution_mode: executionMode, // PR196
     })
   ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1019,9 +1024,42 @@ export async function runChunkedExecutionV1(
       }
 
       // Step 6: Execute transaction
+      // PR196: LIVE safety guard - STOP if LIVE mode without ALLOW policy
+      if (executionMode === "LIVE" && policyStatus !== "ALLOW") {
+        chunkResults.push({
+          chunkId: chunk.chunkId,
+          status: "BLOCKED",
+          reasons: ["REASON_LIVE_MODE_POLICY_NOT_ALLOW"],
+          txDraft,
+          createdAtMs: getNowMs(),
+        });
+
+        reasons.push("REASON_LIVE_MODE_BLOCKED_STOP");
+        stopCause = "POLICY"; // PR189: Policy attribution
+        finalStatus = "STOPPED";
+
+        const nowMs = getNowMs();
+        return {
+          runId: runPlan.runId,
+          status: "STOPPED",
+          reasons,
+          chunkResults,
+          startedAtMs,
+          finishedAtMs: nowMs,
+          resumeState: createResumeState(
+            "STOP_POLICY_DENY",
+            nowMs,
+            runPlan,
+            currentPhase,
+            selectedRoute,
+            ["WARN_LIVE_MODE_POLICY_NOT_ALLOW"]
+          ),
+        };
+      }
+
       let executionResult: ExecutionResultSimple;
       try {
-        // PR195: Emit EXECUTE_ATTEMPT telemetry (before executeTx)
+        // PR195/PR196: Emit EXECUTE_ATTEMPT telemetry (before executeTx)
         await appendEventV1(
           createEventV1("EXECUTE_ATTEMPT", "INFO", {
             run_id: runPlan.runId,
@@ -1029,13 +1067,14 @@ export async function runChunkedExecutionV1(
             route: txDraft.route || "UNKNOWN",
             action: txDraft.action || "UNKNOWN",
             simulate_only: txDraft.simulateOnly ? "TRUE" : "FALSE",
+            execution_mode: executionMode, // PR196
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
         executionResult = await deps.executeTx({ txDraft, policy: policyResult });
 
-        // PR194: Emit EXECUTE_RESULT telemetry (success path)
+        // PR194/PR196: Emit EXECUTE_RESULT telemetry (success path)
         const execReasonsSummary = summarizeReasonCodesV1(executionResult.reasons);
         const txDigestStatus = executionResult.txDigest ? "PRESENT" : "EMPTY";
         await appendEventV1(
@@ -1046,12 +1085,13 @@ export async function runChunkedExecutionV1(
             exec_reasons_status: execReasonsSummary.status,
             exec_reasons: execReasonsSummary.joined,
             tx_digest_status: txDigestStatus,
+            execution_mode: executionMode, // PR196
             stop_cause: stopCause,
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       } catch (error) {
-        // PR194: Emit EXECUTE_RESULT telemetry (exception path)
+        // PR194/PR196: Emit EXECUTE_RESULT telemetry (exception path)
         const execReasonsSummary = summarizeReasonCodesV1(["EXECUTE_EXCEPTION"]);
         await appendEventV1(
           createEventV1("EXECUTE_RESULT", "ERROR", {
@@ -1061,6 +1101,7 @@ export async function runChunkedExecutionV1(
             exec_reasons_status: execReasonsSummary.status,
             exec_reasons: execReasonsSummary.joined,
             tx_digest_status: "EMPTY",
+            execution_mode: executionMode, // PR196
             stop_cause: stopCause,
             phase: currentPhase,
           })
@@ -1134,6 +1175,7 @@ export async function runChunkedExecutionV1(
             minout_status: minOutStatus, // PR190
             tx_reason_codes_status: reasonCodesSummary.status, // PR192
             tx_reason_codes: reasonCodesSummary.joined, // PR192
+            execution_mode: executionMode, // PR196
             venue: txDraft.route,
             phase: currentPhase,
           })
@@ -1176,6 +1218,7 @@ export async function runChunkedExecutionV1(
             minout_status: minOutStatus, // PR190
             tx_reason_codes_status: reasonCodesSummary2.status, // PR192
             tx_reason_codes: reasonCodesSummary2.joined, // PR192
+            execution_mode: executionMode, // PR196
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1217,6 +1260,7 @@ export async function runChunkedExecutionV1(
             minout_status: minOutStatus, // PR190
             tx_reason_codes_status: reasonCodesSummary3.status, // PR192
             tx_reason_codes: reasonCodesSummary3.joined, // PR192
+            execution_mode: executionMode, // PR196
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1259,6 +1303,7 @@ export async function runChunkedExecutionV1(
             minout_status: minOutStatus, // PR190
             tx_reason_codes_status: reasonCodesSummary4.status, // PR192
             tx_reason_codes: reasonCodesSummary4.joined, // PR192
+            execution_mode: executionMode, // PR196
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1296,7 +1341,7 @@ export async function runChunkedExecutionV1(
       finishedAtMs: getNowMs(),
     };
   } finally {
-    // PR188c/PR188d/PR189/PR193: Emit RUN_STOP lifecycle event (always runs)
+    // PR188c/PR188d/PR189/PR193/PR196: Emit RUN_STOP lifecycle event (always runs)
     const runReasonSummary = summarizeRunReasonCodesV1(lastChunkReasonCodes);
     await appendEventV1(
       createEventV1("RUN_STOP", "INFO", {
@@ -1309,6 +1354,7 @@ export async function runChunkedExecutionV1(
         chunk_results: `${chunkResultCount}`, // PR188d: New counter
         run_reason_codes_status: runReasonSummary.status, // PR193
         run_reason_codes: runReasonSummary.joined, // PR193
+        execution_mode: executionMode, // PR196
       })
     ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }

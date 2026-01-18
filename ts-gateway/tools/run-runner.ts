@@ -16,6 +16,10 @@ async function main() {
     getNowMs: () => Date.now(),
   });
 
+  // PR196: Set execution mode (default: SIM_ONLY for safety)
+  // Available modes: "SIM_ONLY" | "DRY_RUN" | "LIVE"
+  (runPlan as any).executionMode = "SIM_ONLY";
+
   const res = await runChunkedExecutionV1(runPlan as any, {
     // ---- 必須 deps ----
     getPortfolioSnapshot: async () =>

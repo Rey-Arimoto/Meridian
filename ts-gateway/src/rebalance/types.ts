@@ -264,6 +264,14 @@ export type RunStatus =
   | "ERROR";
 
 /**
+ * PR196: Execution mode (structural safety for unintended LIVE execution)
+ */
+export type ExecutionMode =
+  | "SIM_ONLY" // Simulation only (never broadcast)
+  | "DRY_RUN" // Dry-run (construct tx but never broadcast)
+  | "LIVE"; // Live execution (broadcast allowed if unlocked)
+
+/**
  * Chunk plan (single chunk in a run)
  */
 export interface ChunkPlan {
@@ -340,6 +348,9 @@ export interface RunPlan {
 
   // Reasons (label-only)
   reasons: string[];
+
+  // PR196: Execution mode (default: SIM_ONLY)
+  executionMode?: ExecutionMode;
 }
 
 /**
