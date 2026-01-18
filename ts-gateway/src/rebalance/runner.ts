@@ -1022,7 +1022,38 @@ export async function runChunkedExecutionV1(
       let executionResult: ExecutionResultSimple;
       try {
         executionResult = await deps.executeTx({ txDraft, policy: policyResult });
+
+        // PR194: Emit EXECUTE_RESULT telemetry (success path)
+        const execReasonsSummary = summarizeReasonCodesV1(executionResult.reasons);
+        const txDigestStatus = executionResult.txDigest ? "PRESENT" : "EMPTY";
+        await appendEventV1(
+          createEventV1("EXECUTE_RESULT", "INFO", {
+            run_id: runPlan.runId,
+            chunk_id: chunk.chunkId,
+            exec_status: executionResult.status,
+            exec_reasons_status: execReasonsSummary.status,
+            exec_reasons: execReasonsSummary.joined,
+            tx_digest_status: txDigestStatus,
+            stop_cause: stopCause,
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
       } catch (error) {
+        // PR194: Emit EXECUTE_RESULT telemetry (exception path)
+        const execReasonsSummary = summarizeReasonCodesV1(["EXECUTE_EXCEPTION"]);
+        await appendEventV1(
+          createEventV1("EXECUTE_RESULT", "ERROR", {
+            run_id: runPlan.runId,
+            chunk_id: chunk.chunkId,
+            exec_status: "ERROR",
+            exec_reasons_status: execReasonsSummary.status,
+            exec_reasons: execReasonsSummary.joined,
+            tx_digest_status: "EMPTY",
+            stop_cause: stopCause,
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
         // Defensive: If execution fails, STOP
         chunkResults.push({
           chunkId: chunk.chunkId,

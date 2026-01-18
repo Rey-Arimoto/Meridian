@@ -22,6 +22,7 @@ export type TelemetryEventType =
   | "RUN_STOP" // TWAP run stopped
   | "CHUNK_START" // Chunk execution started
   | "CHUNK_RESULT" // Chunk execution completed
+  | "EXECUTE_RESULT" // Execute outcome (PR194)
   | "POLICY_BLOCK" // Policy blocked execution
   | "GATE_BLOCK" // Gate blocked execution
   | "ROUTE_SELECTED" // Route selected for chunk
