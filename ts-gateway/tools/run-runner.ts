@@ -97,42 +97,49 @@ async function main() {
         checks: [],
         notes: ["NOTE_HARNESS_DUMMY_DRAFT"],
         errors: [],
-        // PR192: Add execution reason codes for telemetry testing
+        // PR192/PR203: Add execution reason codes for telemetry testing
+        // PR203: Include normalized TX_REASON_* taxonomy with legacy REASON_*
         executionReasonCodes: [
+          "TX_REASON_DRAFT_OK",
           "REASON_DRAFT_OK",
+          "TX_REASON_SIMULATE_ONLY",
           "REASON_SIMULATE_ONLY",
+          "TX_REASON_ROUTE_CETUS_SELECTED",
           "REASON_ROUTE_CETUS_SELECTED",
+          "TX_REASON_SLIPPAGE_ELEVATED",
           "REASON_SLIPPAGE_ELEVATED",
-          "REASON_SLIPPAGE_SLIPPAGE_ELEVATED",
+          "REASON_SLIPPAGE_SLIPPAGE_ELEVATED", // legacy duplicated form
+          "TX_REASON_MINOUT_ZERO",
           "REASON_MINOUT_ZERO",
         ],
       } as any),
 
-    // ---- Execute: Mode-aware (PR197/PR198) ----
+    // ---- Execute: Mode-aware (PR197/PR198/PR203) ----
     executeTx: async (args: any) => {
       // PR197: Respect executionMode
+      // PR203: Add EXEC_REASON_* taxonomy (legacy REASON_* preserved)
       const mode = args.executionMode || "SIM_ONLY";
       if (mode === "SIM_ONLY") {
         return {
           status: "SIMULATED",
-          reasons: ["REASON_EXEC_SIM_ONLY"],
+          reasons: ["EXEC_REASON_SIM_ONLY", "REASON_EXEC_SIM_ONLY"],
         } as any;
       } else if (mode === "DRY_RUN") {
         return {
           status: "DRY_RUN",
-          reasons: ["REASON_EXEC_DRY_RUN"],
+          reasons: ["EXEC_REASON_DRY_RUN", "REASON_EXEC_DRY_RUN"],
         } as any;
       } else if (mode === "LIVE") {
         // PR198: Structural block - LIVE execution impossible in v1.4
         // This guarantees no broadcast can occur
         return {
           status: "EXECUTION_DISABLED",
-          reasons: ["REASON_EXEC_LIVE_BLOCKED_V1_4"],
+          reasons: ["EXEC_REASON_LIVE_BLOCKED_V1_4", "REASON_EXEC_LIVE_BLOCKED_V1_4"],
         } as any;
       }
       return {
         status: "ERROR",
-        reasons: ["REASON_EXEC_UNKNOWN_MODE"],
+        reasons: ["EXEC_REASON_UNKNOWN_MODE", "REASON_EXEC_UNKNOWN_MODE"],
       } as any;
     },
 

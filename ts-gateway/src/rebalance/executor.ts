@@ -200,38 +200,51 @@ export function deriveExecutionReasonCodesV1(args: {
 
   try {
     // 1) Draft basic status
+    // PR203: Add TX_REASON_* taxonomy (legacy REASON_* preserved)
     if (args.draft.status === "SKIPPED") {
-      codes.add("REASON_INTENT_NOOP");
+      codes.add("TX_REASON_INTENT_NOOP");
+      codes.add("REASON_INTENT_NOOP"); // legacy
     } else if (args.draft.status === "ERROR") {
-      codes.add("REASON_DRAFT_ERROR");
+      codes.add("TX_REASON_DRAFT_ERROR");
+      codes.add("REASON_DRAFT_ERROR"); // legacy
     } else if (args.draft.status === "DRAFT") {
-      codes.add("REASON_DRAFT_OK");
+      codes.add("TX_REASON_DRAFT_OK");
+      codes.add("REASON_DRAFT_OK"); // legacy
     }
 
     // 2) Simulate-only / execution mode
     if (args.draft.simulateOnly === true) {
-      codes.add("REASON_SIMULATE_ONLY");
+      codes.add("TX_REASON_SIMULATE_ONLY");
+      codes.add("REASON_SIMULATE_ONLY"); // legacy
     } else {
-      codes.add("REASON_EXECUTION_ALLOWED");
+      codes.add("TX_REASON_EXECUTION_ALLOWED");
+      codes.add("REASON_EXECUTION_ALLOWED"); // legacy
     }
 
     // 3) Route
     if (args.draft.route === "CETUS") {
-      codes.add("REASON_ROUTE_CETUS_SELECTED");
+      codes.add("TX_REASON_ROUTE_CETUS_SELECTED");
+      codes.add("REASON_ROUTE_CETUS_SELECTED"); // legacy
     } else if (args.draft.route === "DEEPBOOK") {
-      codes.add("REASON_ROUTE_DEEPBOOK_SELECTED");
+      codes.add("TX_REASON_ROUTE_DEEPBOOK_SELECTED");
+      codes.add("REASON_ROUTE_DEEPBOOK_SELECTED"); // legacy
     } else {
-      codes.add("REASON_ROUTE_UNKNOWN");
+      codes.add("TX_REASON_ROUTE_UNKNOWN");
+      codes.add("REASON_ROUTE_UNKNOWN"); // legacy
     }
 
     // 4) Slippage / MinOut
     // PR191e: slippageLabel source of truth is draft.slippageLabel only
     // PR191f/PR191f': Normalized slippage reason codes with forced legacy duplicated form
+    // PR203: Add TX_REASON_* taxonomy
     const normalizedSuffix = normalizeSlippageLabelSuffixV1(
       args.draft.slippageLabel
     );
 
-    // NEW: Normalized code (e.g., "REASON_SLIPPAGE_ELEVATED")
+    // PR203: TX_REASON_* taxonomy
+    codes.add(`TX_REASON_SLIPPAGE_${normalizedSuffix}`);
+
+    // LEGACY: Normalized code (e.g., "REASON_SLIPPAGE_ELEVATED")
     codes.add(`REASON_SLIPPAGE_${normalizedSuffix}`);
 
     // LEGACY: Forced duplicated form for backward compatibility
@@ -243,24 +256,32 @@ export function deriveExecutionReasonCodesV1(args: {
     }
 
     if (args.draft.minOut === null || args.draft.minOut === undefined) {
-      codes.add("REASON_MINOUT_UNAVAILABLE");
+      codes.add("TX_REASON_MINOUT_UNAVAILABLE");
+      codes.add("REASON_MINOUT_UNAVAILABLE"); // legacy
     } else if (args.draft.minOut === "0") {
-      codes.add("REASON_MINOUT_ZERO");
+      codes.add("TX_REASON_MINOUT_ZERO");
+      codes.add("REASON_MINOUT_ZERO"); // legacy
     } else {
-      codes.add("REASON_MINOUT_OK");
+      codes.add("TX_REASON_MINOUT_OK");
+      codes.add("REASON_MINOUT_OK"); // legacy
     }
 
     // 5) Gate / Policy (if provided)
+    // PR203: Add TX_REASON_* taxonomy
     if (args.gateStatus === "BLOCK") {
-      codes.add("REASON_GATE_BLOCKED");
+      codes.add("TX_REASON_GATE_BLOCKED");
+      codes.add("REASON_GATE_BLOCKED"); // legacy
     }
 
     if (args.policyStatus === "SIM_ONLY") {
-      codes.add("REASON_POLICY_SIM_ONLY");
+      codes.add("TX_REASON_POLICY_SIM_ONLY");
+      codes.add("REASON_POLICY_SIM_ONLY"); // legacy
     } else if (args.policyStatus === "BLOCKED") {
-      codes.add("REASON_POLICY_BLOCKED");
+      codes.add("TX_REASON_POLICY_BLOCKED");
+      codes.add("REASON_POLICY_BLOCKED"); // legacy
     } else if (args.policyStatus === "ALLOW") {
-      codes.add("REASON_POLICY_ALLOW");
+      codes.add("TX_REASON_POLICY_ALLOW");
+      codes.add("REASON_POLICY_ALLOW"); // legacy
     }
   } catch (error) {
     // Defensive: Never throw, return what we have

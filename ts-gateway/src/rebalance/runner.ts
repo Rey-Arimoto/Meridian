@@ -403,6 +403,18 @@ const LIVE_BLOCK_UNKNOWN_REASON = "REASON_LIVE_UNLOCK_LOCKED_UNKNOWN";
 const LIVE_BLOCK_POLICY_REASON = "REASON_LIVE_POLICY_NOT_ALLOW";
 
 /**
+ * PR203: RUN_REASON_* taxonomy constants for run-level stop causes
+ * Normalized taxonomy with legacy REASON_* preserved for backward compatibility
+ */
+const RUN_LIVE_BLOCK_STOP_REASON = "RUN_REASON_LIVE_MODE_BLOCKED_STOP";
+const RUN_LIVE_BLOCK_ENV_REASON = "RUN_REASON_LIVE_UNLOCK_LOCKED_ENV";
+const RUN_LIVE_BLOCK_SPEC_REASON = "RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC";
+const RUN_LIVE_BLOCK_SPEC_EXPIRED_REASON = "RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_EXPIRED";
+const RUN_LIVE_BLOCK_SPEC_PENDING_REASON = "RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK";
+const RUN_LIVE_BLOCK_UNKNOWN_REASON = "RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN";
+const RUN_LIVE_BLOCK_POLICY_REASON = "RUN_REASON_LIVE_POLICY_NOT_ALLOW";
+
+/**
  * Run chunked execution (TWAP-lite v1)
  *
  * @param runPlan - Run plan from buildChunkPlansV1
@@ -1145,28 +1157,36 @@ export async function runChunkedExecutionV1(
         });
 
         reasons.push("REASON_LIVE_MODE_BLOCKED_STOP");
-        runLevelReasonCodes.add(LIVE_BLOCK_STOP_REASON); // PR200: Add to run-level reason codes
+        // PR200/PR203: Add run-level reason codes (normalized + legacy)
+        runLevelReasonCodes.add(RUN_LIVE_BLOCK_STOP_REASON); // PR203: Normalized
+        runLevelReasonCodes.add(LIVE_BLOCK_STOP_REASON); // PR200: Legacy
 
-        // PR201: Add detailed LIVE block reasons to run-level codes
+        // PR201/PR203: Add detailed LIVE block reasons to run-level codes
         if (policyStatus !== "ALLOW") {
-          runLevelReasonCodes.add(LIVE_BLOCK_POLICY_REASON);
+          runLevelReasonCodes.add(RUN_LIVE_BLOCK_POLICY_REASON); // PR203: Normalized
+          runLevelReasonCodes.add(LIVE_BLOCK_POLICY_REASON); // PR201: Legacy
         }
         if (liveUnlockStatus !== "UNLOCKED") {
           switch (liveUnlockStatus) {
             case "LOCKED_ENV":
-              runLevelReasonCodes.add(LIVE_BLOCK_ENV_REASON);
+              runLevelReasonCodes.add(RUN_LIVE_BLOCK_ENV_REASON); // PR203: Normalized
+              runLevelReasonCodes.add(LIVE_BLOCK_ENV_REASON); // PR201: Legacy
               break;
             case "LOCKED_SPEC":
-              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_REASON);
+              runLevelReasonCodes.add(RUN_LIVE_BLOCK_SPEC_REASON); // PR203: Normalized
+              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_REASON); // PR201: Legacy
               break;
             case "LOCKED_SPEC_EXPIRED":
-              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_EXPIRED_REASON);
+              runLevelReasonCodes.add(RUN_LIVE_BLOCK_SPEC_EXPIRED_REASON); // PR203: Normalized
+              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_EXPIRED_REASON); // PR201: Legacy
               break;
             case "LOCKED_SPEC_PENDING_ACK":
-              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_PENDING_REASON);
+              runLevelReasonCodes.add(RUN_LIVE_BLOCK_SPEC_PENDING_REASON); // PR203: Normalized
+              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_PENDING_REASON); // PR201: Legacy
               break;
             default:
-              runLevelReasonCodes.add(LIVE_BLOCK_UNKNOWN_REASON);
+              runLevelReasonCodes.add(RUN_LIVE_BLOCK_UNKNOWN_REASON); // PR203: Normalized
+              runLevelReasonCodes.add(LIVE_BLOCK_UNKNOWN_REASON); // PR201: Legacy
           }
         }
 
