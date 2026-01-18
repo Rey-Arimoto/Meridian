@@ -21,6 +21,7 @@ export type TelemetryEventType =
   | "RESUME_DECISION" // Resume decision outcome (PR207)
   | "RESUME_REEXEC_ATTEMPT" // Resume re-execution attempt (PR208)
   | "RESUME_REEXEC_RESULT" // Resume re-execution result (PR208)
+  | "RESUME_REEXEC_DEFERRED" // Resume re-execution deferred (PR215)
   | "RUN_START" // TWAP run started
   | "RUN_STOP" // TWAP run stopped
   | "CHUNK_START" // Chunk execution started

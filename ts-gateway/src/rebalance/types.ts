@@ -408,6 +408,11 @@ export interface RunPlan {
   // PR214: Resume strategy enforcement (execution mode override)
   resumeStrategyEnforcedExecutionMode?: ExecutionMode;
   resumeStrategyEnforcedCodes?: string[]; // Enforcement reason codes (label-only)
+
+  // PR215: Resume re-execution timing control (delay / backoff)
+  resumeDelayClassV1?: ResumeDelayClassV1;
+  resumeDelayOffsetLabelV1?: ResumeDelayOffsetLabelV1;
+  resumeDelayReasonCodesV1?: string[]; // Timing reason codes (label-only)
 }
 
 /**
@@ -529,6 +534,51 @@ export type ResumeStrategyV1 =
   | "WAIT_FOR_RECOVERY"
   | "WAIT_FOR_UNLOCK"
   | "ABANDON";
+
+/**
+ * PR215: Resume Re-execution Timing Control (Delay / Backoff) v1
+ *
+ * Purpose:
+ *   Define when supervisor should re-execute after STOP, not just how.
+ *   Enables explainable timing decisions without numeric timestamps.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed delay class mapping, no learning
+ *   - Label-only: No numeric timestamps/milliseconds exposed
+ *   - Deterministic: Same strategy → same delay class
+ *   - Scheduler-less v1: Decision only, no actual scheduling implementation
+ *
+ * Delay Classes:
+ *   - IMMEDIATE: Execute now (e.g., timeout recovery)
+ *   - BACKOFF_SHORT: Brief delay (e.g., gate/phase risk cooling)
+ *   - BACKOFF_LONG: Extended delay (e.g., system recovery)
+ *   - MANUAL: Operator intervention required (e.g., policy unlock)
+ */
+export type ResumeDelayClassV1 =
+  | "IMMEDIATE"
+  | "BACKOFF_SHORT"
+  | "BACKOFF_LONG"
+  | "MANUAL";
+
+/**
+ * PR215: Resume Delay Offset Labels (label-only time representation)
+ *
+ * Purpose:
+ *   Express delay duration as discrete labels, not numeric milliseconds.
+ *   Enables audit trail without exposing internal timing values.
+ *
+ * Constitutional:
+ *   - Label-only: No numeric values
+ *   - Fixed taxonomy: Enumerated duration labels
+ *   - Deterministic: Same delay class → same offset label
+ */
+export type ResumeDelayOffsetLabelV1 =
+  | "DELAY_0S"
+  | "DELAY_30S"
+  | "DELAY_2M"
+  | "DELAY_5M"
+  | "DELAY_15M"
+  | "DELAY_1H";
 
 /**
  * PR211: Phase transition reason taxonomy (PHASE explainability v1)

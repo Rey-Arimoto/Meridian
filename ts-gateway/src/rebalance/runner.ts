@@ -726,6 +726,19 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_enforced_codes = enforcedSummary.joined;
   }
 
+  // PR215: Add resume timing labels (if timing control present)
+  if (runPlan.resumeDelayClassV1) {
+    runStartLabels.resume_delay_class = runPlan.resumeDelayClassV1;
+  }
+  if (runPlan.resumeDelayOffsetLabelV1) {
+    runStartLabels.resume_delay_offset_label = runPlan.resumeDelayOffsetLabelV1;
+  }
+  if (runPlan.resumeDelayReasonCodesV1) {
+    const timingSummary = summarizeRunReasonCodesV1(runPlan.resumeDelayReasonCodesV1);
+    runStartLabels.resume_timing_codes_status = timingSummary.status;
+    runStartLabels.resume_timing_codes = timingSummary.joined;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)

@@ -89,7 +89,22 @@ export interface SupervisorDeps {
     status: string;
     reasons: string[];
     resumeState?: any;
+    runId?: string;
   }>;
+
+  // PR215: Set resume fields on runPlan before execution
+  setRunPlanResumeFields?: (fields: {
+    resumeId?: string;
+    previousRunId?: string;
+    resumeStopReason?: string;
+    resumeStrategy?: import("../rebalance/types").ResumeStrategyV1;
+    resumeStrategyCodes?: string[];
+    resumeStrategyEnforcedExecutionMode?: import("../rebalance/types").ExecutionMode;
+    resumeStrategyEnforcedCodes?: string[];
+    resumeDelayClassV1?: import("../rebalance/types").ResumeDelayClassV1;
+    resumeDelayOffsetLabelV1?: import("../rebalance/types").ResumeDelayOffsetLabelV1;
+    resumeDelayReasonCodesV1?: string[];
+  }) => void;
 }
 
 /**
@@ -501,6 +516,136 @@ function deriveExecutionModeOverrideFromStrategyV1(
 }
 
 /**
+ * PR215: Derive resume re-execution timing from strategy (Timing Control v1)
+ *
+ * @param resumeStrategy - Resume strategy from PR213
+ * @param originStopCause - Origin stop cause from PR209
+ * @returns Timing decision with delay class, offset label, and reason codes
+ *
+ * Purpose:
+ *   Determine WHEN to re-execute based on WHY it stopped.
+ *   Provides explainable delay/backoff without numeric timestamps.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed delay mapping, no learning
+ *   - Label-only: No numeric milliseconds/timestamps
+ *   - Deterministic: Same inputs → same outputs
+ *   - Scheduler-less v1: Decision only, no actual scheduling
+ *
+ * Timing mapping rules (v1):
+ *   1. TIMEOUT / RETRY_IMMEDIATE → IMMEDIATE + DELAY_0S
+ *   2. GATE / PHASE / RETRY_SAFE_SIM_ONLY → BACKOFF_SHORT + DELAY_2M
+ *   3. POLICY / WAIT_FOR_UNLOCK → MANUAL + DELAY_1H
+ *   4. WAIT_FOR_RECOVERY → BACKOFF_LONG + DELAY_15M
+ *   5. ABANDON → MANUAL + DELAY_1H
+ *   6. Unknown → BACKOFF_SHORT + DELAY_2M (safe default)
+ *
+ * IMPORTANT: Never throws, always returns timing decision
+ */
+function deriveResumeReexecTimingV1(args: {
+  resumeStrategy?: import("../rebalance/types").ResumeStrategyV1;
+  originStopCause?: import("../rebalance/types").StopCause;
+}): {
+  delayClass: import("../rebalance/types").ResumeDelayClassV1;
+  delayOffsetLabel: import("../rebalance/types").ResumeDelayOffsetLabelV1;
+  timingReasonCodes: string[];
+} {
+  try {
+    const { resumeStrategy, originStopCause } = args;
+    const codes: string[] = [];
+
+    // Rule 1: TIMEOUT or RETRY_IMMEDIATE → execute immediately
+    if (originStopCause === "TIMEOUT" || resumeStrategy === "RETRY_IMMEDIATE") {
+      if (originStopCause === "TIMEOUT") {
+        codes.push("TIMING_FROM_TIMEOUT");
+      }
+      codes.push("TIMING_IMMEDIATE");
+      codes.push("TIMING_DELAY_0S");
+      return {
+        delayClass: "IMMEDIATE",
+        delayOffsetLabel: "DELAY_0S",
+        timingReasonCodes: codes,
+      };
+    }
+
+    // Rule 2: GATE/PHASE or RETRY_SAFE_SIM_ONLY → short backoff
+    if (
+      originStopCause === "GATE" ||
+      originStopCause === "PHASE" ||
+      resumeStrategy === "RETRY_SAFE_SIM_ONLY"
+    ) {
+      if (originStopCause === "GATE") {
+        codes.push("TIMING_FROM_GATE");
+      }
+      if (originStopCause === "PHASE") {
+        codes.push("TIMING_FROM_PHASE");
+      }
+      codes.push("TIMING_BACKOFF_SHORT");
+      codes.push("TIMING_DELAY_2M");
+      return {
+        delayClass: "BACKOFF_SHORT",
+        delayOffsetLabel: "DELAY_2M",
+        timingReasonCodes: codes,
+      };
+    }
+
+    // Rule 3: POLICY or WAIT_FOR_UNLOCK → manual intervention
+    if (originStopCause === "POLICY" || resumeStrategy === "WAIT_FOR_UNLOCK") {
+      if (originStopCause === "POLICY") {
+        codes.push("TIMING_FROM_POLICY");
+      }
+      codes.push("TIMING_MANUAL");
+      codes.push("TIMING_DELAY_1H");
+      return {
+        delayClass: "MANUAL",
+        delayOffsetLabel: "DELAY_1H",
+        timingReasonCodes: codes,
+      };
+    }
+
+    // Rule 4: WAIT_FOR_RECOVERY → long backoff
+    if (resumeStrategy === "WAIT_FOR_RECOVERY") {
+      codes.push("TIMING_FROM_RECOVERY");
+      codes.push("TIMING_BACKOFF_LONG");
+      codes.push("TIMING_DELAY_15M");
+      return {
+        delayClass: "BACKOFF_LONG",
+        delayOffsetLabel: "DELAY_15M",
+        timingReasonCodes: codes,
+      };
+    }
+
+    // Rule 5: ABANDON → manual (no re-exec)
+    if (resumeStrategy === "ABANDON") {
+      codes.push("TIMING_MANUAL");
+      codes.push("TIMING_DELAY_1H");
+      return {
+        delayClass: "MANUAL",
+        delayOffsetLabel: "DELAY_1H",
+        timingReasonCodes: codes,
+      };
+    }
+
+    // Rule 6: Unknown → safe default (short backoff)
+    codes.push("TIMING_UNKNOWN");
+    codes.push("TIMING_BACKOFF_SHORT");
+    codes.push("TIMING_DELAY_2M");
+    return {
+      delayClass: "BACKOFF_SHORT",
+      delayOffsetLabel: "DELAY_2M",
+      timingReasonCodes: codes,
+    };
+  } catch {
+    // Defensive: Never throw, return safe default
+    return {
+      delayClass: "BACKOFF_SHORT",
+      delayOffsetLabel: "DELAY_2M",
+      timingReasonCodes: ["TIMING_ERROR"],
+    };
+  }
+}
+
+/**
  * Run supervisor once (single tick)
  *
  * @param store - State store
@@ -787,6 +932,15 @@ export async function runSupervisorOnceV1(
         joined: "",
       };
 
+      // PR215: Timing variables (declare outside for wider scope)
+      let resumeDelayClass: import("../rebalance/types").ResumeDelayClassV1 | undefined;
+      let resumeDelayOffsetLabel: import("../rebalance/types").ResumeDelayOffsetLabelV1 | undefined;
+      let resumeTimingReasonCodes: string[] | undefined;
+      let timingSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+        status: "EMPTY",
+        joined: "",
+      };
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -815,9 +969,36 @@ export async function runSupervisorOnceV1(
         enforcedCodes = enforcement.enforcedCodes;
         enforcedSummary = summarizeStrategyCodesV1(enforcedCodes);
 
+        // PR215: Derive timing control from strategy
+        const timing = deriveResumeReexecTimingV1({
+          resumeStrategy,
+          originStopCause: state.resumeState.originStopCause,
+        });
+        resumeDelayClass = timing.delayClass;
+        resumeDelayOffsetLabel = timing.delayOffsetLabel;
+        resumeTimingReasonCodes = timing.timingReasonCodes;
+        timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
+
+        // PR213/PR214/PR215: Set resume fields on runPlan before execution
+        if (deps?.setRunPlanResumeFields) {
+          deps.setRunPlanResumeFields({
+            resumeId,
+            previousRunId,
+            resumeStopReason: stopReason,
+            resumeStrategy,
+            resumeStrategyCodes,
+            resumeStrategyEnforcedExecutionMode: enforcedExecutionMode,
+            resumeStrategyEnforcedCodes: enforcedCodes,
+            resumeDelayClassV1: resumeDelayClass,
+            resumeDelayOffsetLabelV1: resumeDelayOffsetLabel,
+            resumeDelayReasonCodesV1: resumeTimingReasonCodes,
+          });
+        }
+
         // PR208: Emit RESUME_REEXEC_ATTEMPT before runner call
         // PR213: Add resume strategy labels
         // PR214: Add enforcement labels
+        // PR215: Add timing labels
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
@@ -830,6 +1011,10 @@ export async function runSupervisorOnceV1(
             resume_enforced_execution_mode: enforcedExecutionMode, // PR214
             resume_enforced_codes_status: enforcedSummary.status, // PR214
             resume_enforced_codes: enforcedSummary.joined, // PR214
+            resume_delay_class: resumeDelayClass, // PR215
+            resume_delay_offset_label: resumeDelayOffsetLabel, // PR215
+            resume_timing_codes_status: timingSummary.status, // PR215
+            resume_timing_codes: timingSummary.joined, // PR215
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       }
@@ -841,63 +1026,100 @@ export async function runSupervisorOnceV1(
         runId?: string; // PR208: Track next_run_id
       };
 
-      try {
-        if (deps?.runTwapExecution) {
-          runResult = await deps.runTwapExecution();
-        } else {
-          // Default: no-op (for minimal implementation)
-          runResult = {
-            status: "COMPLETED",
-            reasons: ["REASON_NO_RUNNER_PROVIDED"],
-          };
-        }
-
-        // PR208: Emit RESUME_REEXEC_RESULT after successful runner call
-        // PR213: Add resume strategy labels
-        // PR214: Add enforcement labels
+      // PR215: Decision gating - if delayClass is not IMMEDIATE, defer execution
+      if (resumeDelayClass && resumeDelayClass !== "IMMEDIATE") {
+        // Emit RESUME_REEXEC_DEFERRED event
         if (resumeId) {
           await appendEventV1(
-            createEventV1("RESUME_REEXEC_RESULT", "INFO", {
+            createEventV1("RESUME_REEXEC_DEFERRED", "INFO", {
               resume_id: resumeId,
               previous_run_id: previousRunId || "UNKNOWN",
-              next_run_id: runResult.runId || "UNKNOWN",
               stop_reason: stopReason || "UNKNOWN",
-              resume_status: resumeStatus || "UNKNOWN",
-              execution_status: runResult.status,
-              resume_strategy: resumeStrategy || "UNKNOWN", // PR213
-              resume_strategy_codes_status: strategySummary.status, // PR213
-              resume_strategy_codes: strategySummary.joined, // PR213
-              resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
-              resume_enforced_codes_status: enforcedSummary.status, // PR214
-              resume_enforced_codes: enforcedSummary.joined, // PR214
+              resume_strategy: resumeStrategy || "UNKNOWN",
+              resume_delay_class: resumeDelayClass,
+              resume_delay_offset_label: resumeDelayOffsetLabel || "UNKNOWN",
+              resume_timing_codes_status: timingSummary.status,
+              resume_timing_codes: timingSummary.joined,
+              deferred_reason: "DEFERRED_BY_TIMING_CLASS",
             })
           ).catch(() => {}); // Defensive: Don't fail on telemetry error
         }
-      } catch (error) {
-        // PR208: Emit RESUME_REEXEC_RESULT on error
-        // PR213: Add resume strategy labels
-        // PR214: Add enforcement labels
-        if (resumeId) {
-          await appendEventV1(
-            createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
-              resume_id: resumeId,
-              previous_run_id: previousRunId || "UNKNOWN",
-              next_run_id: "ERROR",
-              stop_reason: stopReason || "UNKNOWN",
-              resume_status: resumeStatus || "UNKNOWN",
-              execution_status: "ERROR",
-              resume_strategy: resumeStrategy || "UNKNOWN", // PR213
-              resume_strategy_codes_status: strategySummary.status, // PR213
-              resume_strategy_codes: strategySummary.joined, // PR213
-              resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
-              resume_enforced_codes_status: enforcedSummary.status, // PR214
-              resume_enforced_codes: enforcedSummary.joined, // PR214
-            }, ["ERROR_RUNNER_EXCEPTION"])
-          ).catch(() => {}); // Defensive: Don't fail on telemetry error
-        }
 
-        // Re-throw to maintain existing error handling
-        throw error;
+        // Set runResult to indicate deferred status
+        runResult = {
+          status: "DEFERRED",
+          reasons: ["REASON_RESUME_DEFERRED_BY_TIMING", ...(resumeTimingReasonCodes || [])],
+        };
+      } else {
+        // PR215: delayClass is IMMEDIATE (or not set), proceed with normal execution
+        try {
+          if (deps?.runTwapExecution) {
+            runResult = await deps.runTwapExecution();
+          } else {
+            // Default: no-op (for minimal implementation)
+            runResult = {
+              status: "COMPLETED",
+              reasons: ["REASON_NO_RUNNER_PROVIDED"],
+            };
+          }
+
+          // PR208: Emit RESUME_REEXEC_RESULT after successful runner call
+          // PR213: Add resume strategy labels
+          // PR214: Add enforcement labels
+          // PR215: Add timing labels
+          if (resumeId) {
+            await appendEventV1(
+              createEventV1("RESUME_REEXEC_RESULT", "INFO", {
+                resume_id: resumeId,
+                previous_run_id: previousRunId || "UNKNOWN",
+                next_run_id: runResult.runId || "UNKNOWN",
+                stop_reason: stopReason || "UNKNOWN",
+                resume_status: resumeStatus || "UNKNOWN",
+                execution_status: runResult.status,
+                resume_strategy: resumeStrategy || "UNKNOWN", // PR213
+                resume_strategy_codes_status: strategySummary.status, // PR213
+                resume_strategy_codes: strategySummary.joined, // PR213
+                resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
+                resume_enforced_codes_status: enforcedSummary.status, // PR214
+                resume_enforced_codes: enforcedSummary.joined, // PR214
+                resume_delay_class: resumeDelayClass || "UNKNOWN", // PR215
+                resume_delay_offset_label: resumeDelayOffsetLabel || "UNKNOWN", // PR215
+                resume_timing_codes_status: timingSummary.status, // PR215
+                resume_timing_codes: timingSummary.joined, // PR215
+              })
+            ).catch(() => {}); // Defensive: Don't fail on telemetry error
+          }
+        } catch (error) {
+          // PR208: Emit RESUME_REEXEC_RESULT on error
+          // PR213: Add resume strategy labels
+          // PR214: Add enforcement labels
+          // PR215: Add timing labels
+          if (resumeId) {
+            await appendEventV1(
+              createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
+                resume_id: resumeId,
+                previous_run_id: previousRunId || "UNKNOWN",
+                next_run_id: "ERROR",
+                stop_reason: stopReason || "UNKNOWN",
+                resume_status: resumeStatus || "UNKNOWN",
+                execution_status: "ERROR",
+                resume_strategy: resumeStrategy || "UNKNOWN", // PR213
+                resume_strategy_codes_status: strategySummary.status, // PR213
+                resume_strategy_codes: strategySummary.joined, // PR213
+                resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
+                resume_enforced_codes_status: enforcedSummary.status, // PR214
+                resume_enforced_codes: enforcedSummary.joined, // PR214
+                resume_delay_class: resumeDelayClass || "UNKNOWN", // PR215
+                resume_delay_offset_label: resumeDelayOffsetLabel || "UNKNOWN", // PR215
+                resume_timing_codes_status: timingSummary.status, // PR215
+                resume_timing_codes: timingSummary.joined, // PR215
+              }, ["ERROR_RUNNER_EXCEPTION"])
+            ).catch(() => {}); // Defensive: Don't fail on telemetry error
+          }
+
+          // Re-throw to maintain existing error handling
+          throw error;
+        }
       }
 
       notes.push(`NOTE_RUN_STATUS_${runResult.status}`);
