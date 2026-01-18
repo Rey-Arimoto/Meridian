@@ -16,11 +16,13 @@ async function main() {
     getNowMs: () => Date.now(),
   });
 
-  // PR196/PR197: Set execution mode (default: SIM_ONLY for safety)
+  // PR196/PR197/PR198: Set execution mode (default: SIM_ONLY for safety)
   // Available modes: "SIM_ONLY" | "DRY_RUN" | "LIVE"
   (runPlan as any).executionMode = "SIM_ONLY";
   // Uncomment to test DRY_RUN mode:
   // (runPlan as any).executionMode = "DRY_RUN";
+  // Uncomment to test LIVE blocking (PR198):
+  // (runPlan as any).executionMode = "LIVE";
 
   const res = await runChunkedExecutionV1(runPlan as any, {
     // ---- 必須 deps ----
@@ -98,7 +100,7 @@ async function main() {
         ],
       } as any),
 
-    // ---- Execute: Mode-aware (PR197) ----
+    // ---- Execute: Mode-aware (PR197/PR198) ----
     executeTx: async (args: any) => {
       // PR197: Respect executionMode
       const mode = args.executionMode || "SIM_ONLY";
@@ -113,10 +115,11 @@ async function main() {
           reasons: ["REASON_EXEC_DRY_RUN"],
         } as any;
       } else if (mode === "LIVE") {
-        // Harness doesn't support LIVE (no keys/env)
+        // PR198: Structural block - LIVE execution impossible in v1.4
+        // This guarantees no broadcast can occur
         return {
           status: "EXECUTION_DISABLED",
-          reasons: ["REASON_EXEC_LIVE_NOT_SUPPORTED_IN_HARNESS"],
+          reasons: ["REASON_EXEC_LIVE_BLOCKED_V1_4"],
         } as any;
       }
       return {
