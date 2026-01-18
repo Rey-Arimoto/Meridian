@@ -400,6 +400,10 @@ export interface RunPlan {
   // PR209: Resume origin context (propagated from resumeState for telemetry traceability)
   resumeOriginStopCause?: StopCause;
   resumeOriginRunReasonCodes?: string[];
+
+  // PR213: Resume strategy (autonomous recovery strategy derived from origin context)
+  resumeStrategy?: ResumeStrategyV1;
+  resumeStrategyCodes?: string[]; // Label-only explainability codes
 }
 
 /**
@@ -494,6 +498,33 @@ export type StopReason =
  * PR209: Stop cause attribution (high-level category)
  */
 export type StopCause = "GATE" | "POLICY" | "PHASE" | "TIMEOUT" | "NONE";
+
+/**
+ * PR213: Resume Strategy v1 (Autonomous Recovery Strategy)
+ *
+ * Purpose:
+ *   Define how supervisor should handle resume re-execution based on
+ *   origin stop cause and context. Ensures safe, explainable recovery.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed strategy taxonomy, no learning/optimization
+ *   - Safe defaults: Dangerous scenarios default to SIM_ONLY or WAIT
+ *   - Label-only: Strategy is a string label, not numeric score
+ *   - Deterministic: Same inputs → same strategy
+ *
+ * Strategies:
+ *   - RETRY_IMMEDIATE: Safe to retry immediately (e.g., timeout)
+ *   - RETRY_SAFE_SIM_ONLY: Retry in SIM_ONLY mode for safety (e.g., gate/phase risk)
+ *   - WAIT_FOR_RECOVERY: Wait for system recovery (e.g., resume decision WAIT)
+ *   - WAIT_FOR_UNLOCK: Wait for policy unlock (e.g., hardstop/env key)
+ *   - ABANDON: Do not retry (e.g., resume decision ABANDON)
+ */
+export type ResumeStrategyV1 =
+  | "RETRY_IMMEDIATE"
+  | "RETRY_SAFE_SIM_ONLY"
+  | "WAIT_FOR_RECOVERY"
+  | "WAIT_FOR_UNLOCK"
+  | "ABANDON";
 
 /**
  * PR211: Phase transition reason taxonomy (PHASE explainability v1)

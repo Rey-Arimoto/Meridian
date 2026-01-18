@@ -706,6 +706,16 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_origin_reason_codes = originSummary.joined;
   }
 
+  // PR213: Add resume strategy labels (if strategy present)
+  if (runPlan.resumeStrategy) {
+    runStartLabels.resume_strategy = runPlan.resumeStrategy;
+  }
+  if (runPlan.resumeStrategyCodes) {
+    const strategySummary = summarizeRunReasonCodesV1(runPlan.resumeStrategyCodes);
+    runStartLabels.resume_strategy_codes_status = strategySummary.status;
+    runStartLabels.resume_strategy_codes = strategySummary.joined;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)

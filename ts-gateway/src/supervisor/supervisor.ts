@@ -142,6 +142,17 @@ function summarizeResumeReasonCodesV1(
 }
 
 /**
+ * PR208: Generate resume ID for resume re-execution traceability
+ *
+ * @returns Resume ID in format RESUME_{timestamp}_{random}
+ */
+function generateResumeIdV1(): string {
+  const ts = Date.now();
+  const rand = Math.floor(Math.random() * 100000);
+  return `RESUME_${ts}_${rand}`;
+}
+
+/**
  * PR207: Derive resume reason codes from inputs and decision
  *
  * @param inputs - Resume inputs
@@ -236,6 +247,175 @@ function deriveResumeReasonCodesV1(
   } catch {
     // Defensive: Never throw
     return ["RESUME_UNKNOWN"];
+  }
+}
+
+/**
+ * PR213: Summarize resume strategy reason codes (label-only)
+ *
+ * @param codes - Array of strategy reason codes
+ * @returns Summary object with status and joined string
+ *
+ * Purpose:
+ *   Create deterministic, fixed-length summary of strategy codes for telemetry.
+ *   Same pattern as summarizeResumeReasonCodesV1.
+ *
+ * Rules:
+ *   - Empty/undefined → {status: "EMPTY", joined: ""}
+ *   - Filter to string-only values (defensive)
+ *   - Deduplicate via Set
+ *   - Sort alphabetically (deterministic ordering)
+ *   - Take first 8 items
+ *   - If truncated, append "REASONS_TRUNCATED"
+ *   - Join with "|" separator
+ *
+ * IMPORTANT: Never throws, always returns summary
+ */
+function summarizeStrategyCodesV1(codes: string[] | undefined): {
+  status: "PRESENT" | "EMPTY";
+  joined: string;
+} {
+  try {
+    if (!codes || codes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Defensive: filter to string-only, dedupe, sort
+    const filtered = codes.filter((c) => typeof c === "string" && c.length > 0);
+    if (filtered.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    const deduped = Array.from(new Set(filtered));
+    const sorted = deduped.sort();
+
+    const maxCodes = 8;
+    const truncated = sorted.length > maxCodes;
+    const taken = sorted.slice(0, maxCodes);
+
+    if (truncated) {
+      taken.push("REASONS_TRUNCATED");
+    }
+
+    return {
+      status: "PRESENT",
+      joined: taken.join("|"),
+    };
+  } catch {
+    // Defensive: Never throw
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
+ * PR213: Derive resume strategy from origin context (Autonomous Recovery Strategy v1)
+ *
+ * @param resumeDecision - Resume decision from evaluateResumeV1
+ * @param resumeState - Resume state (contains origin context from PR209)
+ * @returns Strategy and reason codes
+ *
+ * Purpose:
+ *   Determine HOW to retry execution based on WHY it stopped.
+ *   Safe defaults: dangerous scenarios → SIM_ONLY or WAIT.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed mapping rules, no learning/optimization
+ *   - Safe defaults: GATE/PHASE → SIM_ONLY, POLICY → WAIT
+ *   - Label-only: All outputs are strings
+ *   - Deterministic: Same inputs → same outputs
+ *
+ * Strategy derivation rules (v1):
+ *   1. If resume decision ≠ RESUMABLE → follow decision
+ *      - WAIT → WAIT_FOR_RECOVERY
+ *      - ABANDON → ABANDON
+ *   2. If RESUMABLE → inspect origin stop cause:
+ *      - TIMEOUT → RETRY_IMMEDIATE (safe to retry)
+ *      - GATE → RETRY_SAFE_SIM_ONLY (may still be blocked)
+ *      - PHASE → RETRY_SAFE_SIM_ONLY (market risk may persist)
+ *      - POLICY → WAIT_FOR_UNLOCK (hardstop/env key)
+ *      - NONE/unknown → RETRY_SAFE_SIM_ONLY (safe default)
+ *
+ * IMPORTANT: Never throws, always returns strategy
+ */
+function deriveResumeStrategyV1(
+  resumeDecision: { status: string; reasons: string[] },
+  resumeState: any
+): {
+  strategy: import("../rebalance/types").ResumeStrategyV1;
+  codes: string[];
+} {
+  try {
+    const codes: string[] = [];
+
+    // Rule 1: Non-RESUMABLE decisions
+    if (resumeDecision.status === "WAIT") {
+      codes.push("STRAT_DECISION_WAIT");
+      return { strategy: "WAIT_FOR_RECOVERY", codes };
+    }
+
+    if (resumeDecision.status === "ABANDON") {
+      codes.push("STRAT_DECISION_ABANDON");
+      return { strategy: "ABANDON", codes };
+    }
+
+    if (resumeDecision.status !== "RESUMABLE") {
+      // UNKNOWN or unexpected status → safe default
+      codes.push("STRAT_DECISION_UNKNOWN");
+      return { strategy: "WAIT_FOR_RECOVERY", codes };
+    }
+
+    // Rule 2: RESUMABLE → inspect origin context (PR209 fields)
+    const originStopCause = resumeState?.originStopCause || "NONE";
+    const originRunReasonCodes = resumeState?.originRunReasonCodes || [];
+
+    // Helper: check if reason codes contain prefix
+    const hasReasonPrefix = (prefix: string): boolean => {
+      return originRunReasonCodes.some((code: string) =>
+        typeof code === "string" && code.includes(prefix)
+      );
+    };
+
+    // TIMEOUT → safe to retry immediately
+    if (originStopCause === "TIMEOUT") {
+      codes.push("STRAT_FROM_TIMEOUT");
+      return { strategy: "RETRY_IMMEDIATE", codes };
+    }
+
+    // GATE → retry in SIM_ONLY (gate may still block)
+    if (originStopCause === "GATE" || hasReasonPrefix("RUN_GATE_")) {
+      codes.push("STRAT_FROM_GATE");
+      codes.push("STRAT_EXEC_MODE_SIM_ONLY");
+      return { strategy: "RETRY_SAFE_SIM_ONLY", codes };
+    }
+
+    // PHASE → retry in SIM_ONLY (market risk may persist)
+    if (
+      originStopCause === "PHASE" ||
+      hasReasonPrefix("RUN_PHASE_") ||
+      hasReasonPrefix("PHASE_TXN_")
+    ) {
+      codes.push("STRAT_FROM_PHASE_RISK");
+      codes.push("STRAT_EXEC_MODE_SIM_ONLY");
+      return { strategy: "RETRY_SAFE_SIM_ONLY", codes };
+    }
+
+    // POLICY → wait for unlock (hardstop/env key)
+    if (originStopCause === "POLICY" || hasReasonPrefix("RUN_POLICY_")) {
+      codes.push("STRAT_FROM_POLICY");
+      codes.push("STRAT_WAIT_FOR_UNLOCK");
+      return { strategy: "WAIT_FOR_UNLOCK", codes };
+    }
+
+    // NONE/unknown → safe default (SIM_ONLY)
+    codes.push("STRAT_FROM_UNKNOWN");
+    codes.push("STRAT_EXEC_MODE_SIM_ONLY");
+    return { strategy: "RETRY_SAFE_SIM_ONLY", codes };
+  } catch {
+    // Defensive: Never throw, return safe default
+    return {
+      strategy: "WAIT_FOR_RECOVERY",
+      codes: ["STRAT_ERROR"],
+    };
   }
 }
 
@@ -504,20 +684,112 @@ export async function runSupervisorOnceV1(
     if (policyResult.allowExecution || cfg?.dryRun) {
       notes.push("NOTE_RUN_TWAP_EXECUTION");
 
+      // PR208: Resume re-execution traceability
+      let resumeId: string | undefined;
+      let previousRunId: string | undefined;
+      let stopReason: string | undefined;
+      let resumeStatus: string | undefined;
+
+      // PR213: Resume strategy derivation (declare outside for wider scope)
+      let resumeStrategy: import("../rebalance/types").ResumeStrategyV1 | undefined;
+      let resumeStrategyCodes: string[] | undefined;
+      let strategySummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+        status: "EMPTY",
+        joined: "",
+      };
+
+      if (state.resumeState) {
+        resumeId = generateResumeIdV1();
+        // Extract previous run ID if available (assume lastRun has runId)
+        previousRunId = (state.lastRun as any)?.runId || "UNKNOWN";
+        stopReason = state.resumeState.stopReason;
+        resumeStatus = "RESUMABLE"; // If we're here, resume decision was RESUMABLE
+
+        // PR213: Derive resume strategy from origin context
+        // Need to access resumeDecision from earlier scope
+        // Since we're here, we know resumeDecision.status was RESUMABLE
+        const strategyDerived = deriveResumeStrategyV1(
+          { status: "RESUMABLE", reasons: [] },
+          state.resumeState
+        );
+        resumeStrategy = strategyDerived.strategy;
+        resumeStrategyCodes = strategyDerived.codes;
+
+        strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
+
+        // PR208: Emit RESUME_REEXEC_ATTEMPT before runner call
+        // PR213: Add resume strategy labels
+        await appendEventV1(
+          createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
+            resume_id: resumeId,
+            previous_run_id: previousRunId,
+            stop_reason: stopReason,
+            resume_status: resumeStatus,
+            resume_strategy: resumeStrategy, // PR213
+            resume_strategy_codes_status: strategySummary.status, // PR213
+            resume_strategy_codes: strategySummary.joined, // PR213
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+      }
+
       let runResult: {
         status: string;
         reasons: string[];
         resumeState?: any;
+        runId?: string; // PR208: Track next_run_id
       };
 
-      if (deps?.runTwapExecution) {
-        runResult = await deps.runTwapExecution();
-      } else {
-        // Default: no-op (for minimal implementation)
-        runResult = {
-          status: "COMPLETED",
-          reasons: ["REASON_NO_RUNNER_PROVIDED"],
-        };
+      try {
+        if (deps?.runTwapExecution) {
+          runResult = await deps.runTwapExecution();
+        } else {
+          // Default: no-op (for minimal implementation)
+          runResult = {
+            status: "COMPLETED",
+            reasons: ["REASON_NO_RUNNER_PROVIDED"],
+          };
+        }
+
+        // PR208: Emit RESUME_REEXEC_RESULT after successful runner call
+        // PR213: Add resume strategy labels
+        if (resumeId) {
+          const strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_RESULT", "INFO", {
+              resume_id: resumeId,
+              previous_run_id: previousRunId || "UNKNOWN",
+              next_run_id: runResult.runId || "UNKNOWN",
+              stop_reason: stopReason || "UNKNOWN",
+              resume_status: resumeStatus || "UNKNOWN",
+              execution_status: runResult.status,
+              resume_strategy: resumeStrategy || "UNKNOWN", // PR213
+              resume_strategy_codes_status: strategySummary.status, // PR213
+              resume_strategy_codes: strategySummary.joined, // PR213
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+        }
+      } catch (error) {
+        // PR208: Emit RESUME_REEXEC_RESULT on error
+        // PR213: Add resume strategy labels
+        if (resumeId) {
+          const strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
+              resume_id: resumeId,
+              previous_run_id: previousRunId || "UNKNOWN",
+              next_run_id: "ERROR",
+              stop_reason: stopReason || "UNKNOWN",
+              resume_status: resumeStatus || "UNKNOWN",
+              execution_status: "ERROR",
+              resume_strategy: resumeStrategy || "UNKNOWN", // PR213
+              resume_strategy_codes_status: strategySummary.status, // PR213
+              resume_strategy_codes: strategySummary.joined, // PR213
+            }, ["ERROR_RUNNER_EXCEPTION"])
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+        }
+
+        // Re-throw to maintain existing error handling
+        throw error;
       }
 
       notes.push(`NOTE_RUN_STATUS_${runResult.status}`);
