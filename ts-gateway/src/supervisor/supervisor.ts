@@ -23,6 +23,11 @@ import {
   SnapshotInputsV1,
 } from "../snapshot";
 import { evaluateSpecLockV1 } from "../spec";
+import {
+  buildOrchestrationInstructionV1,
+  appendOrchQueueV1,
+  loadOrchAckSetV1,
+} from "../orchestrator/interface";
 
 /**
  * Supervisor action (label-only)
@@ -699,6 +704,22 @@ export async function runSupervisorOnceV1(
     const state = readResult.state;
     notes.push("NOTE_STATE_LOADED");
 
+    // PR216: Load orchestration ACK set (for idempotency)
+    const orchAckSet = loadOrchAckSetV1();
+    if (orchAckSet.size > 0) {
+      notes.push(`NOTE_ORCH_ACK_LOADED_COUNT_${orchAckSet.size}`);
+      // Emit ORCH_ACK for each ACKed resume_id (v1: simple approach)
+      // Note: In production, may want to track "last seen" to avoid re-emitting
+      for (const resumeId of orchAckSet) {
+        await appendEventV1(
+          createEventV1("ORCH_ACK", "INFO", {
+            resume_id: resumeId,
+            ack_status: "ACKED",
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+      }
+    }
+
     // Step 1: Evaluate policy (PR156)
     let policyResult: {
       allowExecution: boolean;
@@ -1043,6 +1064,48 @@ export async function runSupervisorOnceV1(
               deferred_reason: "DEFERRED_BY_TIMING_CLASS",
             })
           ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+          // PR216: Build orchestration instruction and enqueue (idempotent)
+          // Only enqueue if not already ACKed
+          if (!orchAckSet.has(resumeId)) {
+            const orchInstruction = buildOrchestrationInstructionV1({
+              resumeId,
+              previousRunId: previousRunId || "UNKNOWN",
+              stopReason: stopReason || "UNKNOWN",
+              resumeStatus: resumeStatus || "UNKNOWN",
+              resumeStrategy,
+              enforcedExecutionMode,
+              delayClassV1: resumeDelayClass,
+              delayOffsetV1: resumeDelayOffsetLabel,
+              hintCodes: [
+                ...(resumeStrategyCodes || []),
+                ...(enforcedCodes || []),
+                ...(resumeTimingReasonCodes || []),
+              ],
+            });
+
+            // PR216: Emit ORCH_ENQUEUE event
+            await appendEventV1(
+              createEventV1("ORCH_ENQUEUE", "INFO", {
+                instruction_version: orchInstruction.instruction_version,
+                resume_id: orchInstruction.resume_id,
+                previous_run_id: orchInstruction.previous_run_id,
+                stop_reason: orchInstruction.stop_reason,
+                resume_strategy: orchInstruction.resume_strategy || "UNKNOWN",
+                enforced_execution_mode: orchInstruction.enforced_execution_mode || "UNKNOWN",
+                delay_class_v1: orchInstruction.delay_class_v1 || "UNKNOWN",
+                delay_offset_v1: orchInstruction.delay_offset_v1 || "UNKNOWN",
+                orch_action: orchInstruction.orch_action,
+                orch_hint_codes_status: orchInstruction.orch_hint_codes_status,
+                orch_hint_codes: orchInstruction.orch_hint_codes,
+              })
+            ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+            // PR216: Write to orchestration queue file
+            await appendOrchQueueV1(orchInstruction);
+          } else {
+            notes.push("NOTE_ORCH_ENQUEUE_SKIPPED_ALREADY_ACKED");
+          }
         }
 
         // Set runResult to indicate deferred status

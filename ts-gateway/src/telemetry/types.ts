@@ -59,6 +59,10 @@ export type TelemetryEventType =
   | "OBSERVE_DEGRADED_LEVEL" // Observe degrade level (PR184)
   | "OBSERVE_DEGRADED_TIGHTENING_APPLIED" // Degrade tightening applied (PR184)
   | "QUOTE_NORMALIZED" // Quote normalized (PR187)
+  | "ORCH_ENQUEUE" // Orchestration instruction enqueued (PR216)
+  | "ORCH_ACK" // Orchestration ACK received (PR216)
+  | "ORCH_DISPATCH" // Orchestration dispatch initiated (PR216)
+  | "ORCH_RESULT" // Orchestration dispatch result (PR216)
   | "ERROR"; // Error occurred
 
 /**
