@@ -392,6 +392,17 @@ function createResumeState(
 const LIVE_BLOCK_STOP_REASON = "REASON_LIVE_MODE_BLOCKED_STOP";
 
 /**
+ * PR201: LIVE block detailed reason code constants
+ * Track specific causes of LIVE mode blocks in run-level reason codes
+ */
+const LIVE_BLOCK_ENV_REASON = "REASON_LIVE_UNLOCK_LOCKED_ENV";
+const LIVE_BLOCK_SPEC_REASON = "REASON_LIVE_UNLOCK_LOCKED_SPEC";
+const LIVE_BLOCK_SPEC_EXPIRED_REASON = "REASON_LIVE_UNLOCK_LOCKED_SPEC_EXPIRED";
+const LIVE_BLOCK_SPEC_PENDING_REASON = "REASON_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK";
+const LIVE_BLOCK_UNKNOWN_REASON = "REASON_LIVE_UNLOCK_LOCKED_UNKNOWN";
+const LIVE_BLOCK_POLICY_REASON = "REASON_LIVE_POLICY_NOT_ALLOW";
+
+/**
  * Run chunked execution (TWAP-lite v1)
  *
  * @param runPlan - Run plan from buildChunkPlansV1
@@ -1135,6 +1146,30 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_LIVE_MODE_BLOCKED_STOP");
         runLevelReasonCodes.add(LIVE_BLOCK_STOP_REASON); // PR200: Add to run-level reason codes
+
+        // PR201: Add detailed LIVE block reasons to run-level codes
+        if (policyStatus !== "ALLOW") {
+          runLevelReasonCodes.add(LIVE_BLOCK_POLICY_REASON);
+        }
+        if (liveUnlockStatus !== "UNLOCKED") {
+          switch (liveUnlockStatus) {
+            case "LOCKED_ENV":
+              runLevelReasonCodes.add(LIVE_BLOCK_ENV_REASON);
+              break;
+            case "LOCKED_SPEC":
+              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_REASON);
+              break;
+            case "LOCKED_SPEC_EXPIRED":
+              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_EXPIRED_REASON);
+              break;
+            case "LOCKED_SPEC_PENDING_ACK":
+              runLevelReasonCodes.add(LIVE_BLOCK_SPEC_PENDING_REASON);
+              break;
+            default:
+              runLevelReasonCodes.add(LIVE_BLOCK_UNKNOWN_REASON);
+          }
+        }
+
         stopCause = "POLICY"; // PR189/PR199: Policy attribution
         finalStatus = "STOPPED";
 

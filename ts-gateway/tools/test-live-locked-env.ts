@@ -1,4 +1,4 @@
-// Test LIVE LOCKED_SPEC_EXPIRED scenario
+// Test LIVE LOCKED_ENV scenario (no env var)
 import { buildChunkPlansV1 } from "../src/rebalance/chunking";
 import { runChunkedExecutionV1 } from "../src/rebalance/runner";
 
@@ -9,11 +9,11 @@ async function main() {
     baseIntent: "INCREASE_WBTC",
     maxChunks: 1,
     chunkNotionalUsd: 30000,
-    runId: "run-test-locked-spec",
+    runId: "run-test-locked-env",
     getNowMs: () => Date.now(),
   });
 
-  // Set LIVE mode
+  // Set LIVE mode (but env var MERIDIAN_LIVE_UNLOCK is not set)
   (runPlan as any).executionMode = "LIVE";
 
   const res = await runChunkedExecutionV1(runPlan as any, {
@@ -33,7 +33,7 @@ async function main() {
         warnings: [],
       } as any),
 
-    getSpecLockStatus: async () => ({ status: "LOCKED_EXPIRED" }), // Spec lock EXPIRED
+    getSpecLockStatus: async () => ({ status: "ACTIVE_OK" }), // Spec lock OK, but env var missing
 
     evaluateGate: async () => ({
       status: "PASS",
@@ -72,9 +72,9 @@ async function main() {
         slippageLabel: "SLIPPAGE_ELEVATED",
         deadlineSeconds: 120,
         checks: [],
-        notes: ["NOTE_TEST_LIVE_LOCKED_SPEC"],
+        notes: ["NOTE_TEST_LIVE_LOCKED_ENV"],
         errors: [],
-        executionReasonCodes: ["REASON_TEST_LIVE"],
+        executionReasonCodes: ["REASON_TEST_LIVE_LOCKED_ENV"],
       } as any),
 
     executeTx: async (args: any) => {
