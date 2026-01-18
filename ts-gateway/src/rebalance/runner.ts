@@ -961,6 +961,20 @@ export async function runChunkedExecutionV1(
           };
         }
 
+        // PR212a: Compute label-only status for phase policy inputs
+        const nowMs = getNowMs();
+        const elapsedMs = nowMs - startedAtMs;
+
+        const blockedStreakStatus: "STREAK_OK" | "STREAK_EXCEEDED" =
+          consecutiveBlockCount >= RUNNER_PARAMS.MAX_BLOCKED_STREAK
+            ? "STREAK_EXCEEDED"
+            : "STREAK_OK";
+
+        const timeoutStatus: "TIMEOUT_OK" | "TIMEOUT_EXCEEDED" =
+          elapsedMs > RUNNER_PARAMS.MAX_RUN_DURATION_MS
+            ? "TIMEOUT_EXCEEDED"
+            : "TIMEOUT_OK";
+
         // PR212: Evaluate phase transition policy
         const phasePolicyInputs: PhasePolicyInputsV1 = {
           prevPhase: prevPhase ?? "PHASE_UNKNOWN",
@@ -968,13 +982,35 @@ export async function runChunkedExecutionV1(
           stopCause: stopCause,
           gateStatus: "PASS", // Default: gate not evaluated yet
           policyStatus: "ALLOW", // Default: policy not evaluated yet
-          blockedStreakCount: consecutiveBlockCount,
-          nowMs: getNowMs(),
-          runStartedAtMs: startedAtMs,
-          maxRunDurationMs: RUNNER_PARAMS.MAX_RUN_DURATION_MS,
+          blockedStreakStatus: blockedStreakStatus,
+          timeoutStatus: timeoutStatus,
         };
 
         const phasePolicyDecision = evaluatePhasePolicyV1(phasePolicyInputs);
+
+        // PR212a: Emit PHASE_POLICY_EVAL event (defensive)
+        const phaseTransitionSummary = summarizePhaseTransitionCodesV1(
+          phasePolicyDecision.transitionCodes
+        );
+        await appendEventV1(
+          createEventV1("PHASE_POLICY_EVAL", "INFO", {
+            // Inputs
+            prev_phase: phasePolicyInputs.prevPhase,
+            current_phase: phasePolicyInputs.currentPhase,
+            stop_cause: phasePolicyInputs.stopCause,
+            gate_status: phasePolicyInputs.gateStatus,
+            policy_status: phasePolicyInputs.policyStatus,
+            blocked_streak_status: phasePolicyInputs.blockedStreakStatus,
+            timeout_status: phasePolicyInputs.timeoutStatus,
+            // Decision
+            phase_changed: phasePolicyDecision.changed ? "TRUE" : "FALSE",
+            next_phase: phasePolicyDecision.nextPhase,
+            should_stop: phasePolicyDecision.shouldStop ? "TRUE" : "FALSE",
+            decision_stop_cause: phasePolicyDecision.stopCause ?? "NONE",
+            phase_transition_status: phaseTransitionSummary.status,
+            phase_transition_codes: phaseTransitionSummary.joined,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
         // Extract transition codes from policy decision
         phaseTransitionCodes = phasePolicyDecision.transitionCodes as PhaseTransitionReasonCode[];

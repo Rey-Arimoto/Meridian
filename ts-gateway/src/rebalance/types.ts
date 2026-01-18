@@ -574,6 +574,7 @@ export interface ResumeState {
 
 /**
  * Phase policy inputs (v1)
+ * PR212a: Updated to label-only (no numeric inputs)
  */
 export interface PhasePolicyInputsV1 {
   // Previous phase label (PHASE_UNKNOWN if first chunk)
@@ -591,17 +592,11 @@ export interface PhasePolicyInputsV1 {
   // Policy status (from policy evaluation)
   policyStatus: "ALLOW" | "SIM_ONLY" | "BLOCKED" | "ERROR";
 
-  // Consecutive blocked chunk count (from runner)
-  blockedStreakCount: number;
+  // Blocked streak status (label-only)
+  blockedStreakStatus: "STREAK_OK" | "STREAK_EXCEEDED";
 
-  // Current timestamp (internal numeric only)
-  nowMs: number;
-
-  // Run start timestamp (internal numeric only)
-  runStartedAtMs: number;
-
-  // Max run duration (internal numeric only)
-  maxRunDurationMs: number;
+  // Timeout status (label-only)
+  timeoutStatus: "TIMEOUT_OK" | "TIMEOUT_EXCEEDED";
 }
 
 /**

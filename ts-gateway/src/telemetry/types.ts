@@ -26,6 +26,7 @@ export type TelemetryEventType =
   | "CHUNK_START" // Chunk execution started
   | "CHUNK_RESULT" // Chunk execution completed
   | "PHASE_CHANGE" // Phase transition detected (PR211)
+  | "PHASE_POLICY_EVAL" // Phase policy evaluation (PR212a)
   | "EXECUTE_ATTEMPT" // Execute attempt (PR195)
   | "EXECUTE_RESULT" // Execute outcome (PR194)
   | "POLICY_BLOCK" // Policy blocked execution

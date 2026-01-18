@@ -250,6 +250,8 @@ const PHASE_TRIG_TIMEOUT_PRESSURE = "PHASE_TRIG_TIMEOUT_PRESSURE";
  * 3. Adds trigger codes (PHASE_TRIG_*) based on context (gate/policy/timeout)
  * 4. Decides if run should STOP (using existing evaluatePhaseStopPolicyV1 logic)
  *
+ * PR212a: Updated to use label-only inputs (no numeric values)
+ *
  * Note: Trigger codes (PHASE_TRIG_*) are added only if context is available.
  *       If called before gate/policy evaluation, trigger codes will be empty.
  *
@@ -257,7 +259,7 @@ const PHASE_TRIG_TIMEOUT_PRESSURE = "PHASE_TRIG_TIMEOUT_PRESSURE";
  */
 export function evaluatePhasePolicyV1(inputs: PhasePolicyInputsV1): PhasePolicyDecisionV1 {
   try {
-    const { prevPhase, currentPhase, gateStatus, policyStatus } = inputs;
+    const { prevPhase, currentPhase, gateStatus, policyStatus, blockedStreakStatus, timeoutStatus } = inputs;
 
     // Initialize transition codes
     const transitionCodes: string[] = [];
@@ -285,22 +287,16 @@ export function evaluatePhasePolicyV1(inputs: PhasePolicyInputsV1): PhasePolicyD
         transitionCodes.push(PHASE_TXN_UNKNOWN);
       }
 
-      // Add trigger codes based on context (optional, only if available)
-      // Note: These may not be available at all call sites (e.g., before gate/policy eval)
+      // Add trigger codes based on context (label-only)
       if (gateStatus === "BLOCK") {
         transitionCodes.push(PHASE_TRIG_GATE_BLOCK);
       }
       if (policyStatus === "BLOCKED") {
         transitionCodes.push(PHASE_TRIG_POLICY_HARDSTOP);
       }
-      // Timeout pressure detection (v1: simple threshold)
-      if (inputs.maxRunDurationMs > 0) {
-        const elapsedMs = inputs.nowMs - inputs.runStartedAtMs;
-        const timeoutRatio = elapsedMs / inputs.maxRunDurationMs;
-        if (timeoutRatio > 0.8) {
-          // 80% of max duration
-          transitionCodes.push(PHASE_TRIG_TIMEOUT_PRESSURE);
-        }
+      // PR212a: Use label-only timeout status
+      if (timeoutStatus === "TIMEOUT_EXCEEDED") {
+        transitionCodes.push(PHASE_TRIG_TIMEOUT_PRESSURE);
       }
     }
 
