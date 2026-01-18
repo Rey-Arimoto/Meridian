@@ -19,10 +19,13 @@ export type TelemetryEventType =
   | "SUPERVISOR_TICK" // Supervisor tick started
   | "RESUME_EVAL" // Resume condition evaluation
   | "RESUME_DECISION" // Resume decision outcome (PR207)
+  | "RESUME_REEXEC_ATTEMPT" // Resume re-execution attempt (PR208)
+  | "RESUME_REEXEC_RESULT" // Resume re-execution result (PR208)
   | "RUN_START" // TWAP run started
   | "RUN_STOP" // TWAP run stopped
   | "CHUNK_START" // Chunk execution started
   | "CHUNK_RESULT" // Chunk execution completed
+  | "PHASE_CHANGE" // Phase transition detected (PR211)
   | "EXECUTE_ATTEMPT" // Execute attempt (PR195)
   | "EXECUTE_RESULT" // Execute outcome (PR194)
   | "POLICY_BLOCK" // Policy blocked execution

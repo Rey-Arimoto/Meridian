@@ -391,6 +391,15 @@ export interface RunPlan {
 
   // PR196: Execution mode (default: SIM_ONLY)
   executionMode?: ExecutionMode;
+
+  // PR208: Resume re-execution link (optional, only for resumed runs)
+  resumeId?: string;
+  previousRunId?: string;
+  resumeStopReason?: StopReason;
+
+  // PR209: Resume origin context (propagated from resumeState for telemetry traceability)
+  resumeOriginStopCause?: StopCause;
+  resumeOriginRunReasonCodes?: string[];
 }
 
 /**
@@ -482,6 +491,44 @@ export type StopReason =
   | "STOP_UNKNOWN";
 
 /**
+ * PR209: Stop cause attribution (high-level category)
+ */
+export type StopCause = "GATE" | "POLICY" | "PHASE" | "TIMEOUT" | "NONE";
+
+/**
+ * PR211: Phase transition reason taxonomy (PHASE explainability v1)
+ *
+ * Purpose:
+ *   Track WHY phase transitions occurred (not just that they did).
+ *   Label-only, defensive, deterministic.
+ *
+ * Transition types (what changed):
+ *   - PHASE_TXN_*: Describes the state machine transition
+ *
+ * Trigger categories (why it changed):
+ *   - PHASE_TRIG_*: Root cause of the transition
+ */
+export type PhaseTransitionReasonCode =
+  // Transition types (state machine edges)
+  | "PHASE_TXN_NORMAL_TO_RANGE"
+  | "PHASE_TXN_RANGE_TO_DOWN_SHOCK"
+  | "PHASE_TXN_RANGE_TO_UP_REVERSAL"
+  | "PHASE_TXN_DOWN_SHOCK_TO_RANGE"
+  | "PHASE_TXN_UP_REVERSAL_TO_RANGE"
+  | "PHASE_TXN_UNKNOWN"
+  // Trigger categories (root causes)
+  | "PHASE_TRIG_GATE_BLOCK"
+  | "PHASE_TRIG_POLICY_HARDSTOP"
+  | "PHASE_TRIG_QUOTE_IMPACT_ELEVATED"
+  | "PHASE_TRIG_SLIPPAGE_ELEVATED"
+  | "PHASE_TRIG_MINOUT_ZERO"
+  | "PHASE_TRIG_MINOUT_UNAVAILABLE"
+  | "PHASE_TRIG_EXEC_ERROR"
+  | "PHASE_TRIG_EXEC_DISABLED"
+  | "PHASE_TRIG_TIMEOUT_PRESSURE"
+  | "PHASE_TRIG_UNKNOWN";
+
+/**
  * Resume state (stopped run state for resume evaluation)
  */
 export interface ResumeState {
@@ -511,4 +558,8 @@ export interface ResumeState {
 
   // Warnings (label-only)
   warnings: string[];
+
+  // PR209: Resume origin context (persisted from original STOP for telemetry traceability)
+  originStopCause?: StopCause;
+  originRunReasonCodes?: string[];
 }

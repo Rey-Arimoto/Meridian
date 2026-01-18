@@ -33,8 +33,10 @@ import {
   TxDraft,
   ResumeState,
   StopReason,
+  StopCause,
   ExecutionMode,
   LiveUnlockStatus,
+  PhaseTransitionReasonCode,
 } from "./types";
 import { CHUNKING_PARAMS } from "./chunking";
 import {
@@ -162,6 +164,130 @@ export function summarizeReasonCodesV1(
  * Constitutional: READ-ONLY, defensive (never throws)
  */
 export function summarizeRunReasonCodesV1(
+  codes?: unknown[],
+  maxCodes = 8
+): { status: "PRESENT" | "EMPTY"; joined: string } {
+  try {
+    // Empty/undefined → EMPTY
+    if (!Array.isArray(codes)) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Filter to strings only (defensive)
+    const filtered = codes.filter((c) => typeof c === "string") as string[];
+    if (filtered.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Deduplicate via Set
+    const unique = Array.from(new Set(filtered));
+
+    // Sort alphabetically (deterministic)
+    unique.sort();
+
+    // Take first maxCodes items
+    const sliced = unique.slice(0, maxCodes);
+
+    // If truncated, append REASONS_TRUNCATED
+    if (unique.length > maxCodes) {
+      sliced.push("REASONS_TRUNCATED");
+    }
+
+    // Join with "|" separator
+    const joined = sliced.join("|");
+
+    return { status: "PRESENT", joined };
+  } catch (error) {
+    // Defensive: Never throw, return EMPTY
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
+ * PR210: Compute reason code diff between origin and current (label-only, defensive)
+ *
+ * @param args.originCodes - Origin reason codes (from resumeState)
+ * @param args.currentCodes - Current reason codes (at run start)
+ * @param args.maxCodes - Max codes to include (default 8)
+ * @returns Resolved and introduced reason code summaries
+ *
+ * Constitutional: READ-ONLY, defensive (never throws), label-only, deterministic
+ */
+export function summarizeReasonDiffV1(args: {
+  originCodes?: unknown[];
+  currentCodes?: unknown[];
+  maxCodes?: number;
+}): {
+  resolved: { status: "PRESENT" | "EMPTY"; joined: string };
+  introduced: { status: "PRESENT" | "EMPTY"; joined: string };
+} {
+  try {
+    const maxCodes = args.maxCodes ?? 8;
+
+    // Defensive: filter to string-only sets
+    const originSet = new Set<string>(
+      Array.isArray(args.originCodes)
+        ? (args.originCodes.filter((c) => typeof c === "string") as string[])
+        : []
+    );
+    const currentSet = new Set<string>(
+      Array.isArray(args.currentCodes)
+        ? (args.currentCodes.filter((c) => typeof c === "string") as string[])
+        : []
+    );
+
+    // Compute diffs
+    // resolved = origin - current (codes that were in origin but not in current)
+    const resolvedCodes = Array.from(originSet).filter((c) => !currentSet.has(c));
+    // introduced = current - origin (codes in current but not in origin)
+    const introducedCodes = Array.from(currentSet).filter((c) => !originSet.has(c));
+
+    // Format resolved
+    let resolvedSummary: { status: "PRESENT" | "EMPTY"; joined: string };
+    if (resolvedCodes.length === 0) {
+      resolvedSummary = { status: "EMPTY", joined: "" };
+    } else {
+      const sortedResolved = resolvedCodes.sort();
+      const slicedResolved = sortedResolved.slice(0, maxCodes);
+      if (sortedResolved.length > maxCodes) {
+        slicedResolved.push("REASONS_TRUNCATED");
+      }
+      resolvedSummary = { status: "PRESENT", joined: slicedResolved.join("|") };
+    }
+
+    // Format introduced
+    let introducedSummary: { status: "PRESENT" | "EMPTY"; joined: string };
+    if (introducedCodes.length === 0) {
+      introducedSummary = { status: "EMPTY", joined: "" };
+    } else {
+      const sortedIntroduced = introducedCodes.sort();
+      const slicedIntroduced = sortedIntroduced.slice(0, maxCodes);
+      if (sortedIntroduced.length > maxCodes) {
+        slicedIntroduced.push("REASONS_TRUNCATED");
+      }
+      introducedSummary = { status: "PRESENT", joined: slicedIntroduced.join("|") };
+    }
+
+    return { resolved: resolvedSummary, introduced: introducedSummary };
+  } catch (error) {
+    // Defensive: Never throw, return EMPTY for both
+    return {
+      resolved: { status: "EMPTY", joined: "" },
+      introduced: { status: "EMPTY", joined: "" },
+    };
+  }
+}
+
+/**
+ * PR211: Summarize phase transition codes (label-only, defensive)
+ *
+ * @param codes - Phase transition reason codes (PHASE_TXN_* / PHASE_TRIG_*)
+ * @param maxCodes - Max codes to include (default 8)
+ * @returns Summary with status and joined string
+ *
+ * Constitutional: READ-ONLY, defensive (never throws), label-only, deterministic
+ */
+export function summarizePhaseTransitionCodesV1(
   codes?: unknown[],
   maxCodes = 8
 ): { status: "PRESENT" | "EMPTY"; joined: string } {
@@ -351,7 +477,7 @@ export interface RunnerDeps {
 }
 
 /**
- * PR162: Create resume state (helper for STOP scenarios)
+ * PR162/PR209: Create resume state (helper for STOP scenarios)
  *
  * @param stopReason - Stop reason (label-only)
  * @param nowMs - Current timestamp (internal numeric only)
@@ -359,6 +485,8 @@ export interface RunnerDeps {
  * @param lastPhase - Last phase label (optional, label-only)
  * @param lastRoute - Last route (optional, label-only)
  * @param warnings - Warnings (optional, label-only)
+ * @param originStopCause - PR209: Origin stop cause for resume traceability (optional)
+ * @param originRunReasonCodes - PR209: Origin run reason codes for resume traceability (optional)
  * @returns Resume state
  */
 function createResumeState(
@@ -367,7 +495,9 @@ function createResumeState(
   runPlan: RunPlan,
   lastPhase?: string,
   lastRoute?: string,
-  warnings: string[] = []
+  warnings: string[] = [],
+  originStopCause?: StopCause,
+  originRunReasonCodes?: string[]
 ): ResumeState {
   const state: ResumeState = {
     status: "STOPPED",
@@ -378,6 +508,9 @@ function createResumeState(
     lastTemplateId: runPlan.templateId,
     lastIntent: runPlan.chunks[0]?.intent, // Use first chunk intent
     warnings,
+    // PR209: Resume origin context (defensive defaults)
+    originStopCause: originStopCause ?? "NONE",
+    originRunReasonCodes: originRunReasonCodes ?? [],
   };
 
   // Add resumeAfterTs for specific stop reasons
@@ -428,6 +561,50 @@ const RUN_PHASE_DOWN_SHOCK = "RUN_PHASE_DOWN_SHOCK";
 const RUN_PHASE_UP_REVERSAL = "RUN_PHASE_UP_REVERSAL";
 const RUN_TIMEOUT_STOP = "RUN_TIMEOUT_STOP";
 const RUN_BLOCKED_STREAK_STOP = "RUN_BLOCKED_STREAK_STOP";
+
+/**
+ * PR210: Resume re-execution start context reason codes
+ * Used to build "current" reason set at RUN_START for diff computation
+ */
+const RUN_REASON_RESUME_REEXEC_START = "RUN_REASON_RESUME_REEXEC_START";
+const RUN_REASON_EXEC_MODE_SIM_ONLY = "RUN_REASON_EXEC_MODE_SIM_ONLY";
+const RUN_REASON_EXEC_MODE_DRY_RUN = "RUN_REASON_EXEC_MODE_DRY_RUN";
+const RUN_REASON_EXEC_MODE_LIVE = "RUN_REASON_EXEC_MODE_LIVE";
+const RUN_REASON_RESUME_FROM_GATE = "RUN_REASON_RESUME_FROM_GATE";
+const RUN_REASON_RESUME_FROM_POLICY = "RUN_REASON_RESUME_FROM_POLICY";
+const RUN_REASON_RESUME_FROM_PHASE = "RUN_REASON_RESUME_FROM_PHASE";
+const RUN_REASON_RESUME_FROM_TIMEOUT = "RUN_REASON_RESUME_FROM_TIMEOUT";
+const RUN_REASON_RESUME_FROM_NONE = "RUN_REASON_RESUME_FROM_NONE";
+const RUN_REASON_LIVE_UNLOCK_UNLOCKED = "RUN_REASON_LIVE_UNLOCK_UNLOCKED";
+const RUN_REASON_LIVE_UNLOCK_LOCKED_ENV = "RUN_REASON_LIVE_UNLOCK_LOCKED_ENV";
+const RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC = "RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC";
+const RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_EXPIRED = "RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_EXPIRED";
+const RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK = "RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK";
+const RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN = "RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN";
+
+/**
+ * PR211: Phase transition reason code constants
+ * Used for tracking phase transitions in chunk-level and run-level telemetry
+ */
+// Transition types (state machine edges)
+const PHASE_TXN_NORMAL_TO_RANGE: PhaseTransitionReasonCode = "PHASE_TXN_NORMAL_TO_RANGE";
+const PHASE_TXN_RANGE_TO_DOWN_SHOCK: PhaseTransitionReasonCode = "PHASE_TXN_RANGE_TO_DOWN_SHOCK";
+const PHASE_TXN_RANGE_TO_UP_REVERSAL: PhaseTransitionReasonCode = "PHASE_TXN_RANGE_TO_UP_REVERSAL";
+const PHASE_TXN_DOWN_SHOCK_TO_RANGE: PhaseTransitionReasonCode = "PHASE_TXN_DOWN_SHOCK_TO_RANGE";
+const PHASE_TXN_UP_REVERSAL_TO_RANGE: PhaseTransitionReasonCode = "PHASE_TXN_UP_REVERSAL_TO_RANGE";
+const PHASE_TXN_UNKNOWN: PhaseTransitionReasonCode = "PHASE_TXN_UNKNOWN";
+
+// Trigger categories (root causes)
+const PHASE_TRIG_GATE_BLOCK: PhaseTransitionReasonCode = "PHASE_TRIG_GATE_BLOCK";
+const PHASE_TRIG_POLICY_HARDSTOP: PhaseTransitionReasonCode = "PHASE_TRIG_POLICY_HARDSTOP";
+const PHASE_TRIG_QUOTE_IMPACT_ELEVATED: PhaseTransitionReasonCode = "PHASE_TRIG_QUOTE_IMPACT_ELEVATED";
+const PHASE_TRIG_SLIPPAGE_ELEVATED: PhaseTransitionReasonCode = "PHASE_TRIG_SLIPPAGE_ELEVATED";
+const PHASE_TRIG_MINOUT_ZERO: PhaseTransitionReasonCode = "PHASE_TRIG_MINOUT_ZERO";
+const PHASE_TRIG_MINOUT_UNAVAILABLE: PhaseTransitionReasonCode = "PHASE_TRIG_MINOUT_UNAVAILABLE";
+const PHASE_TRIG_EXEC_ERROR: PhaseTransitionReasonCode = "PHASE_TRIG_EXEC_ERROR";
+const PHASE_TRIG_EXEC_DISABLED: PhaseTransitionReasonCode = "PHASE_TRIG_EXEC_DISABLED";
+const PHASE_TRIG_TIMEOUT_PRESSURE: PhaseTransitionReasonCode = "PHASE_TRIG_TIMEOUT_PRESSURE";
+const PHASE_TRIG_UNKNOWN: PhaseTransitionReasonCode = "PHASE_TRIG_UNKNOWN";
 
 /**
  * Run chunked execution (TWAP-lite v1)
@@ -486,15 +663,100 @@ export async function runChunkedExecutionV1(
     envUnlock,
   });
 
-  // PR188c/PR196/PR199: Emit RUN_START lifecycle event
+  // PR188c/PR196/PR199/PR208: Emit RUN_START lifecycle event
+  const runStartLabels: Record<string, string> = {
+    run_id: runPlan.runId,
+    template_id: runPlan.templateId,
+    total_chunks: `${runPlan.chunks.length}`,
+    execution_mode: executionMode, // PR196
+    live_unlock_status: liveUnlockStatus, // PR199
+  };
+
+  // PR208: Add resume link labels (if resume re-execution)
+  if (runPlan.resumeId) {
+    runStartLabels.resume_id = runPlan.resumeId;
+  }
+  if (runPlan.previousRunId) {
+    runStartLabels.previous_run_id = runPlan.previousRunId;
+  }
+  if (runPlan.resumeStopReason) {
+    runStartLabels.resume_stop_reason = runPlan.resumeStopReason;
+  }
+
+  // PR209: Add resume origin labels (if origin context present)
+  if (runPlan.resumeOriginStopCause) {
+    runStartLabels.resume_origin_stop_cause = runPlan.resumeOriginStopCause;
+  }
+  if (runPlan.resumeOriginRunReasonCodes) {
+    const originSummary = summarizeRunReasonCodesV1(runPlan.resumeOriginRunReasonCodes);
+    runStartLabels.resume_origin_reason_codes_status = originSummary.status;
+    runStartLabels.resume_origin_reason_codes = originSummary.joined;
+  }
+
+  // PR210: Add resume diff labels (origin vs current start context)
+  if (runPlan.resumeOriginRunReasonCodes) {
+    // Build "current" start context reasons (deterministic, label-only)
+    const currentStartReasons: string[] = [];
+
+    // Always add resume re-exec marker
+    currentStartReasons.push(RUN_REASON_RESUME_REEXEC_START);
+
+    // Add execution mode reason
+    if (executionMode === "SIM_ONLY") {
+      currentStartReasons.push(RUN_REASON_EXEC_MODE_SIM_ONLY);
+    } else if (executionMode === "DRY_RUN") {
+      currentStartReasons.push(RUN_REASON_EXEC_MODE_DRY_RUN);
+    } else if (executionMode === "LIVE") {
+      currentStartReasons.push(RUN_REASON_EXEC_MODE_LIVE);
+    }
+
+    // Add LIVE unlock status reason (if LIVE mode)
+    if (executionMode === "LIVE") {
+      if (liveUnlockStatus === "UNLOCKED") {
+        currentStartReasons.push(RUN_REASON_LIVE_UNLOCK_UNLOCKED);
+      } else if (liveUnlockStatus === "LOCKED_ENV") {
+        currentStartReasons.push(RUN_REASON_LIVE_UNLOCK_LOCKED_ENV);
+      } else if (liveUnlockStatus === "LOCKED_SPEC") {
+        currentStartReasons.push(RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC);
+      } else if (liveUnlockStatus === "LOCKED_SPEC_EXPIRED") {
+        currentStartReasons.push(RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_EXPIRED);
+      } else if (liveUnlockStatus === "LOCKED_SPEC_PENDING_ACK") {
+        currentStartReasons.push(RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK);
+      } else if (liveUnlockStatus === "LOCKED_UNKNOWN") {
+        currentStartReasons.push(RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN);
+      }
+    }
+
+    // Add resume-from reason (origin stop cause)
+    if (runPlan.resumeOriginStopCause) {
+      if (runPlan.resumeOriginStopCause === "GATE") {
+        currentStartReasons.push(RUN_REASON_RESUME_FROM_GATE);
+      } else if (runPlan.resumeOriginStopCause === "POLICY") {
+        currentStartReasons.push(RUN_REASON_RESUME_FROM_POLICY);
+      } else if (runPlan.resumeOriginStopCause === "PHASE") {
+        currentStartReasons.push(RUN_REASON_RESUME_FROM_PHASE);
+      } else if (runPlan.resumeOriginStopCause === "TIMEOUT") {
+        currentStartReasons.push(RUN_REASON_RESUME_FROM_TIMEOUT);
+      } else if (runPlan.resumeOriginStopCause === "NONE") {
+        currentStartReasons.push(RUN_REASON_RESUME_FROM_NONE);
+      }
+    }
+
+    // Compute diff: origin vs current start context
+    const diff = summarizeReasonDiffV1({
+      originCodes: runPlan.resumeOriginRunReasonCodes,
+      currentCodes: currentStartReasons,
+    });
+
+    // Add diff labels
+    runStartLabels.resume_resolved_reason_codes_status = diff.resolved.status;
+    runStartLabels.resume_resolved_reason_codes = diff.resolved.joined;
+    runStartLabels.resume_introduced_reason_codes_status = diff.introduced.status;
+    runStartLabels.resume_introduced_reason_codes = diff.introduced.joined;
+  }
+
   await appendEventV1(
-    createEventV1("RUN_START", "INFO", {
-      run_id: runPlan.runId,
-      template_id: runPlan.templateId,
-      total_chunks: `${runPlan.chunks.length}`,
-      execution_mode: executionMode, // PR196
-      live_unlock_status: liveUnlockStatus, // PR199
-    })
+    createEventV1("RUN_START", "INFO", runStartLabels)
   ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
   let consecutiveBlockCount = 0;
@@ -513,6 +775,10 @@ export async function runChunkedExecutionV1(
 
   // PR200: Track run-level reason codes (LIVE blocks, etc.)
   const runLevelReasonCodes = new Set<string>();
+
+  // PR211: Track phase transitions
+  let prevPhase: PhaseLabel = "PHASE_UNKNOWN"; // Track previous phase for transition detection
+  let phaseTransitionCodes: PhaseTransitionReasonCode[] = []; // Transition codes for current chunk
 
   try {
     // Check if run plan has no chunks
@@ -588,7 +854,10 @@ export async function runChunkedExecutionV1(
             nowMs,
             runPlan,
             prevPhase,
-            prevRoute
+            prevRoute,
+            [], // warnings
+            stopCause, // PR209: origin stopCause
+            Array.from(runLevelReasonCodes) // PR209: origin run reason codes
           ),
         };
       }
@@ -622,7 +891,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             prevPhase,
             prevRoute,
-            ["WARN_PORTFOLIO_FETCH_ERROR"]
+            ["WARN_PORTFOLIO_FETCH_ERROR"],
+            stopCause, // PR209: origin stopCause (NONE for error path)
+            Array.from(runLevelReasonCodes) // PR209: origin run reason codes
           ),
         };
       }
@@ -681,9 +952,41 @@ export async function runChunkedExecutionV1(
               runPlan,
               currentPhase,
               prevRoute,
-              phaseDecision.warnings
+              phaseDecision.warnings,
+              stopCause, // PR209: origin stopCause
+              Array.from(runLevelReasonCodes) // PR209: origin run reason codes
             ),
           };
+        }
+
+        // PR211: Detect phase transition and determine reason codes
+        phaseTransitionCodes = []; // Reset for this chunk
+        if (prevPhase !== "PHASE_UNKNOWN" && currentPhase !== prevPhase) {
+          // Phase transition detected - determine transition type
+          const transitionKey = `${prevPhase}_TO_${currentPhase}`;
+
+          // Map transition to taxonomy
+          if (transitionKey === "PHASE_NORMAL_TO_PHASE_RANGE") {
+            phaseTransitionCodes.push(PHASE_TXN_NORMAL_TO_RANGE);
+          } else if (transitionKey === "PHASE_RANGE_TO_PHASE_DOWN_SHOCK") {
+            phaseTransitionCodes.push(PHASE_TXN_RANGE_TO_DOWN_SHOCK);
+          } else if (transitionKey === "PHASE_RANGE_TO_PHASE_UP_REVERSAL") {
+            phaseTransitionCodes.push(PHASE_TXN_RANGE_TO_UP_REVERSAL);
+          } else if (transitionKey === "PHASE_DOWN_SHOCK_TO_PHASE_RANGE") {
+            phaseTransitionCodes.push(PHASE_TXN_DOWN_SHOCK_TO_RANGE);
+          } else if (transitionKey === "PHASE_UP_REVERSAL_TO_PHASE_RANGE") {
+            phaseTransitionCodes.push(PHASE_TXN_UP_REVERSAL_TO_RANGE);
+          } else {
+            phaseTransitionCodes.push(PHASE_TXN_UNKNOWN);
+          }
+
+          // Add trigger codes (will be populated below based on execution context)
+          // Note: Triggers are determined by gate/policy/exec outcomes later in the chunk
+
+          // PR211: Promote phase transition codes to run-level
+          for (const code of phaseTransitionCodes) {
+            runLevelReasonCodes.add(`RUN_${code}`);
+          }
         }
 
         // Update prevPhase for next chunk
@@ -819,7 +1122,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_GATE_EVALUATION_ERROR"]
+            ["WARN_GATE_EVALUATION_ERROR"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -909,7 +1214,9 @@ export async function runChunkedExecutionV1(
               runPlan,
               currentPhase,
               selectedRoute,
-              gateResult.warnings
+              gateResult.warnings,
+              stopCause, // PR209
+              Array.from(runLevelReasonCodes) // PR209
             ),
           };
         }
@@ -981,7 +1288,9 @@ export async function runChunkedExecutionV1(
               runPlan,
               currentPhase,
               selectedRoute,
-              gateResult.warnings
+              gateResult.warnings,
+              stopCause, // PR209
+              Array.from(runLevelReasonCodes) // PR209
             ),
           };
         }
@@ -1030,7 +1339,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_GATE_ERROR"]
+            ["WARN_GATE_ERROR"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -1069,7 +1380,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_POLICY_EVALUATION_ERROR"]
+            ["WARN_POLICY_EVALUATION_ERROR"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -1157,7 +1470,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_POLICY_DENIES_EXECUTION"]
+            ["WARN_POLICY_DENIES_EXECUTION"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -1211,7 +1526,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_TX_DRAFT_BUILD_ERROR"]
+            ["WARN_TX_DRAFT_BUILD_ERROR"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -1297,7 +1614,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_LIVE_MODE_NOT_UNLOCKED"]
+            ["WARN_LIVE_MODE_NOT_UNLOCKED"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -1407,7 +1726,9 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_TX_EXECUTION_ERROR"]
+            ["WARN_TX_EXECUTION_ERROR"],
+            stopCause, // PR209
+            Array.from(runLevelReasonCodes) // PR209
           ),
         };
       }
@@ -1438,6 +1759,8 @@ export async function runChunkedExecutionV1(
         ) {
           lastChunkReasonCodes = txDraft.executionReasonCodes;
         }
+        // PR211: Summarize phase transition codes
+        const phaseTransitionSummary = summarizePhaseTransitionCodesV1(phaseTransitionCodes);
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "EXECUTED",
@@ -1456,6 +1779,8 @@ export async function runChunkedExecutionV1(
             live_unlock_status: liveUnlockStatus, // PR199
             venue: txDraft.route,
             phase: currentPhase,
+            phase_transition_status: phaseTransitionSummary.status, // PR211
+            phase_transition_codes: phaseTransitionSummary.joined, // PR211
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1486,6 +1811,8 @@ export async function runChunkedExecutionV1(
         ) {
           lastChunkReasonCodes = txDraft.executionReasonCodes;
         }
+        // PR211: Summarize phase transition codes
+        const phaseTransitionSummary2 = summarizePhaseTransitionCodesV1(phaseTransitionCodes);
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
@@ -1503,6 +1830,8 @@ export async function runChunkedExecutionV1(
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
+            phase_transition_status: phaseTransitionSummary2.status, // PR211
+            phase_transition_codes: phaseTransitionSummary2.joined, // PR211
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1534,6 +1863,7 @@ export async function runChunkedExecutionV1(
         ) {
           lastChunkReasonCodes = txDraft.executionReasonCodes;
         }
+        const phaseTransitionSummary3 = summarizePhaseTransitionCodesV1(phaseTransitionCodes);
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED", // DRY_RUN counted as SIMULATED
@@ -1551,6 +1881,8 @@ export async function runChunkedExecutionV1(
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
+            phase_transition_status: phaseTransitionSummary3.status, // PR211
+            phase_transition_codes: phaseTransitionSummary3.joined, // PR211
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1581,6 +1913,7 @@ export async function runChunkedExecutionV1(
         ) {
           lastChunkReasonCodes = txDraft.executionReasonCodes;
         }
+        const phaseTransitionSummary4 = summarizePhaseTransitionCodesV1(phaseTransitionCodes);
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
@@ -1598,6 +1931,8 @@ export async function runChunkedExecutionV1(
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
+            phase_transition_status: phaseTransitionSummary4.status, // PR211
+            phase_transition_codes: phaseTransitionSummary4.joined, // PR211
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1629,6 +1964,7 @@ export async function runChunkedExecutionV1(
         ) {
           lastChunkReasonCodes = txDraft.executionReasonCodes;
         }
+        const phaseTransitionSummary5 = summarizePhaseTransitionCodesV1(phaseTransitionCodes);
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "ERROR", {
             chunk_status: "ERROR",
@@ -1646,6 +1982,8 @@ export async function runChunkedExecutionV1(
             execution_mode: executionMode, // PR196
             live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
+            phase_transition_status: phaseTransitionSummary5.status, // PR211
+            phase_transition_codes: phaseTransitionSummary5.joined, // PR211
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1682,27 +2020,41 @@ export async function runChunkedExecutionV1(
       finishedAtMs: getNowMs(),
     };
   } finally {
-    // PR188c/PR188d/PR189/PR193/PR196/PR200: Emit RUN_STOP lifecycle event (always runs)
+    // PR188c/PR188d/PR189/PR193/PR196/PR200/PR209: Emit RUN_STOP lifecycle event (always runs)
     // PR200: Merge chunk-level and run-level reason codes for RUN_STOP summary
     const mergedRunReasons = [
       ...(lastChunkReasonCodes ?? []),
       ...Array.from(runLevelReasonCodes),
     ];
     const runReasonSummary = summarizeRunReasonCodesV1(mergedRunReasons);
+
+    // PR209: Build RUN_STOP labels with origin context (if present)
+    const runStopLabels: Record<string, string> = {
+      run_id: runPlan.runId,
+      run_status: finalStatus,
+      stop_cause: stopCause, // PR189: Stop attribution
+      total_chunks: `${runPlan.chunks.length}`,
+      executed_chunks: `${executedCount}`, // PR188d: Use counter
+      simulated_chunks: `${simulatedCount}`, // PR188d: New counter
+      chunk_results: `${chunkResultCount}`, // PR188d: New counter
+      run_reason_codes_status: runReasonSummary.status, // PR193
+      run_reason_codes: runReasonSummary.joined, // PR193
+      execution_mode: executionMode, // PR196
+      live_unlock_status: liveUnlockStatus, // PR199
+    };
+
+    // PR209: Add resume origin labels (if origin context present)
+    if (runPlan.resumeOriginStopCause) {
+      runStopLabels.resume_origin_stop_cause = runPlan.resumeOriginStopCause;
+    }
+    if (runPlan.resumeOriginRunReasonCodes) {
+      const originSummary = summarizeRunReasonCodesV1(runPlan.resumeOriginRunReasonCodes);
+      runStopLabels.resume_origin_reason_codes_status = originSummary.status;
+      runStopLabels.resume_origin_reason_codes = originSummary.joined;
+    }
+
     await appendEventV1(
-      createEventV1("RUN_STOP", "INFO", {
-        run_id: runPlan.runId,
-        run_status: finalStatus,
-        stop_cause: stopCause, // PR189: Stop attribution
-        total_chunks: `${runPlan.chunks.length}`,
-        executed_chunks: `${executedCount}`, // PR188d: Use counter
-        simulated_chunks: `${simulatedCount}`, // PR188d: New counter
-        chunk_results: `${chunkResultCount}`, // PR188d: New counter
-        run_reason_codes_status: runReasonSummary.status, // PR193
-        run_reason_codes: runReasonSummary.joined, // PR193
-        execution_mode: executionMode, // PR196
-        live_unlock_status: liveUnlockStatus, // PR199
-      })
+      createEventV1("RUN_STOP", "INFO", runStopLabels)
     ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }
 }
