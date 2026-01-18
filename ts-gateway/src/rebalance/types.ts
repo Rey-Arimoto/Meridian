@@ -429,6 +429,39 @@ export interface RunResult {
 export type ResumeStatus = "RESUMABLE" | "WAIT" | "ABANDON" | "UNKNOWN";
 
 /**
+ * PR207: Resume Reason Code (Resumability Explainability)
+ * Structured reason codes for resume evaluation decisions
+ */
+export type ResumeReasonCode =
+  // Decision codes
+  | "RESUME_PRESENT"
+  | "RESUME_NOT_PRESENT"
+  | "RESUME_ALLOWED"
+  | "RESUME_BLOCKED"
+  | "RESUME_EXPIRED"
+  | "RESUME_UNKNOWN"
+  // Oracle condition codes
+  | "RESUME_ORACLE_AVAILABLE"
+  | "RESUME_ORACLE_UNAVAILABLE"
+  // Gate condition codes
+  | "RESUME_GATE_PASS"
+  | "RESUME_GATE_BLOCK"
+  // Route condition codes
+  | "RESUME_ROUTE_AVAILABLE"
+  | "RESUME_ROUTE_UNAVAILABLE"
+  // Policy condition codes
+  | "RESUME_POLICY_ENV_ENABLED"
+  | "RESUME_POLICY_ENV_DISABLED"
+  | "RESUME_HARDSTOP_ACTIVE"
+  | "RESUME_HARDSTOP_INACTIVE"
+  // Phase condition codes
+  | "RESUME_PHASE_NORMAL"
+  | "RESUME_PHASE_RISK"
+  // Timeout condition codes
+  | "RESUME_TIMEOUT_EXCEEDED"
+  | "RESUME_TIMEOUT_OK";
+
+/**
  * Stop reason (label-only)
  */
 export type StopReason =

@@ -18,6 +18,7 @@
 export type TelemetryEventType =
   | "SUPERVISOR_TICK" // Supervisor tick started
   | "RESUME_EVAL" // Resume condition evaluation
+  | "RESUME_DECISION" // Resume decision outcome (PR207)
   | "RUN_START" // TWAP run started
   | "RUN_STOP" // TWAP run stopped
   | "CHUNK_START" // Chunk execution started

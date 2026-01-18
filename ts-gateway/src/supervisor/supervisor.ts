@@ -93,6 +93,153 @@ export interface SupervisorDeps {
 }
 
 /**
+ * PR207: Summarize resume reason codes for telemetry
+ *
+ * @param codes - Array of resume reason code strings
+ * @param maxCodes - Maximum number of codes to include (default: 8)
+ * @returns Summary object with status and joined string
+ *
+ * Rules:
+ * - Empty/undefined → {status: "EMPTY", joined: ""}
+ * - Filter to string-only values (defensive)
+ * - Deduplicate via Set
+ * - Sort alphabetically (deterministic)
+ * - Truncate to maxCodes (with REASONS_TRUNCATED marker)
+ * - Join with pipe separator
+ */
+function summarizeResumeReasonCodesV1(
+  codes?: unknown[],
+  maxCodes: number = 8
+): { status: "PRESENT" | "EMPTY"; joined: string } {
+  try {
+    if (!Array.isArray(codes) || codes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Filter to strings only (defensive)
+    const stringCodes = codes.filter(
+      (c): c is string => typeof c === "string" && c.length > 0
+    );
+    if (stringCodes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Deduplicate and sort
+    const unique = Array.from(new Set(stringCodes)).sort();
+
+    // Truncate if needed
+    let final = unique;
+    if (unique.length > maxCodes) {
+      final = unique.slice(0, maxCodes);
+      final.push("REASONS_TRUNCATED");
+    }
+
+    return { status: "PRESENT", joined: final.join("|") };
+  } catch {
+    // Defensive: Never throw
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
+ * PR207: Derive resume reason codes from inputs and decision
+ *
+ * @param inputs - Resume inputs
+ * @param decision - Resume decision
+ * @param resumeState - Resume state (optional)
+ * @returns Array of resume reason codes
+ *
+ * Maps resume evaluation inputs and decision to structured reason codes.
+ * Always returns at least one code (RESUME_UNKNOWN as fallback).
+ */
+function deriveResumeReasonCodesV1(
+  inputs: ResumeInputs,
+  decision: { status: string; reasons: string[] },
+  resumeState?: any
+): import("../rebalance/types").ResumeReasonCode[] {
+  const codes: import("../rebalance/types").ResumeReasonCode[] = [];
+
+  try {
+    // Decision status
+    if (decision.status === "RESUMABLE") {
+      codes.push("RESUME_ALLOWED");
+    } else if (decision.status === "WAIT") {
+      codes.push("RESUME_BLOCKED");
+    } else if (decision.status === "ABANDON") {
+      codes.push("RESUME_EXPIRED");
+    } else {
+      codes.push("RESUME_UNKNOWN");
+    }
+
+    // Oracle condition
+    if (inputs.oracleStatus === "AVAILABLE") {
+      codes.push("RESUME_ORACLE_AVAILABLE");
+    } else if (inputs.oracleStatus === "STALE" || inputs.oracleStatus === "ERROR") {
+      codes.push("RESUME_ORACLE_UNAVAILABLE");
+    }
+
+    // Gate condition
+    if (inputs.gateStatus === "PASS") {
+      codes.push("RESUME_GATE_PASS");
+    } else if (inputs.gateStatus === "BLOCK" || inputs.gateStatus === "ERROR") {
+      codes.push("RESUME_GATE_BLOCK");
+    }
+
+    // Route condition
+    if (inputs.routeAvailable === true) {
+      codes.push("RESUME_ROUTE_AVAILABLE");
+    } else if (inputs.routeAvailable === false) {
+      codes.push("RESUME_ROUTE_UNAVAILABLE");
+    }
+
+    // Policy/HardStop condition
+    if (inputs.hardStopActive === true) {
+      codes.push("RESUME_HARDSTOP_ACTIVE");
+    } else if (inputs.hardStopActive === false) {
+      codes.push("RESUME_HARDSTOP_INACTIVE");
+    }
+
+    if (inputs.policyEnvEnabled === true) {
+      codes.push("RESUME_POLICY_ENV_ENABLED");
+    } else if (inputs.policyEnvEnabled === false) {
+      codes.push("RESUME_POLICY_ENV_DISABLED");
+    }
+
+    // Phase condition
+    const phaseLabel = inputs.phaseLabel;
+    if (phaseLabel === "PHASE_NORMAL" || phaseLabel === "PHASE_RECOVERY") {
+      codes.push("RESUME_PHASE_NORMAL");
+    } else if (
+      phaseLabel === "PHASE_DOWN_SHOCK" ||
+      phaseLabel === "PHASE_UP_SHOCK" ||
+      phaseLabel === "PHASE_UP_REVERSAL" ||
+      phaseLabel === "PHASE_DOWN_REVERSAL"
+    ) {
+      codes.push("RESUME_PHASE_RISK");
+    }
+
+    // Timeout condition (check if resumeAfterTs is set and if we've passed it)
+    if (resumeState?.resumeAfterTs) {
+      if (inputs.nowTs >= resumeState.resumeAfterTs) {
+        codes.push("RESUME_TIMEOUT_OK");
+      } else {
+        codes.push("RESUME_TIMEOUT_EXCEEDED");
+      }
+    }
+
+    // Defensive fallback
+    if (codes.length === 0) {
+      codes.push("RESUME_UNKNOWN");
+    }
+
+    return codes;
+  } catch {
+    // Defensive: Never throw
+    return ["RESUME_UNKNOWN"];
+  }
+}
+
+/**
  * Run supervisor once (single tick)
  *
  * @param store - State store
@@ -271,12 +418,32 @@ export async function runSupervisorOnceV1(
       const resumeDecision = evaluateResumeV1(state.resumeState, resumeInputs);
       notes.push(`NOTE_RESUME_DECISION_${resumeDecision.status}`);
 
-      // PR164: Emit RESUME_EVAL event
+      // PR207: Derive resume reason codes for explainability
+      const resumeReasonCodes = deriveResumeReasonCodesV1(
+        resumeInputs,
+        resumeDecision,
+        state.resumeState
+      );
+      const resumeReasonSummary = summarizeResumeReasonCodesV1(resumeReasonCodes);
+
+      // PR164/PR207: Emit RESUME_EVAL event with reason codes
       await appendEventV1(
         createEventV1("RESUME_EVAL", "INFO", {
           resume_status: resumeDecision.status,
           stop_reason: state.resumeState.stopReason,
+          resume_reason_codes_status: resumeReasonSummary.status, // PR207
+          resume_reason_codes: resumeReasonSummary.joined, // PR207
         }, resumeDecision.reasons)
+      ).catch(() => {});
+
+      // PR207: Emit RESUME_DECISION event for final decision audit trail
+      await appendEventV1(
+        createEventV1("RESUME_DECISION", "INFO", {
+          resume_status: resumeDecision.status,
+          stop_reason: state.resumeState.stopReason,
+          resume_reason_codes_status: resumeReasonSummary.status,
+          resume_reason_codes: resumeReasonSummary.joined,
+        })
       ).catch(() => {});
 
       if (resumeDecision.status === "WAIT") {
