@@ -585,6 +585,17 @@ const RUN_REASON_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK = "RUN_REASON_LIVE_UNLOCK_L
 const RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN = "RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN";
 
 /**
+ * PR212b: Phase policy STOP causality reason codes
+ * Used to track PhasePolicy→Runner STOP parity for audit-grade telemetry
+ */
+const RUN_PHASE_POLICY_SHOULD_STOP = "RUN_PHASE_POLICY_SHOULD_STOP";
+const RUN_PHASE_POLICY_STOP_CAUSE_PHASE = "RUN_PHASE_POLICY_STOP_CAUSE_PHASE";
+const RUN_PHASE_POLICY_STOP_CAUSE_TIMEOUT = "RUN_PHASE_POLICY_STOP_CAUSE_TIMEOUT";
+const RUN_PHASE_POLICY_STOP_CAUSE_GATE = "RUN_PHASE_POLICY_STOP_CAUSE_GATE";
+const RUN_PHASE_POLICY_STOP_CAUSE_POLICY = "RUN_PHASE_POLICY_STOP_CAUSE_POLICY";
+const RUN_PHASE_POLICY_STOP_CAUSE_NONE = "RUN_PHASE_POLICY_STOP_CAUSE_NONE";
+
+/**
  * PR211: Phase transition reason code constants
  * Used for tracking phase transitions in chunk-level and run-level telemetry
  */
@@ -819,6 +830,10 @@ export async function runChunkedExecutionV1(
       let slippageLabel: string = "SLIPPAGE_UNKNOWN";
       let minOutStatus: "OK" | "ZERO" | "UNAVAILABLE" = "UNAVAILABLE";
 
+      // PR212b: Track phase policy decision for CHUNK_RESULT labels
+      let phasePolicyShouldStop: "TRUE" | "FALSE" = "FALSE";
+      let phasePolicyStopCause: string = "NONE";
+
       // PR164: Emit CHUNK_START event
       await appendEventV1(
         createEventV1("CHUNK_START", "INFO", {
@@ -1012,6 +1027,25 @@ export async function runChunkedExecutionV1(
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
+        // PR212b: Wire phase policy STOP decision to run-level reason codes
+        // This establishes causality chain: PHASE_POLICY_EVAL → Runner STOP → RUN_STOP
+        if (phasePolicyDecision.shouldStop === true) {
+          runLevelReasonCodes.add(RUN_PHASE_POLICY_SHOULD_STOP);
+
+          const dc = phasePolicyDecision.stopCause ?? "NONE";
+          if (dc === "PHASE") {
+            runLevelReasonCodes.add(RUN_PHASE_POLICY_STOP_CAUSE_PHASE);
+          } else if (dc === "TIMEOUT") {
+            runLevelReasonCodes.add(RUN_PHASE_POLICY_STOP_CAUSE_TIMEOUT);
+          } else if (dc === "GATE") {
+            runLevelReasonCodes.add(RUN_PHASE_POLICY_STOP_CAUSE_GATE);
+          } else if (dc === "POLICY") {
+            runLevelReasonCodes.add(RUN_PHASE_POLICY_STOP_CAUSE_POLICY);
+          } else {
+            runLevelReasonCodes.add(RUN_PHASE_POLICY_STOP_CAUSE_NONE);
+          }
+        }
+
         // Extract transition codes from policy decision
         phaseTransitionCodes = phasePolicyDecision.transitionCodes as PhaseTransitionReasonCode[];
 
@@ -1021,6 +1055,10 @@ export async function runChunkedExecutionV1(
             runLevelReasonCodes.add(`RUN_${code}`);
           }
         }
+
+        // PR212b: Update phase policy decision for CHUNK_RESULT labels
+        phasePolicyShouldStop = phasePolicyDecision.shouldStop ? "TRUE" : "FALSE";
+        phasePolicyStopCause = phasePolicyDecision.stopCause ?? "NONE";
 
         // Update prevPhase for next chunk
         prevPhase = currentPhase;
@@ -1814,6 +1852,8 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
             phase_transition_status: phaseTransitionSummary.status, // PR211
             phase_transition_codes: phaseTransitionSummary.joined, // PR211
+            phase_policy_should_stop: phasePolicyShouldStop, // PR212b
+            phase_policy_stop_cause: phasePolicyStopCause, // PR212b
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1865,6 +1905,8 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
             phase_transition_status: phaseTransitionSummary2.status, // PR211
             phase_transition_codes: phaseTransitionSummary2.joined, // PR211
+            phase_policy_should_stop: phasePolicyShouldStop, // PR212b
+            phase_policy_stop_cause: phasePolicyStopCause, // PR212b
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1916,6 +1958,8 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
             phase_transition_status: phaseTransitionSummary3.status, // PR211
             phase_transition_codes: phaseTransitionSummary3.joined, // PR211
+            phase_policy_should_stop: phasePolicyShouldStop, // PR212b
+            phase_policy_stop_cause: phasePolicyStopCause, // PR212b
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1966,6 +2010,8 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
             phase_transition_status: phaseTransitionSummary4.status, // PR211
             phase_transition_codes: phaseTransitionSummary4.joined, // PR211
+            phase_policy_should_stop: phasePolicyShouldStop, // PR212b
+            phase_policy_stop_cause: phasePolicyStopCause, // PR212b
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -2017,6 +2063,8 @@ export async function runChunkedExecutionV1(
             phase: currentPhase,
             phase_transition_status: phaseTransitionSummary5.status, // PR211
             phase_transition_codes: phaseTransitionSummary5.joined, // PR211
+            phase_policy_should_stop: phasePolicyShouldStop, // PR212b
+            phase_policy_stop_cause: phasePolicyStopCause, // PR212b
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
