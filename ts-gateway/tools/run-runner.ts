@@ -81,6 +81,15 @@ async function main() {
         checks: [],
         notes: ["NOTE_HARNESS_DUMMY_DRAFT"],
         errors: [],
+        // PR192: Add execution reason codes for telemetry testing
+        executionReasonCodes: [
+          "REASON_DRAFT_OK",
+          "REASON_SIMULATE_ONLY",
+          "REASON_ROUTE_CETUS_SELECTED",
+          "REASON_SLIPPAGE_ELEVATED",
+          "REASON_SLIPPAGE_SLIPPAGE_ELEVATED",
+          "REASON_MINOUT_ZERO",
+        ],
       } as any),
 
     // ---- Execute: 常に SIMULATED（実行しない）----

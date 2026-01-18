@@ -70,6 +70,73 @@ const RUNNER_PARAMS = {
 };
 
 /**
+ * PR192: Summarize execution reason codes for telemetry (label-only)
+ *
+ * @param codes - Array of reason code strings from TxDraft.executionReasonCodes
+ * @param maxCodes - Maximum number of codes to include (default: 8)
+ * @returns Summary object with status and joined string
+ *
+ * Purpose:
+ *   Create deterministic, fixed-length summary of reason codes for CHUNK_RESULT telemetry.
+ *   Ensures label-only, no numeric leakage, and consistent ordering.
+ *
+ * Rules:
+ *   - Empty/undefined → {status: "EMPTY", joined: ""}
+ *   - Filter to string-only values (defensive)
+ *   - Deduplicate via Set
+ *   - Sort alphabetically (deterministic ordering)
+ *   - Take first maxCodes items
+ *   - If truncated, append "REASONS_TRUNCATED"
+ *   - Join with "|" separator
+ *
+ * Examples:
+ *   - [] → {status: "EMPTY", joined: ""}
+ *   - ["REASON_A", "REASON_B"] → {status: "PRESENT", joined: "REASON_A|REASON_B"}
+ *   - 10 codes with maxCodes=8 → {status: "PRESENT", joined: "REASON_A|...|REASON_H|REASONS_TRUNCATED"}
+ *
+ * Constitutional: READ-ONLY, defensive (never throws)
+ */
+export function summarizeReasonCodesV1(
+  codes?: string[],
+  maxCodes = 8
+): { status: "PRESENT" | "EMPTY"; joined: string } {
+  try {
+    // Empty/undefined → EMPTY
+    if (!codes || codes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Filter to strings only (defensive)
+    const stringCodes = codes.filter((c) => typeof c === "string");
+    if (stringCodes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Deduplicate via Set
+    const uniqueCodes = Array.from(new Set(stringCodes));
+
+    // Sort alphabetically (deterministic ordering)
+    uniqueCodes.sort();
+
+    // Take first maxCodes items
+    let selectedCodes = uniqueCodes.slice(0, maxCodes);
+
+    // If truncated, append REASONS_TRUNCATED
+    if (uniqueCodes.length > maxCodes) {
+      selectedCodes.push("REASONS_TRUNCATED");
+    }
+
+    // Join with "|" separator
+    const joined = selectedCodes.join("|");
+
+    return { status: "PRESENT", joined };
+  } catch (error) {
+    // Defensive: Never throw, return EMPTY
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
  * Gate result (simplified for runner)
  */
 export interface GateResultSimple {
@@ -937,7 +1004,10 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189/PR190: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190/PR192: Emit CHUNK_RESULT event
+        const reasonCodesSummary = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "EXECUTED",
@@ -946,6 +1016,8 @@ export async function runChunkedExecutionV1(
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
+            tx_reason_codes_status: reasonCodesSummary.status, // PR192
+            tx_reason_codes: reasonCodesSummary.joined, // PR192
             venue: txDraft.route,
             phase: currentPhase,
           })
@@ -967,7 +1039,10 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189/PR190: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190/PR192: Emit CHUNK_RESULT event
+        const reasonCodesSummary2 = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
@@ -976,6 +1051,8 @@ export async function runChunkedExecutionV1(
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
+            tx_reason_codes_status: reasonCodesSummary2.status, // PR192
+            tx_reason_codes: reasonCodesSummary2.joined, // PR192
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -996,7 +1073,10 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189/PR190: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190/PR192: Emit CHUNK_RESULT event
+        const reasonCodesSummary3 = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
@@ -1005,6 +1085,8 @@ export async function runChunkedExecutionV1(
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
+            tx_reason_codes_status: reasonCodesSummary3.status, // PR192
+            tx_reason_codes: reasonCodesSummary3.joined, // PR192
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1026,7 +1108,10 @@ export async function runChunkedExecutionV1(
             observeDegradeLevel, // PR184
         });
 
-        // PR164/PR189/PR190: Emit CHUNK_RESULT event
+        // PR164/PR189/PR190/PR192: Emit CHUNK_RESULT event
+        const reasonCodesSummary4 = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
         await appendEventV1(
           createEventV1("CHUNK_RESULT", "ERROR", {
             chunk_status: "ERROR",
@@ -1035,6 +1120,8 @@ export async function runChunkedExecutionV1(
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
+            tx_reason_codes_status: reasonCodesSummary4.status, // PR192
+            tx_reason_codes: reasonCodesSummary4.joined, // PR192
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
