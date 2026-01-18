@@ -272,6 +272,17 @@ export type ExecutionMode =
   | "LIVE"; // Live execution (broadcast allowed if unlocked)
 
 /**
+ * PR199: LIVE unlock status (handshake for broadcast permission)
+ */
+export type LiveUnlockStatus =
+  | "UNLOCKED" // Both env flag and spec lock OK
+  | "LOCKED_ENV" // Env flag MERIDIAN_LIVE_UNLOCK not TRUE
+  | "LOCKED_SPEC" // Spec lock not ACTIVE_OK
+  | "LOCKED_SPEC_EXPIRED" // Spec lock expired
+  | "LOCKED_SPEC_PENDING_ACK" // Spec lock pending ACK
+  | "LOCKED_UNKNOWN"; // Unknown / not applicable
+
+/**
  * Chunk plan (single chunk in a run)
  */
 export interface ChunkPlan {

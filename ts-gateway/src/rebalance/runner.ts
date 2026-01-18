@@ -34,6 +34,7 @@ import {
   ResumeState,
   StopReason,
   ExecutionMode,
+  LiveUnlockStatus,
 } from "./types";
 import { CHUNKING_PARAMS } from "./chunking";
 import {
@@ -201,6 +202,49 @@ export function summarizeRunReasonCodesV1(
 }
 
 /**
+ * PR199: Derive LIVE unlock status from execution mode, env flag, and spec lock
+ *
+ * @param args.executionMode - Current execution mode
+ * @param args.specLockStatus - Spec lock status from evaluateSpecLockV1 (optional)
+ * @param args.envUnlock - Whether MERIDIAN_LIVE_UNLOCK env is TRUE
+ * @returns LiveUnlockStatus (label-only, deterministic)
+ *
+ * Constitutional: READ-ONLY, defensive (never throws)
+ */
+export function deriveLiveUnlockStatusV1(args: {
+  executionMode: ExecutionMode;
+  specLockStatus?: string;
+  envUnlock?: boolean;
+}): LiveUnlockStatus {
+  try {
+    // If not LIVE mode, return LOCKED_UNKNOWN (not applicable)
+    if (args.executionMode !== "LIVE") {
+      return "LOCKED_UNKNOWN";
+    }
+
+    // Check env flag first
+    if (args.envUnlock !== true) {
+      return "LOCKED_ENV";
+    }
+
+    // Check spec lock status
+    const specStatus = args.specLockStatus || "UNKNOWN";
+    if (specStatus === "ACTIVE_OK") {
+      return "UNLOCKED";
+    } else if (specStatus === "LOCKED_EXPIRED") {
+      return "LOCKED_SPEC_EXPIRED";
+    } else if (specStatus === "LOCKED_PENDING_ACK") {
+      return "LOCKED_SPEC_PENDING_ACK";
+    } else {
+      return "LOCKED_SPEC";
+    }
+  } catch (error) {
+    // Defensive: Never throw
+    return "LOCKED_UNKNOWN";
+  }
+}
+
+/**
  * Gate result (simplified for runner)
  */
 export interface GateResultSimple {
@@ -291,6 +335,14 @@ export interface RunnerDeps {
     policy: PolicyResultSimple;
     executionMode: ExecutionMode; // PR197: Mode-aware execution
   }) => Promise<ExecutionResultSimple>;
+
+  // PR199: Get spec lock status (optional for LIVE unlock handshake)
+  getSpecLockStatus?: () => Promise<{
+    status: string;
+    activeSpec?: string;
+    latestSpec?: string;
+    warnings?: string[];
+  }>;
 }
 
 /**
@@ -373,13 +425,31 @@ export async function runChunkedExecutionV1(
   // PR196: Execution mode (default: SIM_ONLY for safety)
   const executionMode: ExecutionMode = runPlan.executionMode ?? "SIM_ONLY";
 
-  // PR188c/PR196: Emit RUN_START lifecycle event
+  // PR199: LIVE unlock handshake (env flag + spec lock)
+  const envUnlock = process.env.MERIDIAN_LIVE_UNLOCK === "TRUE";
+  let specLockStatus: string = "UNKNOWN";
+  if (deps.getSpecLockStatus) {
+    try {
+      const specLock = await deps.getSpecLockStatus();
+      specLockStatus = specLock.status || "UNKNOWN";
+    } catch (error) {
+      specLockStatus = "ERROR";
+    }
+  }
+  const liveUnlockStatus = deriveLiveUnlockStatusV1({
+    executionMode,
+    specLockStatus,
+    envUnlock,
+  });
+
+  // PR188c/PR196/PR199: Emit RUN_START lifecycle event
   await appendEventV1(
     createEventV1("RUN_START", "INFO", {
       run_id: runPlan.runId,
       template_id: runPlan.templateId,
       total_chunks: `${runPlan.chunks.length}`,
       execution_mode: executionMode, // PR196
+      live_unlock_status: liveUnlockStatus, // PR199
     })
   ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
@@ -1025,18 +1095,37 @@ export async function runChunkedExecutionV1(
       }
 
       // Step 6: Execute transaction
-      // PR196: LIVE safety guard - STOP if LIVE mode without ALLOW policy
-      if (executionMode === "LIVE" && policyStatus !== "ALLOW") {
+      // PR196/PR199: LIVE safety guard - STOP if LIVE mode without ALLOW policy or not unlocked
+      if (executionMode === "LIVE" && (policyStatus !== "ALLOW" || liveUnlockStatus !== "UNLOCKED")) {
+        const blockReasons: string[] = [];
+        if (policyStatus !== "ALLOW") {
+          blockReasons.push("REASON_LIVE_MODE_POLICY_NOT_ALLOW");
+        }
+        if (liveUnlockStatus !== "UNLOCKED") {
+          // Add specific unlock block reason
+          if (liveUnlockStatus === "LOCKED_ENV") {
+            blockReasons.push("REASON_LIVE_LOCKED_ENV");
+          } else if (liveUnlockStatus === "LOCKED_SPEC_EXPIRED") {
+            blockReasons.push("REASON_LIVE_LOCKED_SPEC_EXPIRED");
+          } else if (liveUnlockStatus === "LOCKED_SPEC_PENDING_ACK") {
+            blockReasons.push("REASON_LIVE_LOCKED_SPEC_PENDING_ACK");
+          } else if (liveUnlockStatus === "LOCKED_SPEC") {
+            blockReasons.push("REASON_LIVE_LOCKED_SPEC");
+          } else {
+            blockReasons.push("REASON_LIVE_LOCKED_UNKNOWN");
+          }
+        }
+
         chunkResults.push({
           chunkId: chunk.chunkId,
           status: "BLOCKED",
-          reasons: ["REASON_LIVE_MODE_POLICY_NOT_ALLOW"],
+          reasons: blockReasons,
           txDraft,
           createdAtMs: getNowMs(),
         });
 
         reasons.push("REASON_LIVE_MODE_BLOCKED_STOP");
-        stopCause = "POLICY"; // PR189: Policy attribution
+        stopCause = "POLICY"; // PR189/PR199: Policy attribution
         finalStatus = "STOPPED";
 
         const nowMs = getNowMs();
@@ -1053,7 +1142,7 @@ export async function runChunkedExecutionV1(
             runPlan,
             currentPhase,
             selectedRoute,
-            ["WARN_LIVE_MODE_POLICY_NOT_ALLOW"]
+            ["WARN_LIVE_MODE_NOT_UNLOCKED"]
           ),
         };
       }
@@ -1069,6 +1158,7 @@ export async function runChunkedExecutionV1(
             action: txDraft.action || "UNKNOWN",
             simulate_only: txDraft.simulateOnly ? "TRUE" : "FALSE",
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1091,6 +1181,7 @@ export async function runChunkedExecutionV1(
             exec_reasons: execReasonsSummary.joined,
             tx_digest_status: txDigestStatus,
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             stop_cause: stopCause,
             phase: currentPhase,
           })
@@ -1107,6 +1198,7 @@ export async function runChunkedExecutionV1(
             exec_reasons: execReasonsSummary.joined,
             tx_digest_status: "EMPTY",
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             stop_cause: stopCause,
             phase: currentPhase,
           })
@@ -1181,6 +1273,7 @@ export async function runChunkedExecutionV1(
             tx_reason_codes_status: reasonCodesSummary.status, // PR192
             tx_reason_codes: reasonCodesSummary.joined, // PR192
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             venue: txDraft.route,
             phase: currentPhase,
           })
@@ -1224,6 +1317,7 @@ export async function runChunkedExecutionV1(
             tx_reason_codes_status: reasonCodesSummary2.status, // PR192
             tx_reason_codes: reasonCodesSummary2.joined, // PR192
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1267,6 +1361,7 @@ export async function runChunkedExecutionV1(
             tx_reason_codes_status: reasonCodesSummaryDryRun.status, // PR192
             tx_reason_codes: reasonCodesSummaryDryRun.joined, // PR192
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1309,6 +1404,7 @@ export async function runChunkedExecutionV1(
             tx_reason_codes_status: reasonCodesSummary3.status, // PR192
             tx_reason_codes: reasonCodesSummary3.joined, // PR192
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1352,6 +1448,7 @@ export async function runChunkedExecutionV1(
             tx_reason_codes_status: reasonCodesSummary4.status, // PR192
             tx_reason_codes: reasonCodesSummary4.joined, // PR192
             execution_mode: executionMode, // PR196
+            live_unlock_status: liveUnlockStatus, // PR199
             phase: currentPhase,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
@@ -1403,6 +1500,7 @@ export async function runChunkedExecutionV1(
         run_reason_codes_status: runReasonSummary.status, // PR193
         run_reason_codes: runReasonSummary.joined, // PR193
         execution_mode: executionMode, // PR196
+        live_unlock_status: liveUnlockStatus, // PR199
       })
     ).catch(() => {}); // Defensive: Don't fail on telemetry error
   }

@@ -16,13 +16,18 @@ async function main() {
     getNowMs: () => Date.now(),
   });
 
-  // PR196/PR197/PR198: Set execution mode (default: SIM_ONLY for safety)
+  // PR196/PR197/PR198/PR199: Set execution mode (default: SIM_ONLY for safety)
   // Available modes: "SIM_ONLY" | "DRY_RUN" | "LIVE"
   (runPlan as any).executionMode = "SIM_ONLY";
   // Uncomment to test DRY_RUN mode:
   // (runPlan as any).executionMode = "DRY_RUN";
-  // Uncomment to test LIVE blocking (PR198):
+  // Uncomment to test LIVE unlock scenarios (PR199):
   // (runPlan as any).executionMode = "LIVE";
+  //
+  // PR199: To test LIVE unlock scenarios, also set environment variable:
+  // - UNLOCKED: export MERIDIAN_LIVE_UNLOCK=TRUE + getSpecLockStatus returns "ACTIVE_OK"
+  // - LOCKED_ENV: (no env var) + getSpecLockStatus returns "ACTIVE_OK"
+  // - LOCKED_SPEC: export MERIDIAN_LIVE_UNLOCK=TRUE + getSpecLockStatus returns "LOCKED_EXPIRED"
 
   const res = await runChunkedExecutionV1(runPlan as any, {
     // ---- 必須 deps ----
@@ -42,6 +47,9 @@ async function main() {
         sourceStatus: "AVAILABLE",
         warnings: [],
       } as any),
+
+    // PR199: Spec lock status for LIVE unlock handshake
+    getSpecLockStatus: async () => ({ status: "ACTIVE_OK" }), // Default: unlocked
 
     // ---- Gate: 通電用に PASS ----
     // (ここで BLOCK すると CHUNK が止まるのでまずは PASS)
