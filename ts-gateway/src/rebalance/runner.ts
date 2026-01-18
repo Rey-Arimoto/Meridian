@@ -716,6 +716,16 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_strategy_codes = strategySummary.joined;
   }
 
+  // PR214: Add resume enforcement labels (if enforcement present)
+  if (runPlan.resumeStrategyEnforcedExecutionMode) {
+    runStartLabels.resume_enforced_execution_mode = runPlan.resumeStrategyEnforcedExecutionMode;
+  }
+  if (runPlan.resumeStrategyEnforcedCodes) {
+    const enforcedSummary = summarizeRunReasonCodesV1(runPlan.resumeStrategyEnforcedCodes);
+    runStartLabels.resume_enforced_codes_status = enforcedSummary.status;
+    runStartLabels.resume_enforced_codes = enforcedSummary.joined;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)

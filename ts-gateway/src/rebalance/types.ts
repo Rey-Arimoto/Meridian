@@ -404,6 +404,10 @@ export interface RunPlan {
   // PR213: Resume strategy (autonomous recovery strategy derived from origin context)
   resumeStrategy?: ResumeStrategyV1;
   resumeStrategyCodes?: string[]; // Label-only explainability codes
+
+  // PR214: Resume strategy enforcement (execution mode override)
+  resumeStrategyEnforcedExecutionMode?: ExecutionMode;
+  resumeStrategyEnforcedCodes?: string[]; // Enforcement reason codes (label-only)
 }
 
 /**

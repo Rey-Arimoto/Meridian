@@ -420,6 +420,87 @@ function deriveResumeStrategyV1(
 }
 
 /**
+ * PR214: Derive execution mode override from resume strategy (Enforcement v1)
+ *
+ * @param resumeStrategy - Resume strategy from PR213
+ * @param currentDesiredMode - Current/desired execution mode (optional)
+ * @returns Enforced execution mode and reason codes
+ *
+ * Purpose:
+ *   Enforce strategy-driven execution control. Strategy determines safe mode
+ *   for resumed execution based on stop cause and risk assessment.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed mapping rules, no learning
+ *   - Safety-first: NEVER allow LIVE execution (v1.4 constraint)
+ *   - Safe defaults: Cap at DRY_RUN, prefer SIM_ONLY for risky scenarios
+ *   - Label-only: All codes are strings
+ *   - Deterministic: Same inputs → same outputs
+ *
+ * Enforcement rules (v1):
+ *   1. RETRY_SAFE_SIM_ONLY → enforcedMode = "SIM_ONLY"
+ *   2. WAIT_FOR_UNLOCK → enforcedMode = "SIM_ONLY"
+ *   3. WAIT_FOR_RECOVERY → enforcedMode = "SIM_ONLY"
+ *   4. RETRY_IMMEDIATE → cap at DRY_RUN (never escalate to LIVE)
+ *      - If currentDesiredMode = "LIVE" → enforcedMode = "DRY_RUN" (capped)
+ *      - If currentDesiredMode = "DRY_RUN" → enforcedMode = "DRY_RUN" (keep)
+ *      - Else → enforcedMode = "SIM_ONLY" (safe default)
+ *   5. ABANDON → enforcedMode = "SIM_ONLY" (shouldn't re-exec)
+ *   6. Unknown → enforcedMode = "SIM_ONLY" (safe default)
+ *
+ * IMPORTANT: Never throws, always returns enforcement decision
+ */
+function deriveExecutionModeOverrideFromStrategyV1(
+  resumeStrategy: import("../rebalance/types").ResumeStrategyV1,
+  currentDesiredMode?: import("../rebalance/types").ExecutionMode
+): {
+  enforcedMode: import("../rebalance/types").ExecutionMode;
+  enforcedCodes: string[];
+} {
+  try {
+    const codes: string[] = [];
+
+    // Rule 1-3: Safe retry strategies → SIM_ONLY
+    if (
+      resumeStrategy === "RETRY_SAFE_SIM_ONLY" ||
+      resumeStrategy === "WAIT_FOR_UNLOCK" ||
+      resumeStrategy === "WAIT_FOR_RECOVERY"
+    ) {
+      codes.push("STRAT_ENFORCE_EXEC_MODE_SIM_ONLY");
+      return { enforcedMode: "SIM_ONLY", enforcedCodes: codes };
+    }
+
+    // Rule 4: RETRY_IMMEDIATE → cap at DRY_RUN (never allow LIVE)
+    if (resumeStrategy === "RETRY_IMMEDIATE") {
+      if (currentDesiredMode === "LIVE") {
+        // Cap LIVE down to DRY_RUN (v1.4 safety constraint)
+        codes.push("STRAT_ENFORCE_CAPPED_FROM_LIVE");
+        codes.push("STRAT_ENFORCE_EXEC_MODE_DRY_RUN");
+        return { enforcedMode: "DRY_RUN", enforcedCodes: codes };
+      } else if (currentDesiredMode === "DRY_RUN") {
+        // Keep DRY_RUN (no override needed)
+        codes.push("STRAT_ENFORCE_NO_OVERRIDE");
+        return { enforcedMode: "DRY_RUN", enforcedCodes: codes };
+      } else {
+        // Default to SIM_ONLY (safe)
+        codes.push("STRAT_ENFORCE_EXEC_MODE_SIM_ONLY");
+        return { enforcedMode: "SIM_ONLY", enforcedCodes: codes };
+      }
+    }
+
+    // Rule 5-6: ABANDON or unknown → SIM_ONLY (safe default)
+    codes.push("STRAT_ENFORCE_EXEC_MODE_SIM_ONLY");
+    return { enforcedMode: "SIM_ONLY", enforcedCodes: codes };
+  } catch {
+    // Defensive: Never throw, return safe default
+    return {
+      enforcedMode: "SIM_ONLY",
+      enforcedCodes: ["STRAT_ENFORCE_ERROR"],
+    };
+  }
+}
+
+/**
  * Run supervisor once (single tick)
  *
  * @param store - State store
@@ -698,6 +779,14 @@ export async function runSupervisorOnceV1(
         joined: "",
       };
 
+      // PR214: Enforcement variables (declare outside for wider scope)
+      let enforcedExecutionMode: import("../rebalance/types").ExecutionMode | undefined;
+      let enforcedCodes: string[] | undefined;
+      let enforcedSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+        status: "EMPTY",
+        joined: "",
+      };
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -717,8 +806,18 @@ export async function runSupervisorOnceV1(
 
         strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
 
+        // PR214: Derive execution mode enforcement from strategy
+        const enforcement = deriveExecutionModeOverrideFromStrategyV1(
+          resumeStrategy,
+          undefined // No current desired mode available in minimal supervisor
+        );
+        enforcedExecutionMode = enforcement.enforcedMode;
+        enforcedCodes = enforcement.enforcedCodes;
+        enforcedSummary = summarizeStrategyCodesV1(enforcedCodes);
+
         // PR208: Emit RESUME_REEXEC_ATTEMPT before runner call
         // PR213: Add resume strategy labels
+        // PR214: Add enforcement labels
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
@@ -728,6 +827,9 @@ export async function runSupervisorOnceV1(
             resume_strategy: resumeStrategy, // PR213
             resume_strategy_codes_status: strategySummary.status, // PR213
             resume_strategy_codes: strategySummary.joined, // PR213
+            resume_enforced_execution_mode: enforcedExecutionMode, // PR214
+            resume_enforced_codes_status: enforcedSummary.status, // PR214
+            resume_enforced_codes: enforcedSummary.joined, // PR214
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       }
@@ -752,8 +854,8 @@ export async function runSupervisorOnceV1(
 
         // PR208: Emit RESUME_REEXEC_RESULT after successful runner call
         // PR213: Add resume strategy labels
+        // PR214: Add enforcement labels
         if (resumeId) {
-          const strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
           await appendEventV1(
             createEventV1("RESUME_REEXEC_RESULT", "INFO", {
               resume_id: resumeId,
@@ -765,14 +867,17 @@ export async function runSupervisorOnceV1(
               resume_strategy: resumeStrategy || "UNKNOWN", // PR213
               resume_strategy_codes_status: strategySummary.status, // PR213
               resume_strategy_codes: strategySummary.joined, // PR213
+              resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
+              resume_enforced_codes_status: enforcedSummary.status, // PR214
+              resume_enforced_codes: enforcedSummary.joined, // PR214
             })
           ).catch(() => {}); // Defensive: Don't fail on telemetry error
         }
       } catch (error) {
         // PR208: Emit RESUME_REEXEC_RESULT on error
         // PR213: Add resume strategy labels
+        // PR214: Add enforcement labels
         if (resumeId) {
-          const strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
           await appendEventV1(
             createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
               resume_id: resumeId,
@@ -784,6 +889,9 @@ export async function runSupervisorOnceV1(
               resume_strategy: resumeStrategy || "UNKNOWN", // PR213
               resume_strategy_codes_status: strategySummary.status, // PR213
               resume_strategy_codes: strategySummary.joined, // PR213
+              resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
+              resume_enforced_codes_status: enforcedSummary.status, // PR214
+              resume_enforced_codes: enforcedSummary.joined, // PR214
             }, ["ERROR_RUNNER_EXCEPTION"])
           ).catch(() => {}); // Defensive: Don't fail on telemetry error
         }
