@@ -257,11 +257,14 @@ export interface GateResultSimple {
 
 /**
  * Policy result (simplified for runner)
+ * PR205: Added reasonCodes and hardStopActive for constitutional explainability
  */
 export interface PolicyResultSimple {
   allowExecution: boolean;
+  hardStopActive?: boolean; // PR205: HardStop flag
   status: "ALLOW" | "SIM_ONLY" | "BLOCKED" | "ERROR";
-  reasons: string[];
+  reasons: string[]; // legacy
+  reasonCodes?: import("./types").PolicyReasonCode[]; // PR205: normalized policy reasons
 }
 
 /**
@@ -1050,6 +1053,41 @@ export async function runChunkedExecutionV1(
       // PR189: Track policy status
       policyStatus = policyResult.status;
 
+      // PR205: Defensively populate policy reason codes if missing
+      if (!policyResult.reasonCodes || policyResult.reasonCodes.length === 0) {
+        const codes: import("./types").PolicyReasonCode[] = [];
+
+        // Map from status
+        if (policyResult.status === "ALLOW") {
+          codes.push("POLICY_ALLOW");
+        } else if (policyResult.status === "SIM_ONLY") {
+          codes.push("POLICY_SIM_ONLY");
+        } else if (policyResult.status === "BLOCKED") {
+          codes.push("POLICY_HARDSTOP_ACTIVE");
+        } else if (policyResult.status === "ERROR") {
+          codes.push("POLICY_UNKNOWN");
+        } else {
+          codes.push("POLICY_UNKNOWN");
+        }
+
+        // Add HARDSTOP flag if present
+        if (policyResult.hardStopActive) {
+          codes.push("POLICY_HARDSTOP_ACTIVE");
+        }
+
+        // Defensive: If still empty, add UNKNOWN
+        if (codes.length === 0) {
+          codes.push("POLICY_UNKNOWN");
+        }
+
+        policyResult.reasonCodes = codes;
+      }
+
+      // PR205: Summarize policy reason codes for telemetry
+      const policyReasonSummary = summarizeReasonCodesV1(
+        policyResult.reasonCodes as string[] | undefined
+      );
+
       // Check if policy allows execution
       if (!policyResult.allowExecution) {
         // Policy denies execution → STOP entire run
@@ -1062,6 +1100,13 @@ export async function runChunkedExecutionV1(
 
         reasons.push("REASON_POLICY_DENIES_EXECUTION_STOP");
         reasons.push(...policyResult.reasons);
+
+        // PR205: Promote policy reason codes to run-level codes
+        if (policyResult.reasonCodes && policyResult.reasonCodes.length > 0) {
+          policyResult.reasonCodes.forEach((code) => {
+            runLevelReasonCodes.add(`RUN_${code}`);
+          });
+        }
 
         const nowMs2 = getNowMs();
         // Determine if HARDSTOP or POLICY_DENY
@@ -1376,6 +1421,8 @@ export async function runChunkedExecutionV1(
             gate_reason_codes_status: gateReasonSummary.status, // PR204
             gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
+            policy_reason_codes_status: policyReasonSummary.status, // PR205
+            policy_reason_codes: policyReasonSummary.joined, // PR205
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
@@ -1422,6 +1469,8 @@ export async function runChunkedExecutionV1(
             gate_reason_codes_status: gateReasonSummary.status, // PR204
             gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
+            policy_reason_codes_status: policyReasonSummary.status, // PR205
+            policy_reason_codes: policyReasonSummary.joined, // PR205
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
@@ -1468,6 +1517,8 @@ export async function runChunkedExecutionV1(
             gate_reason_codes_status: gateReasonSummary.status, // PR204
             gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
+            policy_reason_codes_status: policyReasonSummary.status, // PR205
+            policy_reason_codes: policyReasonSummary.joined, // PR205
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
@@ -1513,6 +1564,8 @@ export async function runChunkedExecutionV1(
             gate_reason_codes_status: gateReasonSummary.status, // PR204
             gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
+            policy_reason_codes_status: policyReasonSummary.status, // PR205
+            policy_reason_codes: policyReasonSummary.joined, // PR205
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190
@@ -1559,6 +1612,8 @@ export async function runChunkedExecutionV1(
             gate_reason_codes_status: gateReasonSummary.status, // PR204
             gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
+            policy_reason_codes_status: policyReasonSummary.status, // PR205
+            policy_reason_codes: policyReasonSummary.joined, // PR205
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
             minout_status: minOutStatus, // PR190

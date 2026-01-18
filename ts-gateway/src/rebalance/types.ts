@@ -295,6 +295,23 @@ export type GateReasonCode =
   | "GATE_UNKNOWN";
 
 /**
+ * PR205: Policy Control Reason Code (Constitutional Explainability)
+ */
+export type PolicyReasonCode =
+  | "POLICY_ALLOW"
+  | "POLICY_SIM_ONLY"
+  | "POLICY_HARDSTOP_ACTIVE"
+  | "POLICY_ENV_DISABLED"
+  | "POLICY_SPEC_LOCK_PENDING_ACK"
+  | "POLICY_SPEC_LOCK_EXPIRED"
+  | "POLICY_LIVE_UNLOCK_LOCKED_ENV"
+  | "POLICY_LIVE_UNLOCK_LOCKED_SPEC"
+  | "POLICY_LIVE_UNLOCK_LOCKED_SPEC_EXPIRED"
+  | "POLICY_LIVE_UNLOCK_LOCKED_SPEC_PENDING_ACK"
+  | "POLICY_LIVE_UNLOCK_LOCKED_UNKNOWN"
+  | "POLICY_UNKNOWN";
+
+/**
  * Chunk plan (single chunk in a run)
  */
 export interface ChunkPlan {
