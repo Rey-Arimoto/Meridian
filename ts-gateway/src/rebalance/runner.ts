@@ -246,10 +246,12 @@ export function deriveLiveUnlockStatusV1(args: {
 
 /**
  * Gate result (simplified for runner)
+ * PR204: Added reasonCodes for market safety explainability
  */
 export interface GateResultSimple {
   status: "PASS" | "BLOCK" | "ERROR";
-  blockReasons: string[];
+  blockReasons: string[]; // legacy
+  reasonCodes?: import("./types").GateReasonCode[]; // PR204: normalized safety reasons
   warnings: string[];
 }
 
@@ -801,6 +803,11 @@ export async function runChunkedExecutionV1(
       // Step 3: Check gate result
       gateStatus = gateResult.status; // PR189: Track gate status
 
+      // PR204: Summarize gate reason codes for telemetry
+      const gateReasonSummary = summarizeReasonCodesV1(
+        gateResult.reasonCodes as string[] | undefined
+      );
+
       if (gateResult.status === "BLOCK") {
         consecutiveBlockCount++;
 
@@ -839,6 +846,13 @@ export async function runChunkedExecutionV1(
 
           reasons.push("REASON_CRITICAL_BLOCK_STOP");
           reasons.push(...gateResult.blockReasons);
+
+          // PR204: Promote gate reason codes to run-level codes
+          if (gateResult.reasonCodes && gateResult.reasonCodes.length > 0) {
+            gateResult.reasonCodes.forEach((code) => {
+              runLevelReasonCodes.add(`RUN_${code}`);
+            });
+          }
 
           const nowMs = getNowMs();
           // Determine stop reason from critical block
@@ -915,6 +929,13 @@ export async function runChunkedExecutionV1(
           });
 
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
+
+          // PR204: Promote gate reason codes to run-level codes
+          if (gateResult.reasonCodes && gateResult.reasonCodes.length > 0) {
+            gateResult.reasonCodes.forEach((code) => {
+              runLevelReasonCodes.add(`RUN_${code}`);
+            });
+          }
 
           const nowMs = getNowMs();
           finalStatus = "STOPPED";
@@ -1352,6 +1373,8 @@ export async function runChunkedExecutionV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "EXECUTED",
             gate_status: gateStatus, // PR189
+            gate_reason_codes_status: gateReasonSummary.status, // PR204
+            gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
@@ -1396,6 +1419,8 @@ export async function runChunkedExecutionV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
             gate_status: gateStatus, // PR189
+            gate_reason_codes_status: gateReasonSummary.status, // PR204
+            gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
@@ -1440,6 +1465,8 @@ export async function runChunkedExecutionV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED", // DRY_RUN counted as SIMULATED
             gate_status: gateStatus, // PR189
+            gate_reason_codes_status: gateReasonSummary.status, // PR204
+            gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
@@ -1483,6 +1510,8 @@ export async function runChunkedExecutionV1(
           createEventV1("CHUNK_RESULT", "INFO", {
             chunk_status: "SIMULATED",
             gate_status: gateStatus, // PR189
+            gate_reason_codes_status: gateReasonSummary.status, // PR204
+            gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190
@@ -1527,6 +1556,8 @@ export async function runChunkedExecutionV1(
           createEventV1("CHUNK_RESULT", "ERROR", {
             chunk_status: "ERROR",
             gate_status: gateStatus, // PR189
+            gate_reason_codes_status: gateReasonSummary.status, // PR204
+            gate_reason_codes: gateReasonSummary.joined, // PR204
             policy_status: policyStatus, // PR189
             quote_impact_label: quoteImpactLabel, // PR190
             slippage_label: slippageLabel, // PR190

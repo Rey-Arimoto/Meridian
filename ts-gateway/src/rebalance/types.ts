@@ -283,6 +283,18 @@ export type LiveUnlockStatus =
   | "LOCKED_UNKNOWN"; // Unknown / not applicable
 
 /**
+ * PR204: Gate Safety Reason Code (Market Safety Explainability)
+ */
+export type GateReasonCode =
+  | "GATE_ORACLE_STALE"
+  | "GATE_PRICE_DIVERGENCE"
+  | "GATE_IMPACT_TOO_HIGH"
+  | "GATE_LIQUIDITY_TOO_THIN"
+  | "GATE_DEPTH_UNAVAILABLE"
+  | "GATE_QUOTE_UNAVAILABLE"
+  | "GATE_UNKNOWN";
+
+/**
  * Chunk plan (single chunk in a run)
  */
 export interface ChunkPlan {

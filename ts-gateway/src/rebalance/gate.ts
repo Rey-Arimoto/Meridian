@@ -71,13 +71,17 @@ export interface PythonSignals {
 
 /**
  * Gate result
+ * PR204: Added reasonCodes for market safety explainability
  */
 export interface GateResult {
   // Status (PASS = allowed, BLOCK = blocked, ERROR = error)
   status: "PASS" | "BLOCK" | "ERROR";
 
-  // Block reasons (if BLOCK)
+  // Block reasons (if BLOCK) - legacy
   blockReasons: string[];
+
+  // PR204: Normalized safety reason codes
+  reasonCodes?: import("./types").GateReasonCode[];
 
   // Warnings
   warnings: string[];
@@ -247,6 +251,7 @@ export function runSafetyGateWithSimulation(
 ): GateResult {
   const blockReasons: string[] = [];
   const warnings: string[] = [];
+  const reasonCodes: import("./types").GateReasonCode[] = []; // PR204
 
   // ===== A) Upper-level prohibitions (from Python) =====
   // Same as runSafetyGate
@@ -275,10 +280,12 @@ export function runSafetyGateWithSimulation(
 
   if (portfolio.oracleStatus === "ERROR") {
     blockReasons.push("BLOCK_ORACLE_UNAVAILABLE");
+    reasonCodes.push("GATE_ORACLE_STALE"); // PR204: Oracle error mapped to stale
   }
 
   if (portfolio.oracleStatus === "STALE") {
     blockReasons.push("BLOCK_ORACLE_STALE");
+    reasonCodes.push("GATE_ORACLE_STALE"); // PR204
   }
 
   // ===== B-SIM) Simulation checks (PR156) =====
@@ -299,9 +306,11 @@ export function runSafetyGateWithSimulation(
       // Add specific reasons from simulation
       if (simulation.reasons.includes("REASON_ORACLE_UNAVAILABLE")) {
         blockReasons.push("BLOCK_SIMULATION_ORACLE");
+        reasonCodes.push("GATE_ORACLE_STALE"); // PR204
       }
       if (simulation.reasons.includes("REASON_MISSING_QUOTE")) {
         blockReasons.push("BLOCK_SIMULATION_NO_QUOTE");
+        reasonCodes.push("GATE_QUOTE_UNAVAILABLE"); // PR204
       }
     }
 
@@ -327,6 +336,7 @@ export function runSafetyGateWithSimulation(
     if (quoteUnavailable) {
       blockReasons.push("BLOCK_OBSERVE_DEGRADED_UNCERTAIN");
       warnings.push("WARN_OBSERVE_DEGRADED_QUOTE_UNAVAILABLE");
+      reasonCodes.push("GATE_QUOTE_UNAVAILABLE"); // PR204
     }
   }
 
@@ -343,6 +353,7 @@ export function runSafetyGateWithSimulation(
     if (quoteStale) {
       blockReasons.push("BLOCK_OBSERVE_DEGRADED_QUOTE_REQUIRE_FRESH");
       warnings.push("WARN_OBSERVE_DEGRADED_QUOTE_STALE");
+      reasonCodes.push("GATE_QUOTE_UNAVAILABLE"); // PR204: Stale quote
     }
   }
 
@@ -411,6 +422,7 @@ export function runSafetyGateWithSimulation(
   // PR187: Use normalizedQuote for impact/depth checks
   if (normalizedQuote && normalizedQuote.impactLabel === "IMPACT_HIGH") {
     blockReasons.push("BLOCK_IMPACT_HIGH");
+    reasonCodes.push("GATE_IMPACT_TOO_HIGH"); // PR204
   }
 
   // Note: Old "slippage" label check removed (PR187)
@@ -418,6 +430,7 @@ export function runSafetyGateWithSimulation(
 
   if (normalizedQuote && normalizedQuote.depthLabel === "DEPTH_THIN") {
     blockReasons.push("BLOCK_DEPTH_THIN");
+    reasonCodes.push("GATE_DEPTH_UNAVAILABLE"); // PR204
   }
 
   // D7: MinOut unavailable (PR186/PR187 - slippage protection)
@@ -432,14 +445,29 @@ export function runSafetyGateWithSimulation(
 
     if (!canComputeMinOut) {
       blockReasons.push("BLOCK_MINOUT_UNAVAILABLE");
+      reasonCodes.push("GATE_QUOTE_UNAVAILABLE"); // PR204: Cannot compute minOut
     }
   }
 
   // ===== Determine status =====
 
   if (blockReasons.length > 0) {
-    return { status: "BLOCK", blockReasons, warnings };
+    // PR204: Defensive - if blocked but no reason codes, add UNKNOWN
+    if (reasonCodes.length === 0) {
+      reasonCodes.push("GATE_UNKNOWN");
+    }
+    return {
+      status: "BLOCK",
+      blockReasons,
+      reasonCodes: reasonCodes.length > 0 ? reasonCodes : undefined, // PR204
+      warnings,
+    };
   }
 
-  return { status: "PASS", blockReasons, warnings };
+  return {
+    status: "PASS",
+    blockReasons,
+    reasonCodes: undefined, // PR204: PASS has no reason codes
+    warnings,
+  };
 }
