@@ -51,6 +51,9 @@ async function main() {
     // PR199: Spec lock status for LIVE unlock handshake
     getSpecLockStatus: async () => ({ status: "ACTIVE_OK" }), // Default: unlocked
 
+    // PR212c: Provide phase label in harness so PHASE_POLICY_EVAL emits
+    getPhaseLabel: async () => "PHASE_NORMAL",
+
     // ---- Gate: 通電用に PASS ----
     // (ここで BLOCK すると CHUNK が止まるのでまずは PASS)
     evaluateGate: async () => ({
