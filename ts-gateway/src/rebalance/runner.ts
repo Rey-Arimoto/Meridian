@@ -222,7 +222,7 @@ export interface PolicyResultSimple {
  * Execution result (simplified for runner)
  */
 export interface ExecutionResultSimple {
-  status: "EXECUTED" | "SIMULATED" | "EXECUTION_DISABLED" | "ERROR";
+  status: "EXECUTED" | "SIMULATED" | "DRY_RUN" | "EXECUTION_DISABLED" | "ERROR";
   reasons: string[];
   txDigest?: string;
 }
@@ -285,10 +285,11 @@ export interface RunnerDeps {
     normalizedQuote?: NormalizedQuoteV1; // PR187: normalized quote for minOut calculation
   }) => Promise<TxDraft>;
 
-  // Execute transaction
+  // Execute transaction (PR197: executionMode added)
   executeTx: (args: {
     txDraft: TxDraft;
     policy: PolicyResultSimple;
+    executionMode: ExecutionMode; // PR197: Mode-aware execution
   }) => Promise<ExecutionResultSimple>;
 }
 
@@ -1072,7 +1073,11 @@ export async function runChunkedExecutionV1(
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
-        executionResult = await deps.executeTx({ txDraft, policy: policyResult });
+        executionResult = await deps.executeTx({
+          txDraft,
+          policy: policyResult,
+          executionMode, // PR197: Pass execution mode to executor
+        });
 
         // PR194/PR196: Emit EXECUTE_RESULT telemetry (success path)
         const execReasonsSummary = summarizeReasonCodesV1(executionResult.reasons);
@@ -1218,6 +1223,49 @@ export async function runChunkedExecutionV1(
             minout_status: minOutStatus, // PR190
             tx_reason_codes_status: reasonCodesSummary2.status, // PR192
             tx_reason_codes: reasonCodesSummary2.joined, // PR192
+            execution_mode: executionMode, // PR196
+            phase: currentPhase,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+        // PR188d: Increment outcome counters
+        simulatedCount++;
+        chunkResultCount++;
+      } else if (executionResult.status === "DRY_RUN") {
+        // PR197: DRY_RUN mode (tx constructed but never broadcast)
+        chunkResults.push({
+          chunkId: chunk.chunkId,
+          status: "SIMULATED", // DRY_RUN is a form of simulation
+          reasons: executionResult.reasons,
+          txDraft,
+          createdAtMs: getNowMs(),
+          phaseLabel: currentPhase, // PR161
+          routeSelected: selectedRoute, // PR161
+          routeChanged, // PR161
+          observeDegradeLevel, // PR184
+        });
+
+        // PR197: Emit CHUNK_RESULT event
+        const reasonCodesSummaryDryRun = summarizeReasonCodesV1(
+          txDraft.executionReasonCodes
+        );
+        // PR193: Track last non-empty reason codes for RUN_STOP
+        if (
+          Array.isArray(txDraft.executionReasonCodes) &&
+          txDraft.executionReasonCodes.length > 0
+        ) {
+          lastChunkReasonCodes = txDraft.executionReasonCodes;
+        }
+        await appendEventV1(
+          createEventV1("CHUNK_RESULT", "INFO", {
+            chunk_status: "SIMULATED", // DRY_RUN counted as SIMULATED
+            gate_status: gateStatus, // PR189
+            policy_status: policyStatus, // PR189
+            quote_impact_label: quoteImpactLabel, // PR190
+            slippage_label: slippageLabel, // PR190
+            minout_status: minOutStatus, // PR190
+            tx_reason_codes_status: reasonCodesSummaryDryRun.status, // PR192
+            tx_reason_codes: reasonCodesSummaryDryRun.joined, // PR192
             execution_mode: executionMode, // PR196
             phase: currentPhase,
           })

@@ -16,9 +16,11 @@ async function main() {
     getNowMs: () => Date.now(),
   });
 
-  // PR196: Set execution mode (default: SIM_ONLY for safety)
+  // PR196/PR197: Set execution mode (default: SIM_ONLY for safety)
   // Available modes: "SIM_ONLY" | "DRY_RUN" | "LIVE"
   (runPlan as any).executionMode = "SIM_ONLY";
+  // Uncomment to test DRY_RUN mode:
+  // (runPlan as any).executionMode = "DRY_RUN";
 
   const res = await runChunkedExecutionV1(runPlan as any, {
     // ---- 必須 deps ----
@@ -96,12 +98,32 @@ async function main() {
         ],
       } as any),
 
-    // ---- Execute: 常に SIMULATED（実行しない）----
-    executeTx: async (_args: any) =>
-      ({
-        status: "SIMULATED",
-        reasons: ["SIM_ONLY_HARNESS"],
-      } as any),
+    // ---- Execute: Mode-aware (PR197) ----
+    executeTx: async (args: any) => {
+      // PR197: Respect executionMode
+      const mode = args.executionMode || "SIM_ONLY";
+      if (mode === "SIM_ONLY") {
+        return {
+          status: "SIMULATED",
+          reasons: ["REASON_EXEC_SIM_ONLY"],
+        } as any;
+      } else if (mode === "DRY_RUN") {
+        return {
+          status: "DRY_RUN",
+          reasons: ["REASON_EXEC_DRY_RUN"],
+        } as any;
+      } else if (mode === "LIVE") {
+        // Harness doesn't support LIVE (no keys/env)
+        return {
+          status: "EXECUTION_DISABLED",
+          reasons: ["REASON_EXEC_LIVE_NOT_SUPPORTED_IN_HARNESS"],
+        } as any;
+      }
+      return {
+        status: "ERROR",
+        reasons: ["REASON_EXEC_UNKNOWN_MODE"],
+      } as any;
+    },
 
     // 高速化
     sleepMs: async () => {},
