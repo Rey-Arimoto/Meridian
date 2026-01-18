@@ -420,6 +420,16 @@ const RUN_LIVE_BLOCK_UNKNOWN_REASON = "RUN_REASON_LIVE_UNLOCK_LOCKED_UNKNOWN";
 const RUN_LIVE_BLOCK_POLICY_REASON = "RUN_REASON_LIVE_POLICY_NOT_ALLOW";
 
 /**
+ * PR206: Phase/Timeout/Streak STOP reason code constants
+ * Track run-level STOP causes for Phase escalation, Timeout, and Blocked Streak
+ */
+const RUN_PHASE_ESCALATION_STOP = "RUN_PHASE_ESCALATION_STOP";
+const RUN_PHASE_DOWN_SHOCK = "RUN_PHASE_DOWN_SHOCK";
+const RUN_PHASE_UP_REVERSAL = "RUN_PHASE_UP_REVERSAL";
+const RUN_TIMEOUT_STOP = "RUN_TIMEOUT_STOP";
+const RUN_BLOCKED_STREAK_STOP = "RUN_BLOCKED_STREAK_STOP";
+
+/**
  * Run chunked execution (TWAP-lite v1)
  *
  * @param runPlan - Run plan from buildChunkPlansV1
@@ -559,6 +569,9 @@ export async function runChunkedExecutionV1(
       if (elapsed > RUNNER_PARAMS.MAX_RUN_DURATION_MS) {
         reasons.push("REASON_RUN_DURATION_EXCEEDED");
 
+        // PR206: Add run-level timeout STOP reason
+        runLevelReasonCodes.add(RUN_TIMEOUT_STOP);
+
         const nowMs = getNowMs();
         finalStatus = "STOPPED";
         stopCause = "TIMEOUT"; // PR189
@@ -642,6 +655,14 @@ export async function runChunkedExecutionV1(
           reasons.push("REASON_PHASE_ESCALATION_STOP");
           reasons.push(phaseDecision.reason);
           reasons.push(...phaseDecision.warnings);
+
+          // PR206: Add run-level phase STOP reasons
+          runLevelReasonCodes.add(RUN_PHASE_ESCALATION_STOP);
+          if (currentPhase === "PHASE_DOWN_SHOCK") {
+            runLevelReasonCodes.add(RUN_PHASE_DOWN_SHOCK);
+          } else if (currentPhase === "PHASE_UP_REVERSAL") {
+            runLevelReasonCodes.add(RUN_PHASE_UP_REVERSAL);
+          }
 
           const nowMs = getNowMs();
           finalStatus = "STOPPED";
@@ -932,6 +953,9 @@ export async function runChunkedExecutionV1(
           });
 
           reasons.push("REASON_BLOCKED_STREAK_EXCEEDED_STOP");
+
+          // PR206: Add run-level blocked streak STOP reason
+          runLevelReasonCodes.add(RUN_BLOCKED_STREAK_STOP);
 
           // PR204: Promote gate reason codes to run-level codes
           if (gateResult.reasonCodes && gateResult.reasonCodes.length > 0) {
