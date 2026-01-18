@@ -386,6 +386,12 @@ function createResumeState(
 }
 
 /**
+ * PR200: LIVE block stop reason code constant
+ * Used to track LIVE mode blocks in run-level reason codes
+ */
+const LIVE_BLOCK_STOP_REASON = "REASON_LIVE_MODE_BLOCKED_STOP";
+
+/**
  * Run chunked execution (TWAP-lite v1)
  *
  * @param runPlan - Run plan from buildChunkPlansV1
@@ -466,6 +472,9 @@ export async function runChunkedExecutionV1(
 
   // PR193: Track last non-empty reason codes for RUN_STOP summary
   let lastChunkReasonCodes: string[] | undefined = undefined;
+
+  // PR200: Track run-level reason codes (LIVE blocks, etc.)
+  const runLevelReasonCodes = new Set<string>();
 
   try {
     // Check if run plan has no chunks
@@ -1125,6 +1134,7 @@ export async function runChunkedExecutionV1(
         });
 
         reasons.push("REASON_LIVE_MODE_BLOCKED_STOP");
+        runLevelReasonCodes.add(LIVE_BLOCK_STOP_REASON); // PR200: Add to run-level reason codes
         stopCause = "POLICY"; // PR189/PR199: Policy attribution
         finalStatus = "STOPPED";
 
@@ -1486,8 +1496,13 @@ export async function runChunkedExecutionV1(
       finishedAtMs: getNowMs(),
     };
   } finally {
-    // PR188c/PR188d/PR189/PR193/PR196: Emit RUN_STOP lifecycle event (always runs)
-    const runReasonSummary = summarizeRunReasonCodesV1(lastChunkReasonCodes);
+    // PR188c/PR188d/PR189/PR193/PR196/PR200: Emit RUN_STOP lifecycle event (always runs)
+    // PR200: Merge chunk-level and run-level reason codes for RUN_STOP summary
+    const mergedRunReasons = [
+      ...(lastChunkReasonCodes ?? []),
+      ...Array.from(runLevelReasonCodes),
+    ];
+    const runReasonSummary = summarizeRunReasonCodesV1(mergedRunReasons);
     await appendEventV1(
       createEventV1("RUN_STOP", "INFO", {
         run_id: runPlan.runId,
