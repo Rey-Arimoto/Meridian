@@ -37,12 +37,14 @@ import {
   ExecutionMode,
   LiveUnlockStatus,
   PhaseTransitionReasonCode,
+  PhasePolicyInputsV1,
 } from "./types";
 import { CHUNKING_PARAMS } from "./chunking";
 import {
   PhaseLabel,
   evaluatePhaseStopPolicyV1,
   getPhasePolicySummary,
+  evaluatePhasePolicyV1,
 } from "./phasePolicy";
 import { createEventV1, appendEventV1 } from "../telemetry";
 import {
@@ -959,31 +961,26 @@ export async function runChunkedExecutionV1(
           };
         }
 
-        // PR211: Detect phase transition and determine reason codes
-        phaseTransitionCodes = []; // Reset for this chunk
-        if (prevPhase !== "PHASE_UNKNOWN" && currentPhase !== prevPhase) {
-          // Phase transition detected - determine transition type
-          const transitionKey = `${prevPhase}_TO_${currentPhase}`;
+        // PR212: Evaluate phase transition policy
+        const phasePolicyInputs: PhasePolicyInputsV1 = {
+          prevPhase: prevPhase ?? "PHASE_UNKNOWN",
+          currentPhase: currentPhase,
+          stopCause: stopCause,
+          gateStatus: "PASS", // Default: gate not evaluated yet
+          policyStatus: "ALLOW", // Default: policy not evaluated yet
+          blockedStreakCount: consecutiveBlockCount,
+          nowMs: getNowMs(),
+          runStartedAtMs: startedAtMs,
+          maxRunDurationMs: RUNNER_PARAMS.MAX_RUN_DURATION_MS,
+        };
 
-          // Map transition to taxonomy
-          if (transitionKey === "PHASE_NORMAL_TO_PHASE_RANGE") {
-            phaseTransitionCodes.push(PHASE_TXN_NORMAL_TO_RANGE);
-          } else if (transitionKey === "PHASE_RANGE_TO_PHASE_DOWN_SHOCK") {
-            phaseTransitionCodes.push(PHASE_TXN_RANGE_TO_DOWN_SHOCK);
-          } else if (transitionKey === "PHASE_RANGE_TO_PHASE_UP_REVERSAL") {
-            phaseTransitionCodes.push(PHASE_TXN_RANGE_TO_UP_REVERSAL);
-          } else if (transitionKey === "PHASE_DOWN_SHOCK_TO_PHASE_RANGE") {
-            phaseTransitionCodes.push(PHASE_TXN_DOWN_SHOCK_TO_RANGE);
-          } else if (transitionKey === "PHASE_UP_REVERSAL_TO_PHASE_RANGE") {
-            phaseTransitionCodes.push(PHASE_TXN_UP_REVERSAL_TO_RANGE);
-          } else {
-            phaseTransitionCodes.push(PHASE_TXN_UNKNOWN);
-          }
+        const phasePolicyDecision = evaluatePhasePolicyV1(phasePolicyInputs);
 
-          // Add trigger codes (will be populated below based on execution context)
-          // Note: Triggers are determined by gate/policy/exec outcomes later in the chunk
+        // Extract transition codes from policy decision
+        phaseTransitionCodes = phasePolicyDecision.transitionCodes as PhaseTransitionReasonCode[];
 
-          // PR211: Promote phase transition codes to run-level
+        // PR211: Promote phase transition codes to run-level
+        if (phasePolicyDecision.changed) {
           for (const code of phaseTransitionCodes) {
             runLevelReasonCodes.add(`RUN_${code}`);
           }

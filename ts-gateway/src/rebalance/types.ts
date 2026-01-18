@@ -563,3 +563,63 @@ export interface ResumeState {
   originStopCause?: StopCause;
   originRunReasonCodes?: string[];
 }
+
+/**
+ * PR212: Phase Policy Evaluator v1 (separation of concerns)
+ *
+ * Purpose:
+ *   Separate phase transition decision logic from execution loop.
+ *   READ-ONLY policy evaluator for phase updates and STOP conditions.
+ */
+
+/**
+ * Phase policy inputs (v1)
+ */
+export interface PhasePolicyInputsV1 {
+  // Previous phase label (PHASE_UNKNOWN if first chunk)
+  prevPhase: string;
+
+  // Current phase label (from observation)
+  currentPhase: string;
+
+  // Stop cause category (from runner context)
+  stopCause: StopCause;
+
+  // Gate status (from gate evaluation)
+  gateStatus: "PASS" | "BLOCK" | "ERROR";
+
+  // Policy status (from policy evaluation)
+  policyStatus: "ALLOW" | "SIM_ONLY" | "BLOCKED" | "ERROR";
+
+  // Consecutive blocked chunk count (from runner)
+  blockedStreakCount: number;
+
+  // Current timestamp (internal numeric only)
+  nowMs: number;
+
+  // Run start timestamp (internal numeric only)
+  runStartedAtMs: number;
+
+  // Max run duration (internal numeric only)
+  maxRunDurationMs: number;
+}
+
+/**
+ * Phase policy decision (v1)
+ */
+export interface PhasePolicyDecisionV1 {
+  // Next phase label (may be same as current)
+  nextPhase: string;
+
+  // Phase changed? (true if prevPhase !== nextPhase)
+  changed: boolean;
+
+  // Transition codes (label-only: PHASE_TXN_* and PHASE_TRIG_*)
+  transitionCodes: string[];
+
+  // Should stop the run?
+  shouldStop: boolean;
+
+  // Stop cause (if shouldStop=true)
+  stopCause?: StopCause;
+}

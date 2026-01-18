@@ -205,3 +205,132 @@ export function getPhasePolicySummary(decision: PhasePolicyDecision): string {
 
   return "PHASE_POLICY_CONTINUE";
 }
+
+/**
+ * PR212: Phase Policy Evaluator v1 (separation of concerns)
+ *
+ * Purpose:
+ *   Evaluate phase transitions and determine STOP conditions.
+ *   Separates phase decision logic from execution loop.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning, no optimization
+ *   - Defensive: Never throws, always returns decision
+ *   - Label-only: transitionCodes are strings only
+ *   - Deterministic: Same inputs → same outputs
+ */
+
+import type { PhasePolicyInputsV1, PhasePolicyDecisionV1, StopCause } from "./types";
+
+/**
+ * Phase transition reason code constants (PR211 taxonomy)
+ */
+// Transition types (state machine edges)
+const PHASE_TXN_NORMAL_TO_RANGE = "PHASE_TXN_NORMAL_TO_RANGE";
+const PHASE_TXN_RANGE_TO_DOWN_SHOCK = "PHASE_TXN_RANGE_TO_DOWN_SHOCK";
+const PHASE_TXN_RANGE_TO_UP_REVERSAL = "PHASE_TXN_RANGE_TO_UP_REVERSAL";
+const PHASE_TXN_DOWN_SHOCK_TO_RANGE = "PHASE_TXN_DOWN_SHOCK_TO_RANGE";
+const PHASE_TXN_UP_REVERSAL_TO_RANGE = "PHASE_TXN_UP_REVERSAL_TO_RANGE";
+const PHASE_TXN_UNKNOWN = "PHASE_TXN_UNKNOWN";
+
+// Trigger categories (root causes) - for future use
+const PHASE_TRIG_GATE_BLOCK = "PHASE_TRIG_GATE_BLOCK";
+const PHASE_TRIG_POLICY_HARDSTOP = "PHASE_TRIG_POLICY_HARDSTOP";
+const PHASE_TRIG_TIMEOUT_PRESSURE = "PHASE_TRIG_TIMEOUT_PRESSURE";
+
+/**
+ * Evaluate phase policy v1
+ *
+ * @param inputs - Phase policy inputs (prev/current phase, gate/policy status, etc.)
+ * @returns Phase policy decision (next phase, transition codes, stop decision)
+ *
+ * This function:
+ * 1. Detects phase transitions (prevPhase → currentPhase)
+ * 2. Determines transition type (PHASE_TXN_*)
+ * 3. Adds trigger codes (PHASE_TRIG_*) based on context (gate/policy/timeout)
+ * 4. Decides if run should STOP (using existing evaluatePhaseStopPolicyV1 logic)
+ *
+ * Note: Trigger codes (PHASE_TRIG_*) are added only if context is available.
+ *       If called before gate/policy evaluation, trigger codes will be empty.
+ *
+ * IMPORTANT: Never throws, always returns decision
+ */
+export function evaluatePhasePolicyV1(inputs: PhasePolicyInputsV1): PhasePolicyDecisionV1 {
+  try {
+    const { prevPhase, currentPhase, gateStatus, policyStatus } = inputs;
+
+    // Initialize transition codes
+    const transitionCodes: string[] = [];
+
+    // Detect phase transition
+    let changed = false;
+    if (prevPhase !== "PHASE_UNKNOWN" && currentPhase !== prevPhase) {
+      changed = true;
+
+      // Determine transition type
+      const transitionKey = `${prevPhase}_TO_${currentPhase}`;
+
+      // Map transition to taxonomy (PR211 logic from runner.ts)
+      if (transitionKey === "PHASE_NORMAL_TO_PHASE_RANGE") {
+        transitionCodes.push(PHASE_TXN_NORMAL_TO_RANGE);
+      } else if (transitionKey === "PHASE_RANGE_TO_PHASE_DOWN_SHOCK") {
+        transitionCodes.push(PHASE_TXN_RANGE_TO_DOWN_SHOCK);
+      } else if (transitionKey === "PHASE_RANGE_TO_PHASE_UP_REVERSAL") {
+        transitionCodes.push(PHASE_TXN_RANGE_TO_UP_REVERSAL);
+      } else if (transitionKey === "PHASE_DOWN_SHOCK_TO_PHASE_RANGE") {
+        transitionCodes.push(PHASE_TXN_DOWN_SHOCK_TO_RANGE);
+      } else if (transitionKey === "PHASE_UP_REVERSAL_TO_PHASE_RANGE") {
+        transitionCodes.push(PHASE_TXN_UP_REVERSAL_TO_RANGE);
+      } else {
+        transitionCodes.push(PHASE_TXN_UNKNOWN);
+      }
+
+      // Add trigger codes based on context (optional, only if available)
+      // Note: These may not be available at all call sites (e.g., before gate/policy eval)
+      if (gateStatus === "BLOCK") {
+        transitionCodes.push(PHASE_TRIG_GATE_BLOCK);
+      }
+      if (policyStatus === "BLOCKED") {
+        transitionCodes.push(PHASE_TRIG_POLICY_HARDSTOP);
+      }
+      // Timeout pressure detection (v1: simple threshold)
+      if (inputs.maxRunDurationMs > 0) {
+        const elapsedMs = inputs.nowMs - inputs.runStartedAtMs;
+        const timeoutRatio = elapsedMs / inputs.maxRunDurationMs;
+        if (timeoutRatio > 0.8) {
+          // 80% of max duration
+          transitionCodes.push(PHASE_TRIG_TIMEOUT_PRESSURE);
+        }
+      }
+    }
+
+    // Evaluate STOP policy (reuse existing logic)
+    const stopDecision = evaluatePhaseStopPolicyV1(
+      prevPhase as PhaseLabel,
+      currentPhase as PhaseLabel
+    );
+
+    // Determine stop cause (if shouldStop)
+    let stopCause: StopCause | undefined;
+    if (stopDecision.shouldStop) {
+      stopCause = "PHASE";
+    }
+
+    return {
+      nextPhase: currentPhase,
+      changed,
+      transitionCodes,
+      shouldStop: stopDecision.shouldStop,
+      stopCause,
+    };
+  } catch (error) {
+    // Defensive: Never throw, return safe default
+    return {
+      nextPhase: inputs.currentPhase || "PHASE_UNKNOWN",
+      changed: false,
+      transitionCodes: [],
+      shouldStop: true,
+      stopCause: "PHASE",
+    };
+  }
+}
