@@ -286,3 +286,162 @@ export function loadOrchAckSetV1(): Set<string> {
     return new Set();
   }
 }
+
+/**
+ * PR218: Orchestration result status (label-only)
+ */
+export type OrchResultStatusV1 =
+  | "DISPATCHED"
+  | "SKIPPED_POLICY"
+  | "SKIPPED_WINDOW"
+  | "FAILED_NETWORK"
+  | "FAILED_MARKET"
+  | "FAILED_UNKNOWN"
+  | "SUCCEEDED"
+  | "UNKNOWN";
+
+/**
+ * PR218: Orchestration result v1 (label-only)
+ */
+export interface OrchestrationResultV1 {
+  v: "v1";
+  resume_id: string;
+  result_id: string; // Unique per result line (idempotency key)
+  status: OrchResultStatusV1;
+  outcome_codes?: string[]; // Label-only codes e.g. ["ORCH_NET_TIMEOUT"]
+  hint_codes?: string[]; // Echoed from instruction if available
+}
+
+/**
+ * PR218: Append orchestration result to result file
+ *
+ * @param result - Result to record
+ * @returns Promise (never throws, catches errors internally)
+ */
+export async function appendOrchResultV1(
+  result: OrchestrationResultV1
+): Promise<void> {
+  try {
+    const resultPath = path.join(os.homedir(), ".meridian", "orch_result.jsonl");
+
+    // Ensure .meridian directory exists
+    const dir = path.dirname(resultPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Append JSONL line
+    const line = JSON.stringify(result) + "\n";
+    fs.appendFileSync(resultPath, line, "utf8");
+  } catch (error) {
+    // Defensive: Catch and ignore (telemetry will still record ORCH_RESULT)
+  }
+}
+
+/**
+ * PR218: Load orchestration result lines from result file
+ *
+ * @param limit - Maximum number of lines to read (default: 200)
+ * @returns Array of result records (never throws, skips malformed lines)
+ */
+export function loadOrchResultLinesV1(limit = 200): OrchestrationResultV1[] {
+  try {
+    const resultPath = path.join(os.homedir(), ".meridian", "orch_result.jsonl");
+
+    // Return empty array if file doesn't exist
+    if (!fs.existsSync(resultPath)) {
+      return [];
+    }
+
+    // Read file and parse each line
+    const content = fs.readFileSync(resultPath, "utf8");
+    const lines = content.trim().split("\n");
+    const results: OrchestrationResultV1[] = [];
+
+    // Read up to limit lines (from end, newest first)
+    const startIdx = Math.max(0, lines.length - limit);
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+
+      try {
+        const result = JSON.parse(line) as OrchestrationResultV1;
+        if (result.v === "v1" && result.resume_id && result.result_id) {
+          results.push(result);
+        }
+      } catch (parseError) {
+        // Defensive: Skip malformed lines
+        continue;
+      }
+    }
+
+    return results;
+  } catch (error) {
+    // Defensive: Return empty array on any error
+    return [];
+  }
+}
+
+/**
+ * PR218: Load seen result IDs from seen file
+ *
+ * @returns Set of result_id values that have been seen (never throws)
+ */
+export function loadOrchResultSeenSetV1(): Set<string> {
+  try {
+    const seenPath = path.join(os.homedir(), ".meridian", "orch_result_seen.jsonl");
+
+    // Return empty set if file doesn't exist
+    if (!fs.existsSync(seenPath)) {
+      return new Set();
+    }
+
+    // Read file and collect result_ids
+    const content = fs.readFileSync(seenPath, "utf8");
+    const lines = content.trim().split("\n");
+    const seenSet = new Set<string>();
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const record = JSON.parse(line) as { result_id: string };
+        if (record.result_id) {
+          seenSet.add(record.result_id);
+        }
+      } catch (parseError) {
+        // Defensive: Skip malformed lines
+        continue;
+      }
+    }
+
+    return seenSet;
+  } catch (error) {
+    // Defensive: Return empty set on any error
+    return new Set();
+  }
+}
+
+/**
+ * PR218: Mark result as seen (append to seen file)
+ *
+ * @param resultId - Result ID to mark as seen
+ * @returns Promise (never throws, catches errors internally)
+ */
+export async function markOrchResultSeenV1(resultId: string): Promise<void> {
+  try {
+    const seenPath = path.join(os.homedir(), ".meridian", "orch_result_seen.jsonl");
+
+    // Ensure .meridian directory exists
+    const dir = path.dirname(seenPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Append result_id line
+    const line = JSON.stringify({ result_id: resultId }) + "\n";
+    fs.appendFileSync(seenPath, line, "utf8");
+  } catch (error) {
+    // Defensive: Catch and ignore
+  }
+}

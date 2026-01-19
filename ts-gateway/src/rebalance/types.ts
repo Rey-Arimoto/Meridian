@@ -647,6 +647,11 @@ export interface ResumeState {
   // PR209: Resume origin context (persisted from original STOP for telemetry traceability)
   originStopCause?: StopCause;
   originRunReasonCodes?: string[];
+
+  // PR218: Orchestrator feedback (last known result, optional)
+  orchLastStatus?: string; // OrchResultStatusV1 from orchestrator/interface
+  orchLastOutcomeCodes?: string[];
+  orchLastResultId?: string;
 }
 
 /**

@@ -27,6 +27,9 @@ import {
   buildOrchestrationInstructionV1,
   appendOrchQueueV1,
   loadOrchAckSetV1,
+  loadOrchResultLinesV1,
+  loadOrchResultSeenSetV1,
+  markOrchResultSeenV1,
 } from "../orchestrator/interface";
 
 /**
@@ -868,6 +871,85 @@ export async function runSupervisorOnceV1(
             ack_status: "ACKED",
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
+      }
+    }
+
+    // PR218: Load orchestration results (feedback loop)
+    const orchResults = loadOrchResultLinesV1(200); // Last 200 results
+    const orchResultSeenSet = loadOrchResultSeenSetV1();
+    if (orchResults.length > 0) {
+      notes.push(`NOTE_ORCH_RESULT_LOADED_COUNT_${orchResults.length}`);
+
+      for (const result of orchResults) {
+        // Skip if already seen (idempotency)
+        if (orchResultSeenSet.has(result.result_id)) {
+          continue;
+        }
+
+        // Mark as seen
+        await markOrchResultSeenV1(result.result_id);
+
+        // Process outcome codes: dedup, sort, truncate to 8
+        let outcomeSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+          status: "EMPTY",
+          joined: "",
+        };
+        if (result.outcome_codes && result.outcome_codes.length > 0) {
+          const uniqueCodes = Array.from(new Set(result.outcome_codes)).sort();
+          const truncated = uniqueCodes.slice(0, 8);
+          if (uniqueCodes.length > 8) {
+            truncated.push("REASONS_TRUNCATED");
+          }
+          outcomeSummary = {
+            status: "PRESENT",
+            joined: truncated.join("|"),
+          };
+        }
+
+        // Process hint codes: dedup, sort, truncate to 8
+        let hintSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+          status: "EMPTY",
+          joined: "",
+        };
+        if (result.hint_codes && result.hint_codes.length > 0) {
+          const uniqueCodes = Array.from(new Set(result.hint_codes)).sort();
+          const truncated = uniqueCodes.slice(0, 8);
+          if (uniqueCodes.length > 8) {
+            truncated.push("REASONS_TRUNCATED");
+          }
+          hintSummary = {
+            status: "PRESENT",
+            joined: truncated.join("|"),
+          };
+        }
+
+        // Emit ORCH_RESULT telemetry event
+        await appendEventV1(
+          createEventV1("ORCH_RESULT", "INFO", {
+            resume_id: result.resume_id,
+            orch_result_id: result.result_id,
+            orch_result_status: result.status,
+            orch_outcome_codes_status: outcomeSummary.status,
+            orch_outcome_codes: outcomeSummary.joined,
+            orch_hint_codes_status: hintSummary.status,
+            orch_hint_codes: hintSummary.joined,
+          })
+        ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+        // Update resumeState if this result is for the current resume_id
+        if (
+          state.resumeState &&
+          state.resumeState.status === "STOPPED" &&
+          result.resume_id === (state.lastRun as any)?.resumeId
+        ) {
+          // Update orchestrator feedback fields
+          state.resumeState.orchLastStatus = result.status;
+          state.resumeState.orchLastOutcomeCodes = result.outcome_codes || [];
+          state.resumeState.orchLastResultId = result.result_id;
+
+          // Persist updated state (defensive: don't fail tick on error)
+          await store.patchState({ resumeState: state.resumeState }).catch(() => {});
+        }
       }
     }
 
