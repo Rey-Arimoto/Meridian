@@ -651,6 +651,157 @@ function deriveResumeReexecTimingV1(args: {
 }
 
 /**
+ * PR217: Derive orchestrator policy hooks v1 (label-only)
+ *
+ * Purpose:
+ *   Derive execution timing/condition hints from resume context.
+ *   Outputs are "constraints/intentions" NOT schedules.
+ *   Actual scheduling is orchestrator responsibility.
+ *
+ * Inputs:
+ *   - resumeStrategy (PR213)
+ *   - resumeDelayClass (PR215)
+ *   - resumeDelayOffsetLabel (PR215)
+ *   - originStopCause (PR209)
+ *   - policyStatus / unlockStatus (existing labels)
+ *
+ * Outputs (all label-only):
+ *   - orch_policy_class: "NONE" | "DELAY_WINDOW" | "RETRY_LIMIT" | "MARKET_GUARD" | "UNKNOWN"
+ *   - orch_not_before: "NB_0S" | "NB_30S" | "NB_2M" | "NB_5M" | "NB_15M" | "NB_1H" | "UNKNOWN"
+ *   - orch_deadline: "DL_1M" | "DL_5M" | "DL_15M" | "DL_1H" | "DL_6H" | "DL_24H" | "NONE" | "UNKNOWN"
+ *   - orch_retry_limit: "RETRY_0" | "RETRY_1" | "RETRY_3" | "RETRY_5" | "RETRY_10" | "UNKNOWN"
+ *   - orch_market_guard: "GUARD_NONE" | "GUARD_ORACLE_OK" | "GUARD_GATE_PASS" | "GUARD_LIQUID_OK" | "UNKNOWN"
+ *   - orch_hint_codes: pipe-joined, dedup/sort/truncate(8)
+ *
+ * Fixed Mapping Rules (v1):
+ *   delayClass → orch_policy_class + orch_not_before:
+ *     IMMEDIATE → "NONE" + "NB_0S"
+ *     BACKOFF_SHORT → "DELAY_WINDOW" + "NB_2M"
+ *     BACKOFF_LONG → "DELAY_WINDOW" + "NB_15M"
+ *     MANUAL → "DELAY_WINDOW" + "NB_1H"
+ *
+ *   originStopCause → orch_retry_limit + orch_market_guard:
+ *     TIMEOUT → "RETRY_3" + "GUARD_ORACLE_OK"
+ *     GATE → "RETRY_5" + "GUARD_GATE_PASS"
+ *     POLICY → "RETRY_0" + "GUARD_NONE"
+ *     PHASE → "RETRY_3" + "GUARD_GATE_PASS"
+ *     NONE → "RETRY_3" + "GUARD_ORACLE_OK"
+ *
+ *   deadline: v1 = "DL_1H" (simple default, refinement in v2+)
+ *
+ * IMPORTANT: Never throws, always returns hooks decision
+ */
+function deriveOrchPolicyHooksV1(args: {
+  resumeStrategy?: import("../rebalance/types").ResumeStrategyV1;
+  resumeDelayClass?: import("../rebalance/types").ResumeDelayClassV1;
+  resumeDelayOffsetLabel?: import("../rebalance/types").ResumeDelayOffsetLabelV1;
+  originStopCause?: import("../rebalance/types").StopCause;
+}): import("../orchestrator/interface").OrchPolicyHooksV1 {
+  try {
+    const { resumeDelayClass, resumeDelayOffsetLabel, originStopCause } = args;
+    const codes: string[] = [];
+
+    // Derive orch_policy_class and orch_not_before from delayClass
+    let policyClass: import("../orchestrator/interface").OrchPolicyClassV1 = "DELAY_WINDOW";
+    let notBefore: import("../orchestrator/interface").OrchNotBeforeV1 = "NB_2M";
+
+    if (resumeDelayClass === "IMMEDIATE") {
+      policyClass = "NONE";
+      notBefore = "NB_0S";
+      codes.push("HINT_DELAY_IMMEDIATE");
+    } else if (resumeDelayClass === "BACKOFF_SHORT") {
+      policyClass = "DELAY_WINDOW";
+      notBefore = "NB_2M";
+      codes.push("HINT_DELAY_BACKOFF_SHORT");
+    } else if (resumeDelayClass === "BACKOFF_LONG") {
+      policyClass = "DELAY_WINDOW";
+      notBefore = "NB_15M";
+      codes.push("HINT_DELAY_BACKOFF_LONG");
+    } else if (resumeDelayClass === "MANUAL") {
+      policyClass = "DELAY_WINDOW";
+      notBefore = "NB_1H";
+      codes.push("HINT_DELAY_MANUAL");
+    } else {
+      // Unknown/undefined → safe default
+      policyClass = "DELAY_WINDOW";
+      notBefore = "NB_2M";
+      codes.push("HINT_DELAY_UNKNOWN");
+    }
+
+    // Derive orch_retry_limit and orch_market_guard from originStopCause
+    let retryLimit: import("../orchestrator/interface").OrchRetryLimitV1 = "RETRY_3";
+    let marketGuard: import("../orchestrator/interface").OrchMarketGuardV1 = "GUARD_ORACLE_OK";
+
+    if (originStopCause === "TIMEOUT") {
+      retryLimit = "RETRY_3";
+      marketGuard = "GUARD_ORACLE_OK";
+      codes.push("HINT_FROM_TIMEOUT");
+      codes.push("HINT_RETRY_LIMIT_3");
+      codes.push("HINT_GUARD_ORACLE_OK");
+    } else if (originStopCause === "GATE") {
+      retryLimit = "RETRY_5";
+      marketGuard = "GUARD_GATE_PASS";
+      codes.push("HINT_FROM_GATE");
+      codes.push("HINT_RETRY_LIMIT_5");
+      codes.push("HINT_GUARD_GATE_PASS");
+    } else if (originStopCause === "POLICY") {
+      retryLimit = "RETRY_0";
+      marketGuard = "GUARD_NONE";
+      codes.push("HINT_FROM_POLICY");
+      codes.push("HINT_RETRY_LIMIT_0");
+      codes.push("HINT_GUARD_NONE");
+    } else if (originStopCause === "PHASE") {
+      retryLimit = "RETRY_3";
+      marketGuard = "GUARD_GATE_PASS";
+      codes.push("HINT_FROM_PHASE");
+      codes.push("HINT_RETRY_LIMIT_3");
+      codes.push("HINT_GUARD_GATE_PASS");
+    } else {
+      // NONE or unknown → safe default
+      retryLimit = "RETRY_3";
+      marketGuard = "GUARD_ORACLE_OK";
+      codes.push("HINT_FROM_UNKNOWN");
+      codes.push("HINT_RETRY_LIMIT_3");
+      codes.push("HINT_GUARD_ORACLE_OK");
+    }
+
+    // Deadline: v1 = simple default (refinement in v2+)
+    const deadline: import("../orchestrator/interface").OrchDeadlineV1 = "DL_1H";
+    codes.push("HINT_DEADLINE_1H");
+
+    // Process hint codes: dedup, sort, truncate to 8
+    const uniqueCodes = Array.from(new Set(codes)).sort();
+    const truncated = uniqueCodes.slice(0, 8);
+    if (uniqueCodes.length > 8) {
+      truncated.push("REASONS_TRUNCATED");
+    }
+    const hintCodesJoined = truncated.join("|");
+    const hintCodesStatus: "PRESENT" | "EMPTY" = truncated.length > 0 ? "PRESENT" : "EMPTY";
+
+    return {
+      orch_policy_class: policyClass,
+      orch_not_before: notBefore,
+      orch_deadline: deadline,
+      orch_retry_limit: retryLimit,
+      orch_market_guard: marketGuard,
+      orch_hint_codes_status: hintCodesStatus,
+      orch_hint_codes: hintCodesJoined,
+    };
+  } catch {
+    // Defensive: Never throw, return safe default
+    return {
+      orch_policy_class: "UNKNOWN",
+      orch_not_before: "UNKNOWN",
+      orch_deadline: "UNKNOWN",
+      orch_retry_limit: "UNKNOWN",
+      orch_market_guard: "UNKNOWN",
+      orch_hint_codes_status: "EMPTY",
+      orch_hint_codes: "",
+    };
+  }
+}
+
+/**
  * Run supervisor once (single tick)
  *
  * @param store - State store
@@ -1066,8 +1217,17 @@ export async function runSupervisorOnceV1(
           ).catch(() => {}); // Defensive: Don't fail on telemetry error
 
           // PR216: Build orchestration instruction and enqueue (idempotent)
+          // PR217: Derive policy hooks for orchestrator
           // Only enqueue if not already ACKed
           if (!orchAckSet.has(resumeId)) {
+            // PR217: Derive orchestrator policy hooks
+            const policyHooks = deriveOrchPolicyHooksV1({
+              resumeStrategy,
+              resumeDelayClass,
+              resumeDelayOffsetLabel,
+              originStopCause: state.resumeState?.originStopCause,
+            });
+
             const orchInstruction = buildOrchestrationInstructionV1({
               resumeId,
               previousRunId: previousRunId || "UNKNOWN",
@@ -1082,9 +1242,10 @@ export async function runSupervisorOnceV1(
                 ...(enforcedCodes || []),
                 ...(resumeTimingReasonCodes || []),
               ],
+              policyHooks, // PR217: Pass policy hooks
             });
 
-            // PR216: Emit ORCH_ENQUEUE event
+            // PR216/PR217: Emit ORCH_ENQUEUE event
             await appendEventV1(
               createEventV1("ORCH_ENQUEUE", "INFO", {
                 instruction_version: orchInstruction.instruction_version,
@@ -1098,6 +1259,12 @@ export async function runSupervisorOnceV1(
                 orch_action: orchInstruction.orch_action,
                 orch_hint_codes_status: orchInstruction.orch_hint_codes_status,
                 orch_hint_codes: orchInstruction.orch_hint_codes,
+                // PR217: Policy hooks labels
+                orch_policy_class: orchInstruction.orch_policy_class || "UNKNOWN",
+                orch_not_before: orchInstruction.orch_not_before || "UNKNOWN",
+                orch_deadline: orchInstruction.orch_deadline || "UNKNOWN",
+                orch_retry_limit: orchInstruction.orch_retry_limit || "UNKNOWN",
+                orch_market_guard: orchInstruction.orch_market_guard || "UNKNOWN",
               })
             ).catch(() => {}); // Defensive: Don't fail on telemetry error
 

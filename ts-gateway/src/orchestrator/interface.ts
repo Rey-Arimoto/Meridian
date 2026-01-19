@@ -1,9 +1,11 @@
 /**
  * PR216: Recovery Orchestration Interface (Scheduler-less Deferred Re-exec) v1
+ * PR217: Orchestrator Policy Hooks v1 (Instruction extension)
  *
  * Purpose:
  *   External orchestrator integration for deferred resume re-execution.
  *   Supervisor emits instruction payloads, external orchestrator ACKs and dispatches.
+ *   PR217 adds execution timing/condition hints (policy hooks).
  *
  * Constitutional Constraints:
  *   - READ-ONLY: Decision outputs only, no scheduling
@@ -20,6 +22,75 @@ import * as os from "os";
  * Orchestration action (label-only)
  */
 export type OrchActionV1 = "DEFER" | "MANUAL" | "ABANDON";
+
+/**
+ * PR217: Orchestration policy class (label-only)
+ */
+export type OrchPolicyClassV1 =
+  | "NONE"
+  | "DELAY_WINDOW"
+  | "RETRY_LIMIT"
+  | "MARKET_GUARD"
+  | "UNKNOWN";
+
+/**
+ * PR217: Orchestration "not before" label (label-only, no numeric timestamps)
+ */
+export type OrchNotBeforeV1 =
+  | "NB_0S"
+  | "NB_30S"
+  | "NB_2M"
+  | "NB_5M"
+  | "NB_15M"
+  | "NB_1H"
+  | "UNKNOWN";
+
+/**
+ * PR217: Orchestration deadline label (label-only)
+ */
+export type OrchDeadlineV1 =
+  | "DL_1M"
+  | "DL_5M"
+  | "DL_15M"
+  | "DL_1H"
+  | "DL_6H"
+  | "DL_24H"
+  | "NONE"
+  | "UNKNOWN";
+
+/**
+ * PR217: Orchestration retry limit (label-only)
+ */
+export type OrchRetryLimitV1 =
+  | "RETRY_0"
+  | "RETRY_1"
+  | "RETRY_3"
+  | "RETRY_5"
+  | "RETRY_10"
+  | "UNKNOWN";
+
+/**
+ * PR217: Orchestration market guard (label-only)
+ */
+export type OrchMarketGuardV1 =
+  | "GUARD_NONE"
+  | "GUARD_ORACLE_OK"
+  | "GUARD_GATE_PASS"
+  | "GUARD_LIQUID_OK"
+  | "UNKNOWN";
+
+/**
+ * PR217: Orchestration policy hooks (label-only)
+ */
+export interface OrchPolicyHooksV1 {
+  orch_policy_class: OrchPolicyClassV1;
+  orch_not_before: OrchNotBeforeV1;
+  orch_deadline: OrchDeadlineV1;
+  orch_retry_limit: OrchRetryLimitV1;
+  orch_market_guard: OrchMarketGuardV1;
+  orch_hint_codes_status: "PRESENT" | "EMPTY";
+  orch_hint_codes: string;
+}
 
 /**
  * Orchestration instruction v1 (label-only payload)
@@ -48,6 +119,13 @@ export interface OrchestrationInstructionV1 {
   // Orchestration hint codes (label-only, pipe-joined, max 8)
   orch_hint_codes_status: "PRESENT" | "EMPTY";
   orch_hint_codes: string;
+
+  // PR217: Policy hooks (optional, backward compatible)
+  orch_policy_class?: OrchPolicyClassV1;
+  orch_not_before?: OrchNotBeforeV1;
+  orch_deadline?: OrchDeadlineV1;
+  orch_retry_limit?: OrchRetryLimitV1;
+  orch_market_guard?: OrchMarketGuardV1;
 }
 
 /**
@@ -75,6 +153,7 @@ export function buildOrchestrationInstructionV1(args: {
   delayClassV1?: string;
   delayOffsetV1?: string;
   hintCodes?: string[];
+  policyHooks?: OrchPolicyHooksV1; // PR217: Policy hooks (optional)
 }): OrchestrationInstructionV1 {
   try {
     // Derive orch_action from delay_class_v1
@@ -101,7 +180,7 @@ export function buildOrchestrationInstructionV1(args: {
       hintCodesStatus = "PRESENT";
     }
 
-    return {
+    const instruction: OrchestrationInstructionV1 = {
       instruction_version: "ORCH_V1",
       resume_id: args.resumeId,
       previous_run_id: args.previousRunId,
@@ -115,6 +194,17 @@ export function buildOrchestrationInstructionV1(args: {
       orch_hint_codes_status: hintCodesStatus,
       orch_hint_codes: hintCodesJoined,
     };
+
+    // PR217: Add policy hooks if provided (backward compatible)
+    if (args.policyHooks) {
+      instruction.orch_policy_class = args.policyHooks.orch_policy_class;
+      instruction.orch_not_before = args.policyHooks.orch_not_before;
+      instruction.orch_deadline = args.policyHooks.orch_deadline;
+      instruction.orch_retry_limit = args.policyHooks.orch_retry_limit;
+      instruction.orch_market_guard = args.policyHooks.orch_market_guard;
+    }
+
+    return instruction;
   } catch (error) {
     // Defensive: Return minimal valid instruction on error
     return {
