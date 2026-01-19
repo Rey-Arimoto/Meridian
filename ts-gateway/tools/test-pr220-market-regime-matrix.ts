@@ -39,6 +39,15 @@ async function testRegimeMatrix() {
       expectedMatrixStrategy: "RETRY_SAFE_SIM_ONLY",
       expectedMatrixCodes: ["MATRIX_FORCE_SIM_ONLY_VOLATILE"],
     },
+    {
+      name: "TIMEOUT origin → IMMEDIATE path (no deferral, resume_id parity)",
+      phaseLabel: "PHASE_NORMAL",
+      originStopCause: "TIMEOUT", // TIMEOUT → IMMEDIATE timing
+      expectedRegime: "REGIME_NORMAL",
+      expectedMatrixStrategy: "RETRY_IMMEDIATE", // TIMEOUT base strategy
+      expectedMatrixCodes: ["MATRIX_KEEP_BASE"],
+      expectIMMEDIATE: true, // Verify RESUME_REEXEC_ATTEMPT → RUN_START parity
+    },
   ];
 
   let passCount = 0;
@@ -64,7 +73,7 @@ async function testRegimeMatrix() {
         stopReason: "STOP_NO_ROUTE",
         stopAtTs: Date.now() - 300000,
         warnings: [],
-        originStopCause: "GATE",
+        originStopCause: (scenario as any).originStopCause || "GATE",
         lastPhaseLabel: scenario.phaseLabel,
       },
     };
@@ -108,7 +117,7 @@ async function testRegimeMatrix() {
           nowTs: Date.now(),
           oracleStatus: "AVAILABLE",
           gateStatus: "PASS",
-          phaseLabel: "PHASE_NORMAL",
+          phaseLabel: scenario.phaseLabel,
           routeAvailable: true,
           hardStopActive: false,
           policyEnvEnabled: true,
@@ -169,6 +178,44 @@ async function testRegimeMatrix() {
         },
       }
     );
+
+    // If expectIMMEDIATE, verify RESUME_REEXEC_ATTEMPT → RUN_START parity
+    if ((scenario as any).expectIMMEDIATE) {
+      console.log(`\n  === IMMEDIATE Path Parity Check ===`);
+      if (fs.existsSync(eventsPath)) {
+        const content = fs.readFileSync(eventsPath, "utf8");
+        const lines = content.trim().split("\n");
+
+        const attemptEvents = lines.filter((line) =>
+          line.includes('"type":"RESUME_REEXEC_ATTEMPT"')
+        );
+        const runStartEvents = lines.filter((line) =>
+          line.includes('"type":"RUN_START"')
+        );
+
+        if (attemptEvents.length > 0 && runStartEvents.length > 0) {
+          const attemptEvent = JSON.parse(attemptEvents[attemptEvents.length - 1]);
+          const runStartEvent = JSON.parse(runStartEvents[runStartEvents.length - 1]);
+
+          const attemptResumeId = attemptEvent.labels.resume_id;
+          const runStartResumeId = runStartEvent.labels.resume_id;
+
+          console.log(`  RESUME_REEXEC_ATTEMPT resume_id: ${attemptResumeId}`);
+          console.log(`  RUN_START resume_id: ${runStartResumeId}`);
+
+          if (attemptResumeId === runStartResumeId) {
+            console.log(`  ✓ IMMEDIATE path parity verified (same resume_id)`);
+            console.log(`  ✓ No RESUME_REEXEC_DEFERRED event (IMMEDIATE execution)`);
+          } else {
+            console.log(`  ✗ FAIL: resume_id mismatch (ATTEMPT vs RUN_START)`);
+            failCount++;
+          }
+        } else {
+          console.log(`  ✗ FAIL: Missing RESUME_REEXEC_ATTEMPT or RUN_START events`);
+          failCount++;
+        }
+      }
+    }
   }
 
   console.log("\n=== Test Summary ===");

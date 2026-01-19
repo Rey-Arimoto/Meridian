@@ -718,6 +718,22 @@ export interface ResumeState {
   // PR222: Deferral guard tracking (hotfix v1.4.1)
   deferralCount?: number; // Count of consecutive deferrals for this resume
   firstDeferredAtTs?: number; // Timestamp when first deferred (internal only, not emitted in labels)
+
+  // PR224: Regime hysteresis (v1.5 stability guards)
+  priorRegime?: MarketRegimeV1; // Last confirmed regime (after hysteresis)
+  regimeHistory?: MarketRegimeV1[]; // Last N instant regimes (circular buffer, N=3)
+
+  // PR225: Consecutive success gating (v1.5 stability guards)
+  consecutiveSuccesses?: number; // Counter for consecutive SUCCEEDED statuses (internal only, not emitted as raw number)
+  lastOrchEffectiveStatus?: string; // Last effective orch status (for deterministic resets)
+
+  // PR226: Oscillation detection (v1.5 stability guards)
+  strategyChangeCount?: number; // Changes within 1h window (internal only)
+  lastStrategyChangeTs?: number; // Timestamp of last strategy change (internal only)
+  regimeChangeCount?: number; // Changes within 1h window (internal only)
+  lastRegimeChangeTs?: number; // Timestamp of last regime change (internal only)
+  lastObservedStrategy?: ResumeStrategyV1; // Last observed strategy
+  lastObservedRegime?: MarketRegimeV1; // Last observed regime
 }
 
 /**

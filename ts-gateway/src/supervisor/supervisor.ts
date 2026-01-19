@@ -840,6 +840,7 @@ function deriveResumeEscalationV1(args: {
   baseStrategy: import("../rebalance/types").ResumeStrategyV1;
   orchLastStatus?: string; // Label-only defensive
   orchLastOutcomeCodes?: unknown[]; // Defensive
+  consecutiveSuccesses?: number; // PR225: Consecutive success counter (internal only)
 }): { strategy: import("../rebalance/types").ResumeStrategyV1; codes: string[] } {
   try {
     const { baseStrategy, orchLastStatus, orchLastOutcomeCodes } = args;
@@ -898,11 +899,23 @@ function deriveResumeEscalationV1(args: {
       return { strategy: "RETRY_SAFE_SIM_ONLY", codes: codes.sort() };
     }
 
-    // Rule E: SUCCEEDED → RETRY_IMMEDIATE
+    // Rule E: SUCCEEDED → RETRY_IMMEDIATE (with PR225 consecutive success gating)
     if (orchLastStatus === "SUCCEEDED") {
-      codes.push("STRAT_ESC_FROM_ORCH_STATUS_SUCCEEDED");
-      codes.push("STRAT_ESC_TO_RETRY_IMMEDIATE");
-      return { strategy: "RETRY_IMMEDIATE", codes: codes.sort() };
+      // PR225: Use the updated success count from supervisor (already incremented)
+      const successCount = args.consecutiveSuccesses || 0;
+
+      // PR225: Require 2 consecutive successes before escalating to IMMEDIATE
+      if (successCount >= 2) {
+        codes.push("STRAT_ESC_FROM_ORCH_STATUS_SUCCEEDED");
+        codes.push("STRAT_ESC_TO_RETRY_IMMEDIATE");
+        codes.push("STRAT_ESC_CONSECUTIVE_SUCCESS_GATE_PASS");
+        return { strategy: "RETRY_IMMEDIATE", codes: codes.sort() };
+      } else {
+        // First success, wait for confirmation (keep baseStrategy)
+        codes.push("STRAT_ESC_FROM_ORCH_STATUS_SUCCEEDED");
+        codes.push("STRAT_ESC_CONSECUTIVE_SUCCESS_GATE_WAIT");
+        return { strategy: baseStrategy, codes: codes.sort() };
+      }
     }
 
     // Rule F: No orch feedback or unknown status → keep baseStrategy
@@ -1066,6 +1079,62 @@ function deriveMarketRegimeV1(
 }
 
 /**
+ * PR224: Confirm regime change with hysteresis (2-tick confirmation)
+ *
+ * @param instantRegime - Instant regime from current signals
+ * @param priorRegime - Last confirmed regime (from previous tick)
+ * @param regimeHistory - Last N instant regimes (circular buffer)
+ * @returns Confirmed regime and hysteresis codes
+ *
+ * Purpose:
+ *   Prevent regime oscillation from transient signal flaps.
+ *   Require regime to be stable for 2 consecutive ticks before changing.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed hysteresis rules, no learning
+ *   - Label-only: All codes are strings
+ *   - Deterministic: Same history → same output
+ *   - Defensive: Never throws, handles undefined gracefully
+ *
+ * Rules:
+ *   1. No prior OR no change → use instant regime (NO_CHANGE)
+ *   2. Regime changed:
+ *      - If last instant regime in history equals current instant → CONFIRMED change
+ *      - Else → HOLD prior regime (wait for confirmation)
+ */
+function confirmRegimeChangeV1(
+  instantRegime: import("../rebalance/types").MarketRegimeV1,
+  priorRegime: import("../rebalance/types").MarketRegimeV1 | undefined,
+  regimeHistory: import("../rebalance/types").MarketRegimeV1[] | undefined
+): { regime: import("../rebalance/types").MarketRegimeV1; codes: string[] } {
+  try {
+    const codes: string[] = [];
+
+    // Rule 1: First read or no change → use instant regime
+    if (!priorRegime || instantRegime === priorRegime) {
+      codes.push("REGIME_HYSTERESIS_NO_CHANGE");
+      return { regime: instantRegime, codes };
+    }
+
+    // Rule 2: Regime changed - check if confirmed by history
+    const lastInstantRegime = regimeHistory?.[regimeHistory.length - 1];
+
+    if (lastInstantRegime === instantRegime) {
+      // 2 consecutive ticks with same new regime → confirmed change
+      codes.push("REGIME_HYSTERESIS_CONFIRMED");
+      return { regime: instantRegime, codes };
+    } else {
+      // Tentative change, wait for confirmation (hold prior)
+      codes.push("REGIME_HYSTERESIS_HOLD");
+      return { regime: priorRegime, codes };
+    }
+  } catch {
+    // Defensive: Never throw, return safe default (use instant regime)
+    return { regime: instantRegime, codes: ["REGIME_HYSTERESIS_ERROR"] };
+  }
+}
+
+/**
  * PR220: Derive resume strategy from regime × escalation matrix v1
  *
  * @param args - Matrix inputs
@@ -1153,6 +1222,101 @@ function deriveResumeStrategyFromMatrixV1(args: {
       strategy: args.baseStrategy || "WAIT_FOR_RECOVERY",
       codes: ["MATRIX_ERROR"],
     };
+  }
+}
+
+/**
+ * PR226: Detect strategy/regime oscillation (telemetry only)
+ *
+ * @param args - Oscillation detection inputs
+ * @returns Warnings and codes (does NOT change decisions)
+ *
+ * Purpose:
+ *   Emit warning telemetry if strategy/regime changes >10 times/hour.
+ *   Helps operators detect flapping signals or policy issues.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Detection only, no intervention
+ *   - Label-only: Counts converted to classes (not emitted as raw numbers)
+ *   - Defensive: Never throws, handles undefined
+ *   - Deterministic: Same inputs → same outputs
+ *
+ * Logic:
+ *   - Track changes within 1-hour rolling window
+ *   - Threshold: >10 changes/hour triggers warning
+ *   - Reset counter if >1h since last change
+ */
+function detectOscillationV1(args: {
+  resumeState: import("../rebalance/types").ResumeState;
+  currentStrategy: import("../rebalance/types").ResumeStrategyV1;
+  currentRegime: import("../rebalance/types").MarketRegimeV1;
+  nowMs: number;
+}): { warnings: string[]; codes: string[] } {
+  try {
+    const { resumeState, currentStrategy, currentRegime, nowMs } = args;
+    const warnings: string[] = [];
+    const codes: string[] = [];
+
+    const HOUR_MS = 60 * 60 * 1000;
+    const OSCILLATION_THRESHOLD = 10;
+
+    // Strategy oscillation check
+    if (
+      resumeState.lastObservedStrategy &&
+      resumeState.lastObservedStrategy !== currentStrategy
+    ) {
+      // Strategy changed
+      const timeSinceLastChange = resumeState.lastStrategyChangeTs
+        ? nowMs - resumeState.lastStrategyChangeTs
+        : HOUR_MS + 1;
+
+      if (timeSinceLastChange > HOUR_MS) {
+        // Reset counter (new hour window)
+        resumeState.strategyChangeCount = 1;
+      } else {
+        // Increment counter
+        resumeState.strategyChangeCount = (resumeState.strategyChangeCount || 0) + 1;
+
+        if (resumeState.strategyChangeCount > OSCILLATION_THRESHOLD) {
+          warnings.push("WARN_STRATEGY_OSCILLATION_DETECTED");
+          codes.push("OSC_STRATEGY_OVER_THRESHOLD");
+        }
+      }
+
+      resumeState.lastStrategyChangeTs = nowMs;
+    }
+
+    // Regime oscillation check
+    if (resumeState.lastObservedRegime && resumeState.lastObservedRegime !== currentRegime) {
+      // Regime changed
+      const timeSinceLastChange = resumeState.lastRegimeChangeTs
+        ? nowMs - resumeState.lastRegimeChangeTs
+        : HOUR_MS + 1;
+
+      if (timeSinceLastChange > HOUR_MS) {
+        // Reset counter (new hour window)
+        resumeState.regimeChangeCount = 1;
+      } else {
+        // Increment counter
+        resumeState.regimeChangeCount = (resumeState.regimeChangeCount || 0) + 1;
+
+        if (resumeState.regimeChangeCount > OSCILLATION_THRESHOLD) {
+          warnings.push("WARN_REGIME_OSCILLATION_DETECTED");
+          codes.push("OSC_REGIME_OVER_THRESHOLD");
+        }
+      }
+
+      resumeState.lastRegimeChangeTs = nowMs;
+    }
+
+    // Always update last observed values (defensive)
+    resumeState.lastObservedStrategy = currentStrategy;
+    resumeState.lastObservedRegime = currentRegime;
+
+    return { warnings, codes };
+  } catch {
+    // Defensive: Never throw, return empty
+    return { warnings: [], codes: ["OSC_DETECTION_ERROR"] };
   }
 }
 
@@ -1577,6 +1741,17 @@ export async function runSupervisorOnceV1(
       let orchFeedbackFreshness: "FRESH" | "STALE" | "NONE" = "NONE";
       let orchFeedbackAge: "AGE_FRESH" | "AGE_STALE" | "AGE_NONE" = "AGE_NONE";
 
+      // PR224: Regime hysteresis variables (declare outside for wider scope)
+      let regimeHysteresisClass: string = "H_UNKNOWN"; // H0_NO_CHANGE, H1_CONFIRMED, H2_HOLD
+
+      // PR225: Consecutive success variables (declare outside for wider scope)
+      let successStreakClass: string = "S_UNKNOWN"; // S0, S1, S2_PLUS
+      let successGateStatus: string = "GATE_UNKNOWN"; // PASS, WAIT
+
+      // PR226: Oscillation detection variables (declare outside for wider scope)
+      let oscillationStatus: string = "OSC_NONE"; // NONE, WARN_STRATEGY, WARN_REGIME, WARN_BOTH
+      let oscillationCodes: string[] = [];
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -1619,13 +1794,34 @@ export async function runSupervisorOnceV1(
           orchFeedbackAge = "AGE_NONE";
         }
 
+        // PR225: Update consecutive success counter for gating
+        let consecutiveSuccesses = state.resumeState.consecutiveSuccesses || 0;
+        const lastOrchEffectiveStatus = state.resumeState.lastOrchEffectiveStatus;
+
+        // Reset counter if effective status changed (deterministic reset)
+        if (effectiveOrchLastStatus !== lastOrchEffectiveStatus) {
+          if (effectiveOrchLastStatus === "SUCCEEDED") {
+            consecutiveSuccesses = 1; // First success
+          } else {
+            consecutiveSuccesses = 0; // Non-success resets counter
+          }
+        } else if (effectiveOrchLastStatus === "SUCCEEDED") {
+          consecutiveSuccesses += 1; // Increment on consecutive success
+        }
+
+        // Update resumeState with current values (for next tick)
+        state.resumeState.consecutiveSuccesses = consecutiveSuccesses;
+        state.resumeState.lastOrchEffectiveStatus = effectiveOrchLastStatus;
+
         // PR219: Derive escalated strategy from orchestrator feedback
         // PR221: Use effectiveOrchLastStatus (filters out stale feedback)
+        // PR225: Pass consecutiveSuccesses for gating
         const escalation = deriveResumeEscalationV1({
           originStopCause: state.resumeState.originStopCause,
           baseStrategy,
           orchLastStatus: effectiveOrchLastStatus, // PR221: May be undefined if stale
           orchLastOutcomeCodes: state.resumeState.orchLastOutcomeCodes,
+          consecutiveSuccesses, // PR225: For consecutive success gating
         });
         escalatedStrategy = escalation.strategy;
         escalationCodes = escalation.codes;
@@ -1695,8 +1891,21 @@ export async function runSupervisorOnceV1(
 
         // Derive regime from signals
         const regime = deriveMarketRegimeV1(regimeSignals);
-        marketRegime = regime.regime;
+        const instantRegime = regime.regime; // Instant regime from signals
         marketRegimeCodes = [...regime.codes, ...regimeSignalsCodes];
+
+        // PR224: Apply regime hysteresis (2-tick confirmation)
+        const priorRegime = state.resumeState.priorRegime;
+        const regimeHistory = state.resumeState.regimeHistory || [];
+
+        const hysteresis = confirmRegimeChangeV1(instantRegime, priorRegime, regimeHistory);
+        marketRegime = hysteresis.regime; // Confirmed regime (may differ from instant)
+        marketRegimeCodes.push(...hysteresis.codes); // Add hysteresis codes
+
+        // Update circular buffer: append instant regime, keep last 3
+        const updatedHistory = [...regimeHistory, instantRegime].slice(-3);
+        state.resumeState.regimeHistory = updatedHistory;
+        state.resumeState.priorRegime = marketRegime; // Persist confirmed regime
 
         // Persist regime in ResumeState (for next tick / telemetry)
         state.resumeState.marketRegime = marketRegime;
@@ -1714,6 +1923,64 @@ export async function runSupervisorOnceV1(
 
         // Use matrix strategy as final resumeStrategy for subsequent steps
         resumeStrategy = matrixStrategy;
+
+        // PR226: Detect oscillation (warning-only)
+        const oscillation = detectOscillationV1({
+          resumeState: state.resumeState,
+          currentStrategy: resumeStrategy,
+          currentRegime: marketRegime,
+          nowMs: getNowMs(),
+        });
+        warnings.push(...oscillation.warnings); // Add oscillation warnings (if any)
+        oscillationCodes = oscillation.codes;
+
+        // PR224: Derive hysteresis class label (label-only, no raw numbers)
+        if (hysteresis.codes.includes("REGIME_HYSTERESIS_NO_CHANGE")) {
+          regimeHysteresisClass = "H0_NO_CHANGE";
+        } else if (hysteresis.codes.includes("REGIME_HYSTERESIS_CONFIRMED")) {
+          regimeHysteresisClass = "H1_CONFIRMED";
+        } else if (hysteresis.codes.includes("REGIME_HYSTERESIS_HOLD")) {
+          regimeHysteresisClass = "H2_HOLD";
+        } else {
+          regimeHysteresisClass = "H_ERROR";
+        }
+
+        // PR225: Derive success streak class label (label-only, no raw numbers)
+        const successCount = state.resumeState.consecutiveSuccesses || 0;
+        if (successCount === 0) {
+          successStreakClass = "S0";
+        } else if (successCount === 1) {
+          successStreakClass = "S1";
+        } else {
+          successStreakClass = "S2_PLUS";
+        }
+
+        // PR225: Derive success gate status from escalation codes
+        if (escalationCodes.includes("STRAT_ESC_CONSECUTIVE_SUCCESS_GATE_PASS")) {
+          successGateStatus = "GATE_PASS";
+        } else if (escalationCodes.includes("STRAT_ESC_CONSECUTIVE_SUCCESS_GATE_WAIT")) {
+          successGateStatus = "GATE_WAIT";
+        } else {
+          successGateStatus = "GATE_NA"; // Not applicable (no gating logic applied)
+        }
+
+        // PR226: Derive oscillation status label
+        const hasStrategyOsc = oscillation.warnings.some((w) =>
+          w.includes("STRATEGY_OSCILLATION")
+        );
+        const hasRegimeOsc = oscillation.warnings.some((w) =>
+          w.includes("REGIME_OSCILLATION")
+        );
+
+        if (hasStrategyOsc && hasRegimeOsc) {
+          oscillationStatus = "OSC_WARN_BOTH";
+        } else if (hasStrategyOsc) {
+          oscillationStatus = "OSC_WARN_STRATEGY";
+        } else if (hasRegimeOsc) {
+          oscillationStatus = "OSC_WARN_REGIME";
+        } else {
+          oscillationStatus = "OSC_NONE";
+        }
 
         strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
         escalationSummary = summarizeStrategyCodesV1(escalationCodes);
@@ -1768,6 +2035,9 @@ export async function runSupervisorOnceV1(
         // PR219: Add escalation labels
         // PR220: Add regime/matrix labels
         // PR221: Add orch feedback freshness labels
+        // PR224: Add regime hysteresis labels
+        // PR225: Add consecutive success gating labels
+        // PR226: Add oscillation detection labels
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
@@ -1797,6 +2067,11 @@ export async function runSupervisorOnceV1(
             resume_delay_offset_label: resumeDelayOffsetLabel, // PR215
             resume_timing_codes_status: timingSummary.status, // PR215
             resume_timing_codes: timingSummary.joined, // PR215
+            resume_regime_hysteresis: regimeHysteresisClass, // PR224
+            resume_success_streak_status: successStreakClass, // PR225
+            resume_success_gate: successGateStatus, // PR225
+            resume_oscillation_status: oscillationStatus, // PR226
+            resume_oscillation_codes: oscillationCodes.join("|") || "NONE", // PR226
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       }
