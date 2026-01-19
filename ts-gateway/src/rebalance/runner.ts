@@ -767,6 +767,50 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_matrix_codes = matrixSummary.joined;
   }
 
+  // PR228: Add observability pack labels (passthrough from supervisor)
+  // Regime Hysteresis observability
+  if (runPlan.resumeRegimeInstant) {
+    runStartLabels.resume_regime_instant = runPlan.resumeRegimeInstant;
+  }
+  if (runPlan.resumeRegimeConfirmed) {
+    runStartLabels.resume_regime_confirmed = runPlan.resumeRegimeConfirmed;
+  }
+  if (runPlan.resumeRegimeHysteresisAction) {
+    runStartLabels.resume_regime_hysteresis_action = runPlan.resumeRegimeHysteresisAction;
+  }
+  if (runPlan.resumeRegimeHysteresisCodes) {
+    const hysteresisSummary = summarizeRunReasonCodesV1(runPlan.resumeRegimeHysteresisCodes);
+    runStartLabels.resume_regime_hysteresis_codes_status = hysteresisSummary.status;
+    runStartLabels.resume_regime_hysteresis_codes = hysteresisSummary.joined;
+  }
+  // Consecutive Success Gate observability
+  if (runPlan.resumeConsecutiveSuccessesClass) {
+    runStartLabels.resume_consecutive_successes_class = runPlan.resumeConsecutiveSuccessesClass;
+  }
+  if (runPlan.resumeSuccessGate) {
+    runStartLabels.resume_success_gate = runPlan.resumeSuccessGate;
+  }
+  if (runPlan.resumeSuccessGateCodes) {
+    const successGateSummary = summarizeRunReasonCodesV1(runPlan.resumeSuccessGateCodes);
+    runStartLabels.resume_success_gate_codes_status = successGateSummary.status;
+    runStartLabels.resume_success_gate_codes = successGateSummary.joined;
+  }
+  // Oscillation basis observability
+  if (runPlan.resumeOscWindowStatus) {
+    runStartLabels.resume_osc_window_status = runPlan.resumeOscWindowStatus;
+  }
+  if (runPlan.resumeOscChangeLevelStrategy) {
+    runStartLabels.resume_osc_change_level_strategy = runPlan.resumeOscChangeLevelStrategy;
+  }
+  if (runPlan.resumeOscChangeLevelRegime) {
+    runStartLabels.resume_osc_change_level_regime = runPlan.resumeOscChangeLevelRegime;
+  }
+  if (runPlan.resumeOscBasisCodes) {
+    const oscBasisSummary = summarizeRunReasonCodesV1(runPlan.resumeOscBasisCodes);
+    runStartLabels.resume_osc_basis_codes_status = oscBasisSummary.status;
+    runStartLabels.resume_osc_basis_codes = oscBasisSummary.joined;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)

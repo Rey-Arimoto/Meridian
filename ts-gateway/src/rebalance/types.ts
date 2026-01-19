@@ -423,6 +423,22 @@ export interface RunPlan {
   resumeMarketRegimeCodes?: string[]; // Regime derivation codes (label-only)
   resumeMatrixStrategy?: ResumeStrategyV1; // Final strategy after regime overlay
   resumeMatrixCodes?: string[]; // Matrix overlay codes (label-only)
+
+  // PR228: Stability Guard Observability Pack (telemetry-only, label-only)
+  // Regime Hysteresis observability (instant vs confirmed)
+  resumeRegimeInstant?: MarketRegimeV1; // Instant regime (before hysteresis)
+  resumeRegimeConfirmed?: MarketRegimeV1; // Confirmed regime (after hysteresis)
+  resumeRegimeHysteresisAction?: string; // H0_NO_CHANGE | H1_CONFIRMED | H2_HOLD | H_UNKNOWN
+  resumeRegimeHysteresisCodes?: string[]; // Hysteresis codes (label-only)
+  // Consecutive Success Gate observability
+  resumeConsecutiveSuccessesClass?: string; // S0 | S1 | S2_PLUS | S_UNKNOWN
+  resumeSuccessGate?: string; // GATE_WAIT | GATE_PASS | GATE_NA | G_UNKNOWN
+  resumeSuccessGateCodes?: string[]; // Success gate codes (label-only)
+  // Oscillation basis observability (window + change levels, label-only)
+  resumeOscWindowStatus?: string; // WINDOW_FRESH | WINDOW_RESET | WINDOW_UNKNOWN
+  resumeOscChangeLevelStrategy?: string; // CHG_LOW | CHG_MEDIUM | CHG_HIGH | CHG_EXCEEDED | CHG_UNKNOWN
+  resumeOscChangeLevelRegime?: string; // CHG_LOW | CHG_MEDIUM | CHG_HIGH | CHG_EXCEEDED | CHG_UNKNOWN
+  resumeOscBasisCodes?: string[]; // Oscillation basis codes (label-only)
 }
 
 /**

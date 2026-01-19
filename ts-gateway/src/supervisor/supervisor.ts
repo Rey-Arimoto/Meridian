@@ -118,6 +118,18 @@ export interface SupervisorDeps {
     resumeMarketRegimeCodes?: string[]; // PR220
     resumeMatrixStrategy?: import("../rebalance/types").ResumeStrategyV1; // PR220
     resumeMatrixCodes?: string[]; // PR220
+    // PR228: Observability pack (passthrough to runner)
+    resumeRegimeInstant?: import("../rebalance/types").MarketRegimeV1;
+    resumeRegimeConfirmed?: import("../rebalance/types").MarketRegimeV1;
+    resumeRegimeHysteresisAction?: string;
+    resumeRegimeHysteresisCodes?: string[];
+    resumeConsecutiveSuccessesClass?: string;
+    resumeSuccessGate?: string;
+    resumeSuccessGateCodes?: string[];
+    resumeOscWindowStatus?: string;
+    resumeOscChangeLevelStrategy?: string;
+    resumeOscChangeLevelRegime?: string;
+    resumeOscBasisCodes?: string[];
   }) => void;
 }
 
@@ -1233,6 +1245,110 @@ function deriveResumeStrategyFromMatrixV1(args: {
 }
 
 /**
+ * PR228: Classify oscillation change count into label-only class
+ *
+ * @param count - Internal change count (never emitted as raw number)
+ * @returns Label class: CHG_LOW|CHG_MEDIUM|CHG_HIGH|CHG_EXCEEDED|CHG_UNKNOWN
+ *
+ * Constitutional:
+ *   - Label-only: Never emit raw count
+ *   - Deterministic: Same count → same class
+ *   - Defensive: Handles undefined
+ */
+function classifyOscillationChangeLevelV1(count: number | undefined): string {
+  try {
+    if (count === undefined || count === null) {
+      return "CHG_UNKNOWN";
+    }
+
+    if (count >= 11) {
+      return "CHG_EXCEEDED"; // Over threshold (>10)
+    } else if (count >= 7) {
+      return "CHG_HIGH"; // 7-10
+    } else if (count >= 3) {
+      return "CHG_MEDIUM"; // 3-6
+    } else {
+      return "CHG_LOW"; // 0-2
+    }
+  } catch {
+    return "CHG_UNKNOWN";
+  }
+}
+
+/**
+ * PR228: Determine oscillation window status (fresh vs reset)
+ *
+ * @param lastChangeTs - Timestamp of last change (ms)
+ * @param nowMs - Current timestamp (ms)
+ * @returns WINDOW_FRESH | WINDOW_RESET | WINDOW_UNKNOWN
+ *
+ * Constitutional:
+ *   - Label-only: No numeric timestamps emitted
+ *   - Deterministic: Same inputs → same output
+ */
+function classifyOscillationWindowStatusV1(
+  lastChangeTs: number | undefined,
+  nowMs: number
+): string {
+  try {
+    if (!lastChangeTs) {
+      return "WINDOW_UNKNOWN";
+    }
+
+    const HOUR_MS = 60 * 60 * 1000;
+    const ageMs = nowMs - lastChangeTs;
+
+    if (ageMs > HOUR_MS) {
+      return "WINDOW_RESET"; // Outside 1-hour window, will reset on next change
+    } else {
+      return "WINDOW_FRESH"; // Within 1-hour window
+    }
+  } catch {
+    return "WINDOW_UNKNOWN";
+  }
+}
+
+/**
+ * PR228: Summarize code array into status + joined string
+ *
+ * @param codes - Array of code strings
+ * @returns {status: PRESENT|EMPTY, joined: pipe-separated string}
+ *
+ * Constitutional:
+ *   - Defensive: Never throws
+ *   - Deterministic: Dedup, sort, truncate(8)
+ */
+function summarizeCodeArrayV1(
+  codes: string[] | undefined
+): { status: "PRESENT" | "EMPTY"; joined: string } {
+  try {
+    if (!codes || codes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Defensive: filter non-strings
+    const validCodes = codes.filter((c) => typeof c === "string" && c.length > 0);
+
+    if (validCodes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Dedup + sort
+    const uniqueCodes = Array.from(new Set(validCodes)).sort();
+
+    // Truncate to 8
+    const truncated =
+      uniqueCodes.length > 8
+        ? [...uniqueCodes.slice(0, 8), "REASONS_TRUNCATED"]
+        : uniqueCodes;
+
+    return { status: "PRESENT", joined: truncated.join("|") };
+  } catch {
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
  * PR226: Detect strategy/regime oscillation (telemetry only)
  *
  * @param args - Oscillation detection inputs
@@ -1989,6 +2105,61 @@ export async function runSupervisorOnceV1(
           oscillationStatus = "OSC_NONE";
         }
 
+        // PR228: Regime Hysteresis observability (instant vs confirmed)
+        const regimeInstant = instantRegime; // From deriveMarketRegimeV1 (before hysteresis)
+        const regimeConfirmed = marketRegime; // From confirmRegimeChangeV1 (after hysteresis)
+        const regimeHysteresisAction = regimeHysteresisClass; // Already computed above
+        const regimeHysteresisCodes = hysteresis.codes; // From confirmRegimeChangeV1
+        const regimeHysteresisCodesSummary = summarizeCodeArrayV1(regimeHysteresisCodes);
+
+        // PR228: Consecutive Success Gate observability (class + gate + codes)
+        const consecutiveSuccessesClass = successStreakClass; // Already computed above (S0/S1/S2_PLUS)
+        const successGate = successGateStatus; // Already computed above (GATE_WAIT/PASS/NA)
+
+        // Derive success gate codes from escalation codes
+        const successGateCodes: string[] = [];
+        if (escalationCodes.includes("STRAT_ESC_CONSECUTIVE_SUCCESS_GATE_PASS")) {
+          successGateCodes.push("STRAT_ESC_CONSEC_GATE_PASS");
+        }
+        if (escalationCodes.includes("STRAT_ESC_CONSECUTIVE_SUCCESS_GATE_WAIT")) {
+          successGateCodes.push("STRAT_ESC_CONSEC_GATE_WAIT");
+        }
+        if (escalationCodes.includes("STRAT_ESC_FROM_ORCH_STATUS_SUCCEEDED")) {
+          successGateCodes.push("STRAT_ESC_CONSEC_SUCCESS_S" + (successCount >= 2 ? "2_PLUS" : successCount));
+        }
+        if (successGateCodes.length === 0) {
+          successGateCodes.push("STRAT_ESC_CONSEC_GATE_NA");
+        }
+        const successGateCodesSummary = summarizeCodeArrayV1(successGateCodes);
+
+        // PR228: Oscillation basis observability (window + change levels + codes)
+        const nowMsForOsc = getNowMs();
+        const oscWindowStatus = classifyOscillationWindowStatusV1(
+          state.resumeState.lastStrategyChangeTs || state.resumeState.lastRegimeChangeTs,
+          nowMsForOsc
+        );
+        const oscChangeLevelStrategy = classifyOscillationChangeLevelV1(
+          state.resumeState.strategyChangeCount
+        );
+        const oscChangeLevelRegime = classifyOscillationChangeLevelV1(
+          state.resumeState.regimeChangeCount
+        );
+
+        // Collect oscillation basis codes
+        const oscBasisCodes: string[] = [...oscillationCodes];
+        if (oscWindowStatus === "WINDOW_RESET") {
+          oscBasisCodes.push("OSC_WINDOW_RESET");
+        } else if (oscWindowStatus === "WINDOW_FRESH") {
+          oscBasisCodes.push("OSC_WINDOW_FRESH");
+        }
+        if (oscChangeLevelStrategy === "CHG_EXCEEDED") {
+          oscBasisCodes.push("OSC_STRATEGY_LEVEL_EXCEEDED");
+        }
+        if (oscChangeLevelRegime === "CHG_EXCEEDED") {
+          oscBasisCodes.push("OSC_REGIME_LEVEL_EXCEEDED");
+        }
+        const oscBasisCodesSummary = summarizeCodeArrayV1(oscBasisCodes);
+
         strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
         escalationSummary = summarizeStrategyCodesV1(escalationCodes);
         regimeSummary = summarizeMarketRegimeCodesV1(marketRegimeCodes);
@@ -2013,7 +2184,7 @@ export async function runSupervisorOnceV1(
         resumeTimingReasonCodes = timing.timingReasonCodes;
         timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
 
-        // PR213/PR214/PR215/PR219/PR220: Set resume fields on runPlan before execution
+        // PR213/PR214/PR215/PR219/PR220/PR228: Set resume fields on runPlan before execution
         if (deps?.setRunPlanResumeFields) {
           deps.setRunPlanResumeFields({
             resumeId,
@@ -2032,6 +2203,18 @@ export async function runSupervisorOnceV1(
             resumeMarketRegimeCodes: marketRegimeCodes, // PR220
             resumeMatrixStrategy: matrixStrategy, // PR220
             resumeMatrixCodes: matrixCodes, // PR220
+            // PR228: Observability pack (passthrough to runner)
+            resumeRegimeInstant: regimeInstant,
+            resumeRegimeConfirmed: regimeConfirmed,
+            resumeRegimeHysteresisAction: regimeHysteresisAction,
+            resumeRegimeHysteresisCodes: regimeHysteresisCodes,
+            resumeConsecutiveSuccessesClass: consecutiveSuccessesClass,
+            resumeSuccessGate: successGate,
+            resumeSuccessGateCodes: successGateCodes,
+            resumeOscWindowStatus: oscWindowStatus,
+            resumeOscChangeLevelStrategy: oscChangeLevelStrategy,
+            resumeOscChangeLevelRegime: oscChangeLevelRegime,
+            resumeOscBasisCodes: oscBasisCodes,
           });
         }
 
@@ -2045,6 +2228,7 @@ export async function runSupervisorOnceV1(
         // PR224: Add regime hysteresis labels
         // PR225: Add consecutive success gating labels
         // PR226: Add oscillation detection labels
+        // PR228: Add observability pack (instant/confirmed, gate codes, osc basis)
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
@@ -2079,6 +2263,20 @@ export async function runSupervisorOnceV1(
             resume_success_gate: successGateStatus, // PR225
             resume_oscillation_status: oscillationStatus, // PR226
             resume_oscillation_codes: oscillationCodes.join("|") || "NONE", // PR226
+            // PR228: Observability pack
+            resume_regime_instant: regimeInstant, // Instant (before hysteresis)
+            resume_regime_confirmed: regimeConfirmed, // Confirmed (after hysteresis)
+            resume_regime_hysteresis_action: regimeHysteresisAction, // H0/H1/H2
+            resume_regime_hysteresis_codes_status: regimeHysteresisCodesSummary.status,
+            resume_regime_hysteresis_codes: regimeHysteresisCodesSummary.joined,
+            resume_consecutive_successes_class: consecutiveSuccessesClass, // S0/S1/S2_PLUS
+            resume_success_gate_codes_status: successGateCodesSummary.status,
+            resume_success_gate_codes: successGateCodesSummary.joined,
+            resume_osc_window_status: oscWindowStatus, // WINDOW_FRESH/RESET
+            resume_osc_change_level_strategy: oscChangeLevelStrategy, // CHG_LOW/MEDIUM/HIGH/EXCEEDED
+            resume_osc_change_level_regime: oscChangeLevelRegime, // CHG_LOW/MEDIUM/HIGH/EXCEEDED
+            resume_osc_basis_codes_status: oscBasisCodesSummary.status,
+            resume_osc_basis_codes: oscBasisCodesSummary.joined,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       }
