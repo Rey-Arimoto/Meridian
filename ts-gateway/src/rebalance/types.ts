@@ -417,6 +417,12 @@ export interface RunPlan {
   // PR219: Resume strategy escalation (orchestrator feedback → next strategy)
   resumeEscalatedStrategy?: ResumeStrategyV1;
   resumeEscalationCodes?: string[]; // Escalation reason codes (label-only)
+
+  // PR220: Market regime context (regime-aware recovery)
+  resumeMarketRegime?: MarketRegimeV1;
+  resumeMarketRegimeCodes?: string[]; // Regime derivation codes (label-only)
+  resumeMatrixStrategy?: ResumeStrategyV1; // Final strategy after regime overlay
+  resumeMatrixCodes?: string[]; // Matrix overlay codes (label-only)
 }
 
 /**
@@ -585,6 +591,51 @@ export type ResumeDelayOffsetLabelV1 =
   | "DELAY_1H";
 
 /**
+ * PR220: Market Regime v1 (label-only market condition taxonomy)
+ *
+ * Purpose:
+ *   Classify market conditions to inform strategy/timing decisions.
+ *   Enables regime-aware recovery without numeric calculations.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Derived from existing signals, no learning
+ *   - Label-only: No BPS/prices/numeric thresholds
+ *   - Deterministic: Same signals → same regime
+ *   - Safety-first: Regimes guide conservative overlays
+ *
+ * Regimes:
+ *   - REGIME_NORMAL: Nominal conditions (oracle OK, liquidity OK, network OK)
+ *   - REGIME_VOLATILE: High volatility (phase shock, gate block)
+ *   - REGIME_ILLIQUID: Thin liquidity (depth thin, quote unavailable)
+ *   - REGIME_ORACLE_UNCERTAIN: Oracle issues (stale, unavailable)
+ *   - REGIME_NETWORK_UNSTABLE: Network degraded or failing
+ *   - REGIME_UNKNOWN: Insufficient signals to classify
+ */
+export type MarketRegimeV1 =
+  | "REGIME_NORMAL"
+  | "REGIME_VOLATILE"
+  | "REGIME_ILLIQUID"
+  | "REGIME_ORACLE_UNCERTAIN"
+  | "REGIME_NETWORK_UNSTABLE"
+  | "REGIME_UNKNOWN";
+
+/**
+ * PR220: Market Regime Signals v1 (label-only inputs for regime derivation)
+ *
+ * Purpose:
+ *   Collect existing telemetry-friendly signals for regime classification.
+ *   All fields optional, defensive, label-only.
+ */
+export interface MarketRegimeSignalsV1 {
+  oracle_status?: "ORACLE_OK" | "ORACLE_STALE" | "ORACLE_UNAVAILABLE" | "ORACLE_UNKNOWN";
+  gate_status?: "PASS" | "BLOCK" | "UNKNOWN";
+  gate_depth_status?: "DEPTH_OK" | "DEPTH_THIN" | "DEPTH_UNAVAILABLE" | "DEPTH_UNKNOWN";
+  quote_status?: "QUOTE_OK" | "QUOTE_UNAVAILABLE" | "QUOTE_STALE" | "QUOTE_UNKNOWN";
+  network_status?: "NET_OK" | "NET_DEGRADED" | "NET_FAIL" | "NET_UNKNOWN";
+  phase_label?: string; // e.g., PHASE_NORMAL, PHASE_DOWN_SHOCK, PHASE_UP_REVERSAL
+}
+
+/**
  * PR211: Phase transition reason taxonomy (PHASE explainability v1)
  *
  * Purpose:
@@ -656,6 +707,10 @@ export interface ResumeState {
   orchLastStatus?: string; // OrchResultStatusV1 from orchestrator/interface
   orchLastOutcomeCodes?: string[];
   orchLastResultId?: string;
+
+  // PR220: Market regime context (last known regime, optional)
+  marketRegime?: MarketRegimeV1;
+  marketRegimeCodes?: string[];
 }
 
 /**

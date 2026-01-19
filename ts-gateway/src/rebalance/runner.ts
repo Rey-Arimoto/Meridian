@@ -749,6 +749,24 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_escalation_codes = escalationSummary.joined;
   }
 
+  // PR220: Add resume regime/matrix labels (if regime present)
+  if (runPlan.resumeMarketRegime) {
+    runStartLabels.resume_market_regime = runPlan.resumeMarketRegime;
+  }
+  if (runPlan.resumeMarketRegimeCodes) {
+    const regimeSummary = summarizeRunReasonCodesV1(runPlan.resumeMarketRegimeCodes);
+    runStartLabels.resume_market_regime_codes_status = regimeSummary.status;
+    runStartLabels.resume_market_regime_codes = regimeSummary.joined;
+  }
+  if (runPlan.resumeMatrixStrategy) {
+    runStartLabels.resume_matrix_strategy = runPlan.resumeMatrixStrategy;
+  }
+  if (runPlan.resumeMatrixCodes) {
+    const matrixSummary = summarizeRunReasonCodesV1(runPlan.resumeMatrixCodes);
+    runStartLabels.resume_matrix_codes_status = matrixSummary.status;
+    runStartLabels.resume_matrix_codes = matrixSummary.joined;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)

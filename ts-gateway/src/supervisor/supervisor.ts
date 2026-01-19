@@ -114,6 +114,10 @@ export interface SupervisorDeps {
     resumeDelayReasonCodesV1?: string[];
     resumeEscalatedStrategy?: import("../rebalance/types").ResumeStrategyV1; // PR219
     resumeEscalationCodes?: string[]; // PR219
+    resumeMarketRegime?: import("../rebalance/types").MarketRegimeV1; // PR220
+    resumeMarketRegimeCodes?: string[]; // PR220
+    resumeMatrixStrategy?: import("../rebalance/types").ResumeStrategyV1; // PR220
+    resumeMatrixCodes?: string[]; // PR220
   }) => void;
 }
 
@@ -920,6 +924,239 @@ function deriveResumeEscalationV1(args: {
 }
 
 /**
+ * PR220: Summarize market regime codes (label-only)
+ *
+ * @param codes - Array of regime codes
+ * @param maxCodes - Maximum codes to include (default: 8)
+ * @returns Summary object with status and joined string
+ *
+ * Constitutional:
+ *   - Defensive: Handles undefined/non-string values
+ *   - Deterministic: Dedup via Set, sort alphabetically
+ *   - Label-only: No numeric values, all strings
+ */
+function summarizeMarketRegimeCodesV1(
+  codes?: unknown[],
+  maxCodes = 8
+): { status: "PRESENT" | "EMPTY"; joined: string } {
+  try {
+    if (!codes || codes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Filter to strings only (defensive)
+    const stringCodes: string[] = [];
+    for (const code of codes) {
+      if (typeof code === "string") {
+        stringCodes.push(code);
+      }
+    }
+
+    if (stringCodes.length === 0) {
+      return { status: "EMPTY", joined: "" };
+    }
+
+    // Dedup via Set, sort alphabetically (deterministic)
+    const uniqueCodes = Array.from(new Set(stringCodes)).sort();
+
+    // Truncate to maxCodes
+    const truncated = uniqueCodes.slice(0, maxCodes);
+    if (uniqueCodes.length > maxCodes) {
+      truncated.push("REASONS_TRUNCATED");
+    }
+
+    // Join with pipe separator
+    const joined = truncated.join("|");
+
+    return { status: "PRESENT", joined };
+  } catch {
+    // Defensive: Never throw
+    return { status: "EMPTY", joined: "" };
+  }
+}
+
+/**
+ * PR220: Derive market regime from signals v1
+ *
+ * @param signals - Label-only market signals
+ * @returns Regime classification and reason codes
+ *
+ * Purpose:
+ *   Classify market conditions to inform strategy/timing decisions.
+ *   Enables regime-aware recovery without numeric calculations.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Derived from signals, no learning
+ *   - Label-only: No BPS/prices/numeric thresholds
+ *   - Deterministic: Same signals → same regime
+ *   - Defensive: Handles missing/unknown signals gracefully
+ *   - Safety-first: Uncertain signals → conservative regimes
+ *
+ * Rules (v1, hierarchical precedence):
+ *   1. Oracle issues → REGIME_ORACLE_UNCERTAIN
+ *   2. Liquidity issues → REGIME_ILLIQUID
+ *   3. Volatility signals → REGIME_VOLATILE
+ *   4. Network issues → REGIME_NETWORK_UNSTABLE
+ *   5. Insufficient signals → REGIME_UNKNOWN
+ *   6. Otherwise → REGIME_NORMAL
+ */
+function deriveMarketRegimeV1(
+  signals: import("../rebalance/types").MarketRegimeSignalsV1
+): { regime: import("../rebalance/types").MarketRegimeV1; codes: string[] } {
+  try {
+    const codes: string[] = [];
+
+    // Rule 1: Oracle issues (highest priority - affects all pricing)
+    if (
+      signals.oracle_status === "ORACLE_UNAVAILABLE" ||
+      signals.oracle_status === "ORACLE_STALE"
+    ) {
+      codes.push("REGIME_BY_ORACLE_UNCERTAIN");
+      return { regime: "REGIME_ORACLE_UNCERTAIN", codes: codes.sort() };
+    }
+
+    // Rule 2: Liquidity issues (depth or quote unavailable)
+    if (
+      signals.gate_depth_status === "DEPTH_THIN" ||
+      signals.gate_depth_status === "DEPTH_UNAVAILABLE" ||
+      signals.quote_status === "QUOTE_UNAVAILABLE" ||
+      signals.quote_status === "QUOTE_STALE"
+    ) {
+      codes.push("REGIME_BY_LIQUIDITY_THIN");
+      return { regime: "REGIME_ILLIQUID", codes: codes.sort() };
+    }
+
+    // Rule 3: Volatility (phase shock or gate block)
+    if (
+      signals.phase_label === "PHASE_DOWN_SHOCK" ||
+      signals.phase_label === "PHASE_UP_REVERSAL" ||
+      signals.gate_status === "BLOCK"
+    ) {
+      codes.push("REGIME_BY_VOLATILITY");
+      return { regime: "REGIME_VOLATILE", codes: codes.sort() };
+    }
+
+    // Rule 4: Network issues
+    if (
+      signals.network_status === "NET_DEGRADED" ||
+      signals.network_status === "NET_FAIL"
+    ) {
+      codes.push("REGIME_BY_NETWORK");
+      return { regime: "REGIME_NETWORK_UNSTABLE", codes: codes.sort() };
+    }
+
+    // Rule 5: Check if we have sufficient signals to classify as NORMAL
+    // Just check for presence, not specific values (defensive)
+    const hasOracleSignal = signals.oracle_status !== undefined;
+    const hasGateSignal = signals.gate_status !== undefined;
+    const hasNetworkSignal = signals.network_status !== undefined;
+
+    if (!hasOracleSignal && !hasGateSignal && !hasNetworkSignal) {
+      codes.push("REGIME_BY_UNKNOWN");
+      return { regime: "REGIME_UNKNOWN", codes: codes.sort() };
+    }
+
+    // Rule 6: Normal conditions (all signals nominal or at least no red flags)
+    codes.push("REGIME_BY_NORMAL");
+    return { regime: "REGIME_NORMAL", codes: codes.sort() };
+  } catch {
+    // Defensive: Never throw, return safe default
+    return { regime: "REGIME_UNKNOWN", codes: ["REGIME_ERROR"] };
+  }
+}
+
+/**
+ * PR220: Derive resume strategy from regime × escalation matrix v1
+ *
+ * @param args - Matrix inputs
+ * @returns Final strategy after regime overlay and reason codes
+ *
+ * Purpose:
+ *   Apply regime-aware overlays to escalated strategy for safer autonomous recovery.
+ *   Ensures strategy selection respects market conditions.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed overlay rules, no learning
+ *   - Label-only: No numeric values
+ *   - Safety-first: Regimes force conservative overlays
+ *   - Defensive: Handles missing inputs gracefully
+ *   - Deterministic: Same inputs → same outputs (codes sorted)
+ *
+ * Matrix Rules (v1, regime overlays applied after escalation):
+ *   1. REGIME_ORACLE_UNCERTAIN / REGIME_ILLIQUID → Force WAIT_FOR_RECOVERY
+ *   2. REGIME_VOLATILE → Force RETRY_SAFE_SIM_ONLY
+ *   3. REGIME_NETWORK_UNSTABLE → De-risk RETRY_IMMEDIATE to RETRY_SAFE_SIM_ONLY
+ *   4. REGIME_NORMAL → Keep baseStrategy
+ *   5. REGIME_UNKNOWN → Safe default (de-risk RETRY_IMMEDIATE)
+ *
+ * Note: baseStrategy comes from PR219 escalation output
+ */
+function deriveResumeStrategyFromMatrixV1(args: {
+  baseStrategy: import("../rebalance/types").ResumeStrategyV1;
+  originStopCause?: import("../rebalance/types").StopCause;
+  regime?: import("../rebalance/types").MarketRegimeV1;
+  orchLastStatus?: string;
+}): { strategy: import("../rebalance/types").ResumeStrategyV1; codes: string[] } {
+  try {
+    const { baseStrategy, regime } = args;
+    const codes: string[] = [];
+
+    // Always include marker code
+    codes.push("MATRIX_APPLIED_V1");
+
+    // Rule 1: Oracle uncertain or illiquid → Force WAIT_FOR_RECOVERY
+    if (regime === "REGIME_ORACLE_UNCERTAIN" || regime === "REGIME_ILLIQUID") {
+      codes.push("MATRIX_FORCE_WAIT_RECOVERY");
+      return { strategy: "WAIT_FOR_RECOVERY", codes: codes.sort() };
+    }
+
+    // Rule 2: Volatile → Force RETRY_SAFE_SIM_ONLY
+    if (regime === "REGIME_VOLATILE") {
+      codes.push("MATRIX_FORCE_SIM_ONLY_VOLATILE");
+      return { strategy: "RETRY_SAFE_SIM_ONLY", codes: codes.sort() };
+    }
+
+    // Rule 3: Network unstable → De-risk RETRY_IMMEDIATE
+    if (regime === "REGIME_NETWORK_UNSTABLE") {
+      if (baseStrategy === "RETRY_IMMEDIATE") {
+        codes.push("MATRIX_DERISK_NETWORK");
+        return { strategy: "RETRY_SAFE_SIM_ONLY", codes: codes.sort() };
+      } else {
+        codes.push("MATRIX_KEEP_BASE_NETWORK");
+        return { strategy: baseStrategy, codes: codes.sort() };
+      }
+    }
+
+    // Rule 4: Normal → Keep baseStrategy
+    if (regime === "REGIME_NORMAL") {
+      codes.push("MATRIX_KEEP_BASE");
+      return { strategy: baseStrategy, codes: codes.sort() };
+    }
+
+    // Rule 5: Unknown → Safe default (de-risk RETRY_IMMEDIATE)
+    if (!regime || regime === "REGIME_UNKNOWN") {
+      if (baseStrategy === "RETRY_IMMEDIATE") {
+        codes.push("MATRIX_SAFE_DEFAULT_UNKNOWN");
+        return { strategy: "RETRY_SAFE_SIM_ONLY", codes: codes.sort() };
+      } else {
+        codes.push("MATRIX_KEEP_BASE_UNKNOWN");
+        return { strategy: baseStrategy, codes: codes.sort() };
+      }
+    }
+
+    // Default: Keep baseStrategy (defensive fallback)
+    codes.push("MATRIX_KEEP_BASE_FALLBACK");
+    return { strategy: baseStrategy, codes: codes.sort() };
+  } catch {
+    // Defensive: Never throw, return safe default
+    return {
+      strategy: args.baseStrategy || "WAIT_FOR_RECOVERY",
+      codes: ["MATRIX_ERROR"],
+    };
+  }
+}
+
+/**
  * Run supervisor once (single tick)
  *
  * @param store - State store
@@ -1319,6 +1556,20 @@ export async function runSupervisorOnceV1(
         joined: "",
       };
 
+      // PR220: Market regime / matrix variables (declare outside for wider scope)
+      let marketRegime: import("../rebalance/types").MarketRegimeV1 | undefined;
+      let marketRegimeCodes: string[] | undefined;
+      let regimeSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+        status: "EMPTY",
+        joined: "",
+      };
+      let matrixStrategy: import("../rebalance/types").ResumeStrategyV1 | undefined;
+      let matrixCodes: string[] | undefined;
+      let matrixSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+        status: "EMPTY",
+        joined: "",
+      };
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -1346,11 +1597,41 @@ export async function runSupervisorOnceV1(
         escalatedStrategy = escalation.strategy;
         escalationCodes = escalation.codes;
 
-        // Use escalated strategy for subsequent steps
-        resumeStrategy = escalatedStrategy;
+        // PR220: Derive market regime from signals (v1 pragmatic: use existing fields)
+        // Build signals from current state context
+        // For v1, signals are mostly unavailable (would come from deps in full impl)
+        const regimeSignals: import("../rebalance/types").MarketRegimeSignalsV1 = {
+          phase_label: state.resumeState.lastPhaseLabel,
+          // Other signals undefined (would be populated from deps.getResumeInputs in full impl)
+        };
+
+        // If deps provides getResumeInputs, we could extract more signals
+        // For v1, derive regime conservatively from available context
+        const regime = deriveMarketRegimeV1(regimeSignals);
+        marketRegime = regime.regime;
+        marketRegimeCodes = regime.codes;
+
+        // Persist regime in ResumeState (for next tick / telemetry)
+        state.resumeState.marketRegime = marketRegime;
+        state.resumeState.marketRegimeCodes = marketRegimeCodes;
+
+        // PR220: Apply regime × escalation matrix overlay
+        const matrix = deriveResumeStrategyFromMatrixV1({
+          baseStrategy: escalatedStrategy, // Input is escalated strategy from PR219
+          originStopCause: state.resumeState.originStopCause,
+          regime: marketRegime,
+          orchLastStatus: state.resumeState.orchLastStatus,
+        });
+        matrixStrategy = matrix.strategy;
+        matrixCodes = matrix.codes;
+
+        // Use matrix strategy as final resumeStrategy for subsequent steps
+        resumeStrategy = matrixStrategy;
 
         strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
         escalationSummary = summarizeStrategyCodesV1(escalationCodes);
+        regimeSummary = summarizeMarketRegimeCodesV1(marketRegimeCodes);
+        matrixSummary = summarizeStrategyCodesV1(matrixCodes);
 
         // PR214: Derive execution mode enforcement from strategy
         const enforcement = deriveExecutionModeOverrideFromStrategyV1(
@@ -1371,7 +1652,7 @@ export async function runSupervisorOnceV1(
         resumeTimingReasonCodes = timing.timingReasonCodes;
         timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
 
-        // PR213/PR214/PR215/PR219: Set resume fields on runPlan before execution
+        // PR213/PR214/PR215/PR219/PR220: Set resume fields on runPlan before execution
         if (deps?.setRunPlanResumeFields) {
           deps.setRunPlanResumeFields({
             resumeId,
@@ -1386,6 +1667,10 @@ export async function runSupervisorOnceV1(
             resumeDelayReasonCodesV1: resumeTimingReasonCodes,
             resumeEscalatedStrategy: escalatedStrategy, // PR219
             resumeEscalationCodes: escalationCodes, // PR219
+            resumeMarketRegime: marketRegime, // PR220
+            resumeMarketRegimeCodes: marketRegimeCodes, // PR220
+            resumeMatrixStrategy: matrixStrategy, // PR220
+            resumeMatrixCodes: matrixCodes, // PR220
           });
         }
 
@@ -1394,6 +1679,7 @@ export async function runSupervisorOnceV1(
         // PR214: Add enforcement labels
         // PR215: Add timing labels
         // PR219: Add escalation labels
+        // PR220: Add regime/matrix labels
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
@@ -1401,13 +1687,19 @@ export async function runSupervisorOnceV1(
             stop_reason: stopReason,
             resume_status: resumeStatus,
             resume_base_strategy: baseStrategy, // PR219
-            resume_strategy: resumeStrategy, // PR213 (now escalated in PR219)
+            resume_strategy: resumeStrategy, // PR213 (now matrix in PR220)
             resume_escalated_strategy: escalatedStrategy, // PR219
             resume_strategy_codes_status: strategySummary.status, // PR213
             resume_strategy_codes: strategySummary.joined, // PR213
             resume_escalation_codes_status: escalationSummary.status, // PR219
             resume_escalation_codes: escalationSummary.joined, // PR219
             orch_last_status: state.resumeState.orchLastStatus || "NONE", // PR219 (causality)
+            resume_market_regime: marketRegime || "REGIME_UNKNOWN", // PR220
+            resume_market_regime_codes_status: regimeSummary.status, // PR220
+            resume_market_regime_codes: regimeSummary.joined, // PR220
+            resume_matrix_strategy: matrixStrategy || "UNKNOWN", // PR220
+            resume_matrix_codes_status: matrixSummary.status, // PR220
+            resume_matrix_codes: matrixSummary.joined, // PR220
             resume_enforced_execution_mode: enforcedExecutionMode, // PR214
             resume_enforced_codes_status: enforcedSummary.status, // PR214
             resume_enforced_codes: enforcedSummary.joined, // PR214
@@ -1526,6 +1818,7 @@ export async function runSupervisorOnceV1(
           // PR214: Add enforcement labels
           // PR215: Add timing labels
           // PR219: Add escalation labels
+          // PR220: Add regime/matrix labels
           if (resumeId) {
             await appendEventV1(
               createEventV1("RESUME_REEXEC_RESULT", "INFO", {
@@ -1536,13 +1829,19 @@ export async function runSupervisorOnceV1(
                 resume_status: resumeStatus || "UNKNOWN",
                 execution_status: runResult.status,
                 resume_base_strategy: baseStrategy || "UNKNOWN", // PR219
-                resume_strategy: resumeStrategy || "UNKNOWN", // PR213 (now escalated in PR219)
+                resume_strategy: resumeStrategy || "UNKNOWN", // PR213 (now matrix in PR220)
                 resume_escalated_strategy: escalatedStrategy || "UNKNOWN", // PR219
                 resume_strategy_codes_status: strategySummary.status, // PR213
                 resume_strategy_codes: strategySummary.joined, // PR213
                 resume_escalation_codes_status: escalationSummary.status, // PR219
                 resume_escalation_codes: escalationSummary.joined, // PR219
                 orch_last_status: state.resumeState?.orchLastStatus || "NONE", // PR219 (causality)
+                resume_market_regime: marketRegime || "REGIME_UNKNOWN", // PR220
+                resume_market_regime_codes_status: regimeSummary.status, // PR220
+                resume_market_regime_codes: regimeSummary.joined, // PR220
+                resume_matrix_strategy: matrixStrategy || "UNKNOWN", // PR220
+                resume_matrix_codes_status: matrixSummary.status, // PR220
+                resume_matrix_codes: matrixSummary.joined, // PR220
                 resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
                 resume_enforced_codes_status: enforcedSummary.status, // PR214
                 resume_enforced_codes: enforcedSummary.joined, // PR214
@@ -1559,6 +1858,7 @@ export async function runSupervisorOnceV1(
           // PR214: Add enforcement labels
           // PR215: Add timing labels
           // PR219: Add escalation labels
+          // PR220: Add regime/matrix labels
           if (resumeId) {
             await appendEventV1(
               createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
@@ -1569,13 +1869,19 @@ export async function runSupervisorOnceV1(
                 resume_status: resumeStatus || "UNKNOWN",
                 execution_status: "ERROR",
                 resume_base_strategy: baseStrategy || "UNKNOWN", // PR219
-                resume_strategy: resumeStrategy || "UNKNOWN", // PR213 (now escalated in PR219)
+                resume_strategy: resumeStrategy || "UNKNOWN", // PR213 (now matrix in PR220)
                 resume_escalated_strategy: escalatedStrategy || "UNKNOWN", // PR219
                 resume_strategy_codes_status: strategySummary.status, // PR213
                 resume_strategy_codes: strategySummary.joined, // PR213
                 resume_escalation_codes_status: escalationSummary.status, // PR219
                 resume_escalation_codes: escalationSummary.joined, // PR219
                 orch_last_status: state.resumeState?.orchLastStatus || "NONE", // PR219 (causality)
+                resume_market_regime: marketRegime || "REGIME_UNKNOWN", // PR220
+                resume_market_regime_codes_status: regimeSummary.status, // PR220
+                resume_market_regime_codes: regimeSummary.joined, // PR220
+                resume_matrix_strategy: matrixStrategy || "UNKNOWN", // PR220
+                resume_matrix_codes_status: matrixSummary.status, // PR220
+                resume_matrix_codes: matrixSummary.joined, // PR220
                 resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
                 resume_enforced_codes_status: enforcedSummary.status, // PR214
                 resume_enforced_codes: enforcedSummary.joined, // PR214
