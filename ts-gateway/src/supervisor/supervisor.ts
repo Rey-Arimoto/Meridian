@@ -1299,6 +1299,9 @@ export async function runSupervisorOnceV1(
           state.resumeState.orchLastOutcomeCodes = result.outcome_codes || [];
           state.resumeState.orchLastResultId = result.result_id;
 
+          // PR221: Track when orchestrator feedback was received (staleness guard)
+          state.resumeState.orchLastStatusTs = getNowMs();
+
           // Persist updated state (defensive: don't fail tick on error)
           await store.patchState({ resumeState: state.resumeState }).catch(() => {});
         }
@@ -1570,6 +1573,10 @@ export async function runSupervisorOnceV1(
         joined: "",
       };
 
+      // PR221: Orch feedback freshness variables (declare outside for wider scope)
+      let orchFeedbackFreshness: "FRESH" | "STALE" | "NONE" = "NONE";
+      let orchFeedbackAge: "AGE_FRESH" | "AGE_STALE" | "AGE_NONE" = "AGE_NONE";
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -1587,29 +1594,109 @@ export async function runSupervisorOnceV1(
         baseStrategy = strategyDerived.strategy;
         resumeStrategyCodes = strategyDerived.codes;
 
+        // PR221: Derive orchestrator feedback freshness (staleness guard)
+        const nowMs = getNowMs();
+        const ORCH_FEEDBACK_STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+        let effectiveOrchLastStatus: string | undefined = state.resumeState.orchLastStatus;
+
+        if (state.resumeState.orchLastStatus && state.resumeState.orchLastStatusTs) {
+          const ageMs = nowMs - state.resumeState.orchLastStatusTs;
+          if (ageMs > ORCH_FEEDBACK_STALE_THRESHOLD_MS) {
+            orchFeedbackFreshness = "STALE";
+            orchFeedbackAge = "AGE_STALE";
+            effectiveOrchLastStatus = undefined; // Ignore stale feedback
+            warnings.push("WARN_ORCH_FEEDBACK_STALE");
+          } else {
+            orchFeedbackFreshness = "FRESH";
+            orchFeedbackAge = "AGE_FRESH";
+          }
+        } else if (state.resumeState.orchLastStatus) {
+          // Have status but no timestamp (backward compatibility)
+          orchFeedbackFreshness = "FRESH"; // Assume fresh if no timestamp
+          orchFeedbackAge = "AGE_FRESH";
+        } else {
+          orchFeedbackFreshness = "NONE";
+          orchFeedbackAge = "AGE_NONE";
+        }
+
         // PR219: Derive escalated strategy from orchestrator feedback
+        // PR221: Use effectiveOrchLastStatus (filters out stale feedback)
         const escalation = deriveResumeEscalationV1({
           originStopCause: state.resumeState.originStopCause,
           baseStrategy,
-          orchLastStatus: state.resumeState.orchLastStatus,
+          orchLastStatus: effectiveOrchLastStatus, // PR221: May be undefined if stale
           orchLastOutcomeCodes: state.resumeState.orchLastOutcomeCodes,
         });
         escalatedStrategy = escalation.strategy;
         escalationCodes = escalation.codes;
 
         // PR220: Derive market regime from signals (v1 pragmatic: use existing fields)
-        // Build signals from current state context
-        // For v1, signals are mostly unavailable (would come from deps in full impl)
-        const regimeSignals: import("../rebalance/types").MarketRegimeSignalsV1 = {
-          phase_label: state.resumeState.lastPhaseLabel,
-          // Other signals undefined (would be populated from deps.getResumeInputs in full impl)
-        };
+        // PR223: Use CURRENT signals from deps if available (not stale resumeState)
+        const regimeSignals: import("../rebalance/types").MarketRegimeSignalsV1 = {};
+        const regimeSignalsCodes: string[] = [];
 
-        // If deps provides getResumeInputs, we could extract more signals
-        // For v1, derive regime conservatively from available context
+        // PR223: Populate signals from current deps.getResumeInputs if available (fresh data)
+        if (deps?.getResumeInputs) {
+          try {
+            const resumeInputs = await deps.getResumeInputs();
+
+            // Map resume inputs to regime signals
+            if (resumeInputs.oracleStatus) {
+              if (resumeInputs.oracleStatus === "AVAILABLE") {
+                regimeSignals.oracle_status = "ORACLE_OK";
+              } else if (resumeInputs.oracleStatus === "STALE") {
+                regimeSignals.oracle_status = "ORACLE_STALE";
+              } else {
+                // UNAVAILABLE, ERROR, or unknown → ORACLE_UNAVAILABLE
+                regimeSignals.oracle_status = "ORACLE_UNAVAILABLE";
+              }
+              regimeSignalsCodes.push("REGIME_SIGNAL_ORACLE_PRESENT");
+            } else {
+              regimeSignalsCodes.push("REGIME_SIGNAL_ORACLE_MISSING");
+            }
+
+            if (resumeInputs.gateStatus) {
+              // Filter to valid regime signal gate_status values
+              if (resumeInputs.gateStatus === "PASS" || resumeInputs.gateStatus === "BLOCK") {
+                regimeSignals.gate_status = resumeInputs.gateStatus;
+              } else {
+                regimeSignals.gate_status = "UNKNOWN";
+              }
+              regimeSignalsCodes.push("REGIME_SIGNAL_GATE_PRESENT");
+            } else {
+              regimeSignalsCodes.push("REGIME_SIGNAL_GATE_MISSING");
+            }
+
+            if (resumeInputs.phaseLabel) {
+              regimeSignals.phase_label = resumeInputs.phaseLabel;
+              regimeSignalsCodes.push("REGIME_SIGNAL_PHASE_PRESENT");
+            } else {
+              regimeSignalsCodes.push("REGIME_SIGNAL_PHASE_MISSING");
+            }
+
+            // Note: network_status, gate_depth_status, quote_status not available from resumeInputs v1
+            regimeSignalsCodes.push("REGIME_SIGNAL_NETWORK_MISSING");
+            regimeSignalsCodes.push("REGIME_SIGNAL_DEPTH_MISSING");
+            regimeSignalsCodes.push("REGIME_SIGNAL_QUOTE_MISSING");
+
+            regimeSignalsCodes.push("REGIME_SIGNALS_FROM_DEPS_FRESH");
+          } catch (error) {
+            // Fallback to stale signals if deps fails
+            warnings.push("WARN_REGIME_SIGNALS_DEPS_ERROR");
+            regimeSignals.phase_label = state.resumeState.lastPhaseLabel;
+            regimeSignalsCodes.push("REGIME_SIGNALS_FROM_RESUMESTATE_STALE");
+          }
+        } else {
+          // Fallback: use stale signals from resumeState (backward compatibility)
+          regimeSignals.phase_label = state.resumeState.lastPhaseLabel;
+          regimeSignalsCodes.push("REGIME_SIGNALS_FROM_RESUMESTATE_STALE");
+          warnings.push("WARN_REGIME_SIGNALS_STALE");
+        }
+
+        // Derive regime from signals
         const regime = deriveMarketRegimeV1(regimeSignals);
         marketRegime = regime.regime;
-        marketRegimeCodes = regime.codes;
+        marketRegimeCodes = [...regime.codes, ...regimeSignalsCodes];
 
         // Persist regime in ResumeState (for next tick / telemetry)
         state.resumeState.marketRegime = marketRegime;
@@ -1680,6 +1767,7 @@ export async function runSupervisorOnceV1(
         // PR215: Add timing labels
         // PR219: Add escalation labels
         // PR220: Add regime/matrix labels
+        // PR221: Add orch feedback freshness labels
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
@@ -1694,6 +1782,8 @@ export async function runSupervisorOnceV1(
             resume_escalation_codes_status: escalationSummary.status, // PR219
             resume_escalation_codes: escalationSummary.joined, // PR219
             orch_last_status: state.resumeState.orchLastStatus || "NONE", // PR219 (causality)
+            orch_feedback_freshness: orchFeedbackFreshness, // PR221
+            orch_feedback_age: orchFeedbackAge, // PR221
             resume_market_regime: marketRegime || "REGIME_UNKNOWN", // PR220
             resume_market_regime_codes_status: regimeSummary.status, // PR220
             resume_market_regime_codes: regimeSummary.joined, // PR220
@@ -1720,6 +1810,73 @@ export async function runSupervisorOnceV1(
 
       // PR215: Decision gating - if delayClass is not IMMEDIATE, defer execution
       if (resumeDelayClass && resumeDelayClass !== "IMMEDIATE") {
+        // PR222: Check deferral limits before deferring
+        const MAX_DEFERRAL_COUNT = 50;
+        const MAX_DEFERRAL_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+        const deferralCount = (state.resumeState?.deferralCount || 0) + 1;
+        const firstDeferredAtTs = state.resumeState?.firstDeferredAtTs || getNowMs();
+        const deferralAgeMs = getNowMs() - firstDeferredAtTs;
+
+        // Derive label-only age class
+        let deferralAgeClass: "AGE_FRESH" | "AGE_MODERATE" | "AGE_OLD" | "AGE_EXPIRED" = "AGE_FRESH";
+        if (deferralAgeMs >= MAX_DEFERRAL_AGE_MS) {
+          deferralAgeClass = "AGE_EXPIRED";
+        } else if (deferralAgeMs >= 12 * 60 * 60 * 1000) { // 12 hours
+          deferralAgeClass = "AGE_OLD";
+        } else if (deferralAgeMs >= 1 * 60 * 60 * 1000) { // 1 hour
+          deferralAgeClass = "AGE_MODERATE";
+        }
+
+        // Derive label-only count class
+        let deferralCountClass: "COUNT_LOW" | "COUNT_MEDIUM" | "COUNT_HIGH" | "COUNT_EXCEEDED" = "COUNT_LOW";
+        if (deferralCount >= MAX_DEFERRAL_COUNT) {
+          deferralCountClass = "COUNT_EXCEEDED";
+        } else if (deferralCount >= 30) {
+          deferralCountClass = "COUNT_HIGH";
+        } else if (deferralCount >= 10) {
+          deferralCountClass = "COUNT_MEDIUM";
+        }
+
+        // PR222: Check if deferral limits exceeded
+        if (deferralCount >= MAX_DEFERRAL_COUNT || deferralAgeMs >= MAX_DEFERRAL_AGE_MS) {
+          // Abandon resume (exceeded deferral limits)
+          warnings.push("WARN_RESUME_ABANDONED_MAX_DEFERRALS");
+          notes.push("NOTE_DEFERRAL_LIMIT_EXCEEDED");
+
+          // Emit RESUME_REEXEC_ABANDONED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABANDONED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              stop_reason: stopReason || "UNKNOWN",
+              abandon_reason: "ABANDON_MAX_DEFERRALS",
+              deferral_count: String(deferralCount), // String to keep label-only
+              deferral_count_class: deferralCountClass,
+              deferral_age_class: deferralAgeClass,
+              resume_strategy: resumeStrategy || "UNKNOWN",
+              resume_delay_class: resumeDelayClass || "UNKNOWN",
+            })
+          ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+          // Update state: mark as abandoned
+          await store.patchState({
+            lastRun: {
+              status: "ABANDONED",
+              stopReason: state.resumeState?.stopReason || "UNKNOWN",
+              warnings: [...(state.resumeState?.warnings || []), "WARN_RUN_ABANDONED_MAX_DEFERRALS"],
+            },
+            resumeState: undefined, // Clear resume state
+          });
+
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
         // Emit RESUME_REEXEC_DEFERRED event
         if (resumeId) {
           await appendEventV1(
@@ -1733,8 +1890,18 @@ export async function runSupervisorOnceV1(
               resume_timing_codes_status: timingSummary.status,
               resume_timing_codes: timingSummary.joined,
               deferred_reason: "DEFERRED_BY_TIMING_CLASS",
+              deferral_count: String(deferralCount), // PR222
+              deferral_count_class: deferralCountClass, // PR222
+              deferral_age_class: deferralAgeClass, // PR222
             })
           ).catch(() => {}); // Defensive: Don't fail on telemetry error
+
+          // PR222: Update resumeState with deferral tracking
+          if (state.resumeState) {
+            state.resumeState.deferralCount = deferralCount;
+            state.resumeState.firstDeferredAtTs = firstDeferredAtTs;
+            await store.patchState({ resumeState: state.resumeState }).catch(() => {});
+          }
 
           // PR216: Build orchestration instruction and enqueue (idempotent)
           // PR217: Derive policy hooks for orchestrator
@@ -1819,6 +1986,7 @@ export async function runSupervisorOnceV1(
           // PR215: Add timing labels
           // PR219: Add escalation labels
           // PR220: Add regime/matrix labels
+          // PR221: Add orch feedback freshness labels
           if (resumeId) {
             await appendEventV1(
               createEventV1("RESUME_REEXEC_RESULT", "INFO", {
@@ -1836,6 +2004,8 @@ export async function runSupervisorOnceV1(
                 resume_escalation_codes_status: escalationSummary.status, // PR219
                 resume_escalation_codes: escalationSummary.joined, // PR219
                 orch_last_status: state.resumeState?.orchLastStatus || "NONE", // PR219 (causality)
+                orch_feedback_freshness: orchFeedbackFreshness, // PR221
+                orch_feedback_age: orchFeedbackAge, // PR221
                 resume_market_regime: marketRegime || "REGIME_UNKNOWN", // PR220
                 resume_market_regime_codes_status: regimeSummary.status, // PR220
                 resume_market_regime_codes: regimeSummary.joined, // PR220
@@ -1859,6 +2029,7 @@ export async function runSupervisorOnceV1(
           // PR215: Add timing labels
           // PR219: Add escalation labels
           // PR220: Add regime/matrix labels
+          // PR221: Add orch feedback freshness labels
           if (resumeId) {
             await appendEventV1(
               createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
@@ -1876,6 +2047,8 @@ export async function runSupervisorOnceV1(
                 resume_escalation_codes_status: escalationSummary.status, // PR219
                 resume_escalation_codes: escalationSummary.joined, // PR219
                 orch_last_status: state.resumeState?.orchLastStatus || "NONE", // PR219 (causality)
+                orch_feedback_freshness: orchFeedbackFreshness, // PR221
+                orch_feedback_age: orchFeedbackAge, // PR221
                 resume_market_regime: marketRegime || "REGIME_UNKNOWN", // PR220
                 resume_market_regime_codes_status: regimeSummary.status, // PR220
                 resume_market_regime_codes: regimeSummary.joined, // PR220

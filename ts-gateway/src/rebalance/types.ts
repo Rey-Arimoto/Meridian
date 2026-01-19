@@ -711,6 +711,13 @@ export interface ResumeState {
   // PR220: Market regime context (last known regime, optional)
   marketRegime?: MarketRegimeV1;
   marketRegimeCodes?: string[];
+
+  // PR221: Orchestrator feedback staleness tracking (hotfix v1.4.1)
+  orchLastStatusTs?: number; // Timestamp when orchLastStatus was set (internal only, not emitted in labels)
+
+  // PR222: Deferral guard tracking (hotfix v1.4.1)
+  deferralCount?: number; // Count of consecutive deferrals for this resume
+  firstDeferredAtTs?: number; // Timestamp when first deferred (internal only, not emitted in labels)
 }
 
 /**
