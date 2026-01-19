@@ -413,6 +413,10 @@ export interface RunPlan {
   resumeDelayClassV1?: ResumeDelayClassV1;
   resumeDelayOffsetLabelV1?: ResumeDelayOffsetLabelV1;
   resumeDelayReasonCodesV1?: string[]; // Timing reason codes (label-only)
+
+  // PR219: Resume strategy escalation (orchestrator feedback → next strategy)
+  resumeEscalatedStrategy?: ResumeStrategyV1;
+  resumeEscalationCodes?: string[]; // Escalation reason codes (label-only)
 }
 
 /**

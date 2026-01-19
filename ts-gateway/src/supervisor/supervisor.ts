@@ -112,6 +112,8 @@ export interface SupervisorDeps {
     resumeDelayClassV1?: import("../rebalance/types").ResumeDelayClassV1;
     resumeDelayOffsetLabelV1?: import("../rebalance/types").ResumeDelayOffsetLabelV1;
     resumeDelayReasonCodesV1?: string[];
+    resumeEscalatedStrategy?: import("../rebalance/types").ResumeStrategyV1; // PR219
+    resumeEscalationCodes?: string[]; // PR219
   }) => void;
 }
 
@@ -805,6 +807,119 @@ function deriveOrchPolicyHooksV1(args: {
 }
 
 /**
+ * PR219: Derive resume strategy escalation from orchestrator feedback v1
+ *
+ * @param args - Escalation inputs
+ * @returns Escalated strategy and reason codes
+ *
+ * Purpose:
+ *   Use PR218 orchestrator feedback (orchLastStatus / orchLastOutcomeCodes)
+ *   to deterministically escalate/de-escalate the next resume strategy.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Rule-based, no learning
+ *   - Label-only: No numeric durations/counters
+ *   - Safety-first: Never escalate to LIVE
+ *   - Defensive: Never throws, handles unknown inputs gracefully
+ *   - Deterministic: Same inputs → same outputs (sorted codes)
+ *
+ * Rules (v1):
+ *   - SKIPPED_POLICY → WAIT_FOR_UNLOCK (policy says no)
+ *   - SKIPPED_WINDOW → WAIT_FOR_RECOVERY (window not satisfied)
+ *   - FAILED_MARKET → WAIT_FOR_RECOVERY (market says unsafe)
+ *   - FAILED_NETWORK → RETRY_SAFE_SIM_ONLY (de-risk)
+ *   - SUCCEEDED → RETRY_IMMEDIATE (success → immediate)
+ *   - Unknown/missing → no change (keep baseStrategy)
+ */
+function deriveResumeEscalationV1(args: {
+  originStopCause?: import("../rebalance/types").StopCause;
+  baseStrategy: import("../rebalance/types").ResumeStrategyV1;
+  orchLastStatus?: string; // Label-only defensive
+  orchLastOutcomeCodes?: unknown[]; // Defensive
+}): { strategy: import("../rebalance/types").ResumeStrategyV1; codes: string[] } {
+  try {
+    const { baseStrategy, orchLastStatus, orchLastOutcomeCodes } = args;
+    const codes: string[] = [];
+
+    // Always include marker code
+    codes.push("STRAT_ESC_APPLIED_V1");
+
+    // Defensive: Normalize outcome codes to string array
+    const normalizedOutcomeCodes: string[] = [];
+    if (Array.isArray(orchLastOutcomeCodes)) {
+      for (const code of orchLastOutcomeCodes) {
+        if (typeof code === "string") {
+          normalizedOutcomeCodes.push(code);
+        }
+      }
+    }
+
+    // Helper: check if outcome codes contain prefix
+    const hasOutcomePrefix = (prefix: string): boolean => {
+      return normalizedOutcomeCodes.some((code) => code.includes(prefix));
+    };
+
+    // Rule A: SKIPPED_POLICY → WAIT_FOR_UNLOCK
+    if (
+      orchLastStatus === "SKIPPED_POLICY" ||
+      hasOutcomePrefix("ORCH_POLICY_")
+    ) {
+      codes.push("STRAT_ESC_FROM_ORCH_STATUS_SKIPPED_POLICY");
+      codes.push("STRAT_ESC_TO_WAIT_FOR_UNLOCK");
+      return { strategy: "WAIT_FOR_UNLOCK", codes: codes.sort() };
+    }
+
+    // Rule B: SKIPPED_WINDOW → WAIT_FOR_RECOVERY
+    if (
+      orchLastStatus === "SKIPPED_WINDOW" ||
+      hasOutcomePrefix("ORCH_NOT_BEFORE_ACTIVE") ||
+      hasOutcomePrefix("ORCH_DEADLINE_EXCEEDED")
+    ) {
+      codes.push("STRAT_ESC_FROM_ORCH_STATUS_SKIPPED_WINDOW");
+      codes.push("STRAT_ESC_TO_WAIT_FOR_RECOVERY");
+      return { strategy: "WAIT_FOR_RECOVERY", codes: codes.sort() };
+    }
+
+    // Rule C: FAILED_MARKET → WAIT_FOR_RECOVERY
+    if (orchLastStatus === "FAILED_MARKET") {
+      codes.push("STRAT_ESC_FROM_ORCH_STATUS_FAILED_MARKET");
+      codes.push("STRAT_ESC_TO_WAIT_FOR_RECOVERY");
+      return { strategy: "WAIT_FOR_RECOVERY", codes: codes.sort() };
+    }
+
+    // Rule D: FAILED_NETWORK → RETRY_SAFE_SIM_ONLY (de-risk)
+    if (orchLastStatus === "FAILED_NETWORK") {
+      codes.push("STRAT_ESC_FROM_ORCH_STATUS_FAILED_NETWORK");
+      codes.push("STRAT_ESC_TO_RETRY_SAFE_SIM_ONLY");
+      return { strategy: "RETRY_SAFE_SIM_ONLY", codes: codes.sort() };
+    }
+
+    // Rule E: SUCCEEDED → RETRY_IMMEDIATE
+    if (orchLastStatus === "SUCCEEDED") {
+      codes.push("STRAT_ESC_FROM_ORCH_STATUS_SUCCEEDED");
+      codes.push("STRAT_ESC_TO_RETRY_IMMEDIATE");
+      return { strategy: "RETRY_IMMEDIATE", codes: codes.sort() };
+    }
+
+    // Rule F: No orch feedback or unknown status → keep baseStrategy
+    if (!orchLastStatus || orchLastStatus === "UNKNOWN") {
+      codes.push("STRAT_ESC_NO_CHANGE_NO_ORCH_FEEDBACK");
+      return { strategy: baseStrategy, codes: codes.sort() };
+    }
+
+    // Other statuses (DISPATCHED, FAILED_UNKNOWN, etc.) → keep baseStrategy
+    codes.push("STRAT_ESC_NO_CHANGE_ORCH_STATUS_" + orchLastStatus);
+    return { strategy: baseStrategy, codes: codes.sort() };
+  } catch {
+    // Defensive: Never throw, return safe default (keep baseStrategy)
+    return {
+      strategy: args.baseStrategy || "WAIT_FOR_RECOVERY",
+      codes: ["STRAT_ESC_ERROR"],
+    };
+  }
+}
+
+/**
  * Run supervisor once (single tick)
  *
  * @param store - State store
@@ -1195,6 +1310,15 @@ export async function runSupervisorOnceV1(
         joined: "",
       };
 
+      // PR219: Escalation variables (declare outside for wider scope)
+      let baseStrategy: import("../rebalance/types").ResumeStrategyV1 | undefined;
+      let escalatedStrategy: import("../rebalance/types").ResumeStrategyV1 | undefined;
+      let escalationCodes: string[] | undefined;
+      let escalationSummary: { status: "PRESENT" | "EMPTY"; joined: string } = {
+        status: "EMPTY",
+        joined: "",
+      };
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -1209,10 +1333,24 @@ export async function runSupervisorOnceV1(
           { status: "RESUMABLE", reasons: [] },
           state.resumeState
         );
-        resumeStrategy = strategyDerived.strategy;
+        baseStrategy = strategyDerived.strategy;
         resumeStrategyCodes = strategyDerived.codes;
 
+        // PR219: Derive escalated strategy from orchestrator feedback
+        const escalation = deriveResumeEscalationV1({
+          originStopCause: state.resumeState.originStopCause,
+          baseStrategy,
+          orchLastStatus: state.resumeState.orchLastStatus,
+          orchLastOutcomeCodes: state.resumeState.orchLastOutcomeCodes,
+        });
+        escalatedStrategy = escalation.strategy;
+        escalationCodes = escalation.codes;
+
+        // Use escalated strategy for subsequent steps
+        resumeStrategy = escalatedStrategy;
+
         strategySummary = summarizeStrategyCodesV1(resumeStrategyCodes);
+        escalationSummary = summarizeStrategyCodesV1(escalationCodes);
 
         // PR214: Derive execution mode enforcement from strategy
         const enforcement = deriveExecutionModeOverrideFromStrategyV1(
@@ -1233,7 +1371,7 @@ export async function runSupervisorOnceV1(
         resumeTimingReasonCodes = timing.timingReasonCodes;
         timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
 
-        // PR213/PR214/PR215: Set resume fields on runPlan before execution
+        // PR213/PR214/PR215/PR219: Set resume fields on runPlan before execution
         if (deps?.setRunPlanResumeFields) {
           deps.setRunPlanResumeFields({
             resumeId,
@@ -1246,6 +1384,8 @@ export async function runSupervisorOnceV1(
             resumeDelayClassV1: resumeDelayClass,
             resumeDelayOffsetLabelV1: resumeDelayOffsetLabel,
             resumeDelayReasonCodesV1: resumeTimingReasonCodes,
+            resumeEscalatedStrategy: escalatedStrategy, // PR219
+            resumeEscalationCodes: escalationCodes, // PR219
           });
         }
 
@@ -1253,15 +1393,21 @@ export async function runSupervisorOnceV1(
         // PR213: Add resume strategy labels
         // PR214: Add enforcement labels
         // PR215: Add timing labels
+        // PR219: Add escalation labels
         await appendEventV1(
           createEventV1("RESUME_REEXEC_ATTEMPT", "INFO", {
             resume_id: resumeId,
             previous_run_id: previousRunId,
             stop_reason: stopReason,
             resume_status: resumeStatus,
-            resume_strategy: resumeStrategy, // PR213
+            resume_base_strategy: baseStrategy, // PR219
+            resume_strategy: resumeStrategy, // PR213 (now escalated in PR219)
+            resume_escalated_strategy: escalatedStrategy, // PR219
             resume_strategy_codes_status: strategySummary.status, // PR213
             resume_strategy_codes: strategySummary.joined, // PR213
+            resume_escalation_codes_status: escalationSummary.status, // PR219
+            resume_escalation_codes: escalationSummary.joined, // PR219
+            orch_last_status: state.resumeState.orchLastStatus || "NONE", // PR219 (causality)
             resume_enforced_execution_mode: enforcedExecutionMode, // PR214
             resume_enforced_codes_status: enforcedSummary.status, // PR214
             resume_enforced_codes: enforcedSummary.joined, // PR214
@@ -1379,6 +1525,7 @@ export async function runSupervisorOnceV1(
           // PR213: Add resume strategy labels
           // PR214: Add enforcement labels
           // PR215: Add timing labels
+          // PR219: Add escalation labels
           if (resumeId) {
             await appendEventV1(
               createEventV1("RESUME_REEXEC_RESULT", "INFO", {
@@ -1388,9 +1535,14 @@ export async function runSupervisorOnceV1(
                 stop_reason: stopReason || "UNKNOWN",
                 resume_status: resumeStatus || "UNKNOWN",
                 execution_status: runResult.status,
-                resume_strategy: resumeStrategy || "UNKNOWN", // PR213
+                resume_base_strategy: baseStrategy || "UNKNOWN", // PR219
+                resume_strategy: resumeStrategy || "UNKNOWN", // PR213 (now escalated in PR219)
+                resume_escalated_strategy: escalatedStrategy || "UNKNOWN", // PR219
                 resume_strategy_codes_status: strategySummary.status, // PR213
                 resume_strategy_codes: strategySummary.joined, // PR213
+                resume_escalation_codes_status: escalationSummary.status, // PR219
+                resume_escalation_codes: escalationSummary.joined, // PR219
+                orch_last_status: state.resumeState?.orchLastStatus || "NONE", // PR219 (causality)
                 resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
                 resume_enforced_codes_status: enforcedSummary.status, // PR214
                 resume_enforced_codes: enforcedSummary.joined, // PR214
@@ -1406,6 +1558,7 @@ export async function runSupervisorOnceV1(
           // PR213: Add resume strategy labels
           // PR214: Add enforcement labels
           // PR215: Add timing labels
+          // PR219: Add escalation labels
           if (resumeId) {
             await appendEventV1(
               createEventV1("RESUME_REEXEC_RESULT", "ERROR", {
@@ -1415,9 +1568,14 @@ export async function runSupervisorOnceV1(
                 stop_reason: stopReason || "UNKNOWN",
                 resume_status: resumeStatus || "UNKNOWN",
                 execution_status: "ERROR",
-                resume_strategy: resumeStrategy || "UNKNOWN", // PR213
+                resume_base_strategy: baseStrategy || "UNKNOWN", // PR219
+                resume_strategy: resumeStrategy || "UNKNOWN", // PR213 (now escalated in PR219)
+                resume_escalated_strategy: escalatedStrategy || "UNKNOWN", // PR219
                 resume_strategy_codes_status: strategySummary.status, // PR213
                 resume_strategy_codes: strategySummary.joined, // PR213
+                resume_escalation_codes_status: escalationSummary.status, // PR219
+                resume_escalation_codes: escalationSummary.joined, // PR219
+                orch_last_status: state.resumeState?.orchLastStatus || "NONE", // PR219 (causality)
                 resume_enforced_execution_mode: enforcedExecutionMode || "UNKNOWN", // PR214
                 resume_enforced_codes_status: enforcedSummary.status, // PR214
                 resume_enforced_codes: enforcedSummary.joined, // PR214

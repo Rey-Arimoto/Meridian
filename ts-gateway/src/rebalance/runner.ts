@@ -739,6 +739,16 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_timing_codes = timingSummary.joined;
   }
 
+  // PR219: Add resume escalation labels (if escalation present)
+  if (runPlan.resumeEscalatedStrategy) {
+    runStartLabels.resume_escalated_strategy = runPlan.resumeEscalatedStrategy;
+  }
+  if (runPlan.resumeEscalationCodes) {
+    const escalationSummary = summarizeRunReasonCodesV1(runPlan.resumeEscalationCodes);
+    runStartLabels.resume_escalation_codes_status = escalationSummary.status;
+    runStartLabels.resume_escalation_codes = escalationSummary.joined;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)
