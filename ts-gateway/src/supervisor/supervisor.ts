@@ -1117,7 +1117,14 @@ function confirmRegimeChangeV1(
     }
 
     // Rule 2: Regime changed - check if confirmed by history
-    const lastInstantRegime = regimeHistory?.[regimeHistory.length - 1];
+    // Defensive: Check if regimeHistory has entries
+    if (!regimeHistory || regimeHistory.length === 0) {
+      // No history, treat as first change (tentative, hold prior)
+      codes.push("REGIME_HYSTERESIS_HOLD");
+      return { regime: priorRegime, codes };
+    }
+
+    const lastInstantRegime = regimeHistory[regimeHistory.length - 1];
 
     if (lastInstantRegime === instantRegime) {
       // 2 consecutive ticks with same new regime → confirmed change
