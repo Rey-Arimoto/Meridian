@@ -183,6 +183,29 @@ export interface SupervisorDeps {
     resumeCapitalRiskAction?: import("../rebalance/types").CapitalRiskActionV1;
     resumeCapitalRiskCodes?: string[];
     resumeCapitalRiskCodesStatus?: string;
+    // PR235: Adversarial Incident Quarantine v1 (Article XIV)
+    resumeQuarantineStatus?: import("../rebalance/types").QuarantineStatusV1;
+    resumeQuarantineIncidentType?: import("../rebalance/types").IncidentTypeV1;
+    resumeQuarantineSeverity?: import("../rebalance/types").IncidentSeverityV1;
+    resumeQuarantineExitCondition?: import("../rebalance/types").QuarantineExitConditionV1;
+    resumeQuarantineAction?: import("../rebalance/types").QuarantineActionV1;
+    resumeQuarantineCodes?: string[];
+    resumeQuarantineCodesStatus?: string;
+    // PR236: Recovery Governance Layer v1 (Article XV)
+    resumeRecoveryPermission?: import("../rebalance/types").RecoveryPermissionV1;
+    resumeRecoveryGateAction?: import("../rebalance/types").RecoveryGateActionV1;
+    resumeRecoveryGateReason?: import("../rebalance/types").RecoveryGateReasonV1;
+    resumeRecoveryGateCooldownClass?: string;
+    resumeRecoveryGateAgeClass?: string;
+    resumeRecoveryGateCodes?: string;
+    resumeRecoveryGateCodesStatus?: string;
+    // PR237: Learning Freeze & Drift Firewall v1 (Article XVI)
+    resumeLearningFreezeStatus?: import("../rebalance/types").LearningFreezeStatusV1;
+    resumeLearningFreezeReason?: import("../rebalance/types").LearningFreezeReasonV1;
+    resumeLearningFreezeExit?: import("../rebalance/types").LearningFreezeExitV1;
+    resumeLearningFreezeAction?: string;
+    resumeLearningFreezeCodes?: string[];
+    resumeLearningFreezeCodesStatus?: string;
   }) => void;
 }
 
@@ -5079,8 +5102,8 @@ export async function runSupervisorOnceV1(
           resumeState: state.resumeState,
           executionMode: enforcedExecutionMode,
           signalConsensus: signalTruth?.consensus,
-          crosscheckStatus: signalTruth?.crosscheckStatus,
-          rpcHealth: signalTruth?.rpcTrust, // Mapped from signalRpcTrust
+          crosscheckStatus: signalTruth?.crosscheck_status,
+          rpcHealth: signalTruth?.rpc_trust, // Mapped from signalRpcTrust
           marketRegime: regimeConfirmed, // Use confirmed regime (after hysteresis)
           oscStatus: oscillationStatus, // From PR228
           capriskUsageLevel: capitalRiskUsageLevel, // From PR234
@@ -5420,10 +5443,10 @@ export async function runSupervisorOnceV1(
           quarantineStatus,
           quarantineSeverity,
           governancePermission: recoveryPermission,
-          econSeverity, // Assuming econSeverity is available from PR233
+          econSeverity: econRiskSeverity, // From PR233a
           capitalRiskLevel: capitalRiskUsageLevel,
-          oscillationStatus: oscStatus, // Assuming oscStatus is available from PR226
-          invariantStatus,
+          oscillationStatus: oscillationStatus as "OSC_NONE" | "OSC_WARN_STRATEGY" | "OSC_WARN_REGIME" | "OSC_WARN_BOTH", // From PR226
+          invariantStatus: invariantStatus === "INV_WARN" ? "INV_PASS" : (invariantStatus as "INV_PASS" | "INV_FAIL"), // Map INV_WARN to INV_PASS for freeze logic
           priorFreezeStatus: state.resumeState?.learningFreezeStatus,
           stableTickCount: state.resumeState?.learningFreezeStableTickCount || 0,
           nowMs: getNowMs(),
