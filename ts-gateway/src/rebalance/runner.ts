@@ -811,6 +811,231 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_osc_basis_codes = oscBasisSummary.joined;
   }
 
+  // PR229: Add recovery budgeting labels (暴走防止)
+  if (runPlan.resumeBudgetAttemptStatus) {
+    runStartLabels.resume_budget_attempt_status = runPlan.resumeBudgetAttemptStatus;
+  }
+  if (runPlan.resumeBudgetImmediateRateStatus) {
+    runStartLabels.resume_budget_immediate_rate_status = runPlan.resumeBudgetImmediateRateStatus;
+  }
+  if (runPlan.resumeBudgetFailedMarketRateStatus) {
+    runStartLabels.resume_budget_failed_market_rate_status = runPlan.resumeBudgetFailedMarketRateStatus;
+  }
+  if (runPlan.resumeBudgetOscCooldownStatus) {
+    runStartLabels.resume_budget_osc_cooldown_status = runPlan.resumeBudgetOscCooldownStatus;
+  }
+  if (runPlan.resumeBudgetAction) {
+    runStartLabels.resume_budget_action = runPlan.resumeBudgetAction;
+  }
+  if (runPlan.resumeBudgetCodes) {
+    const budgetCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeBudgetCodes);
+    runStartLabels.resume_budget_codes_status = budgetCodesSummary.status;
+    runStartLabels.resume_budget_codes = budgetCodesSummary.joined;
+  }
+
+  // PR230a: Add signal trust & consensus layer labels (Article XI parity)
+  if (runPlan.resumeSignalConsensus) {
+    runStartLabels.resume_signal_consensus = runPlan.resumeSignalConsensus;
+  }
+  if (runPlan.resumeSignalConsensusCodesStatus) {
+    runStartLabels.resume_signal_consensus_codes_status = runPlan.resumeSignalConsensusCodesStatus;
+  }
+  if (runPlan.resumeSignalConsensusCodes) {
+    runStartLabels.resume_signal_consensus_codes = runPlan.resumeSignalConsensusCodes;
+  }
+  if (runPlan.resumeSignalOracleTrust) {
+    runStartLabels.resume_signal_oracle_trust = runPlan.resumeSignalOracleTrust;
+  }
+  if (runPlan.resumeSignalDexTrust) {
+    runStartLabels.resume_signal_dex_trust = runPlan.resumeSignalDexTrust;
+  }
+  if (runPlan.resumeSignalRpcTrust) {
+    runStartLabels.resume_signal_rpc_trust = runPlan.resumeSignalRpcTrust;
+  }
+  if (runPlan.resumeSignalCrosscheckStatus) {
+    runStartLabels.resume_signal_crosscheck_status = runPlan.resumeSignalCrosscheckStatus;
+  }
+
+  // PR230b: Add signal consensus execution cap labels (NEVER LIVE)
+  if (runPlan.resumeSignalExecCapStatus) {
+    runStartLabels.resume_signal_exec_cap_status = runPlan.resumeSignalExecCapStatus;
+  }
+  if (runPlan.resumeSignalEnforcedExecutionMode) {
+    runStartLabels.resume_signal_enforced_execution_mode = runPlan.resumeSignalEnforcedExecutionMode;
+  }
+  if (runPlan.resumeSignalEnforcedCodes) {
+    const signalCapCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeSignalEnforcedCodes);
+    runStartLabels.resume_signal_enforced_codes_status = signalCapCodesSummary.status;
+    runStartLabels.resume_signal_enforced_codes = signalCapCodesSummary.joined;
+  }
+
+  // PR231: Add invariant check labels (Final defensive layer)
+  if (runPlan.resumeInvariantStatus) {
+    runStartLabels.resume_invariant_status = runPlan.resumeInvariantStatus;
+  }
+  if (runPlan.resumeInvariantFailedGroup) {
+    runStartLabels.resume_invariant_failed_group = runPlan.resumeInvariantFailedGroup;
+  }
+  if (runPlan.resumeInvariantCodes) {
+    const invariantCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeInvariantCodes);
+    runStartLabels.resume_invariant_codes_status = invariantCodesSummary.status;
+    runStartLabels.resume_invariant_codes = invariantCodesSummary.joined;
+  }
+
+  // PR232: Add economic invariant check labels (LIVE capital safety)
+  if (runPlan.resumeEconomicInvariantStatus) {
+    runStartLabels.resume_einv_status = runPlan.resumeEconomicInvariantStatus;
+  }
+  if (runPlan.resumeEconomicInvariantFailedGroup) {
+    runStartLabels.resume_einv_failed_group = runPlan.resumeEconomicInvariantFailedGroup;
+  }
+  if (runPlan.resumeEconomicActionOverride) {
+    runStartLabels.resume_einv_action_override = runPlan.resumeEconomicActionOverride;
+  }
+  if (runPlan.resumeEconomicInvariantCodes) {
+    const economicInvariantCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeEconomicInvariantCodes);
+    runStartLabels.resume_einv_codes_status = economicInvariantCodesSummary.status;
+    runStartLabels.resume_einv_codes = economicInvariantCodesSummary.joined;
+  }
+
+  // PR233: Add economic risk constraint labels (Article XII parity)
+  if (runPlan.resumeEconConstraintClass) {
+    runStartLabels.resume_econ_constraint_class = runPlan.resumeEconConstraintClass;
+  }
+  if (runPlan.resumeEconConstraintAction) {
+    runStartLabels.resume_econ_constraint_action = runPlan.resumeEconConstraintAction;
+  }
+  if (runPlan.resumeEconConstraintCodesStatus) {
+    runStartLabels.resume_econ_codes_status = runPlan.resumeEconConstraintCodesStatus;
+  }
+  if (runPlan.resumeEconConstraintCodes) {
+    const econConstraintCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeEconConstraintCodes);
+    runStartLabels.resume_econ_codes = econConstraintCodesSummary.joined;
+  }
+
+  // PR233a: Add economic risk observability labels (telemetry parity)
+  if (runPlan.resumeEconRiskSeverity) {
+    runStartLabels.resume_econ_severity = runPlan.resumeEconRiskSeverity;
+  }
+  if (runPlan.resumeEconLiquidityCondition) {
+    runStartLabels.resume_econ_liquidity_class = runPlan.resumeEconLiquidityCondition;
+  }
+  if (runPlan.resumeEconSlippageRisk) {
+    runStartLabels.resume_econ_slippage_class = runPlan.resumeEconSlippageRisk;
+  }
+  if (runPlan.resumeEconExposureStatus) {
+    runStartLabels.resume_econ_exposure_class = runPlan.resumeEconExposureStatus;
+  }
+  if (runPlan.resumeEconDrawdownStatus) {
+    runStartLabels.resume_econ_drawdown_class = runPlan.resumeEconDrawdownStatus;
+  }
+  if (runPlan.resumeEconRiskCooldownStatus) {
+    runStartLabels.resume_econ_cooldown_status = runPlan.resumeEconRiskCooldownStatus;
+  }
+  if (runPlan.resumeEconRiskWindowStatus) {
+    runStartLabels.resume_econ_window_status = runPlan.resumeEconRiskWindowStatus;
+  }
+
+  // PR233b: Add economic execution shaping labels (Article XII-b, execution control)
+  if (runPlan.resumeEconExecSizeCap) {
+    runStartLabels.resume_econ_exec_size_cap = runPlan.resumeEconExecSizeCap;
+  }
+  if (runPlan.resumeEconExecFreqCap) {
+    runStartLabels.resume_econ_exec_freq_cap = runPlan.resumeEconExecFreqCap;
+  }
+  if (runPlan.resumeEconCapitalCap) {
+    runStartLabels.resume_econ_capital_cap = runPlan.resumeEconCapitalCap;
+  }
+  if (runPlan.resumeEconExecShapeStatus) {
+    runStartLabels.resume_econ_exec_shape_status = runPlan.resumeEconExecShapeStatus;
+  }
+  if (runPlan.resumeEconExecShapeCodes) {
+    const econShapeCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeEconExecShapeCodes);
+    runStartLabels.resume_econ_exec_shape_codes_status = econShapeCodesSummary.status;
+    runStartLabels.resume_econ_exec_shape_codes = econShapeCodesSummary.joined;
+  }
+
+  // PR234: Add capital-at-risk envelope labels (Article XIII, runaway prevention)
+  if (runPlan.resumeCapitalRiskWindowStatus) {
+    runStartLabels.resume_caprisk_window_status = runPlan.resumeCapitalRiskWindowStatus;
+  }
+  if (runPlan.resumeCapitalRiskUsageLevel) {
+    runStartLabels.resume_caprisk_usage_level = runPlan.resumeCapitalRiskUsageLevel;
+  }
+  if (runPlan.resumeCapitalRiskAction) {
+    runStartLabels.resume_caprisk_action = runPlan.resumeCapitalRiskAction;
+  }
+  if (runPlan.resumeCapitalRiskCodes) {
+    const capitalRiskCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeCapitalRiskCodes);
+    runStartLabels.resume_caprisk_codes_status = capitalRiskCodesSummary.status;
+    runStartLabels.resume_caprisk_codes = capitalRiskCodesSummary.joined;
+  }
+
+  // PR235: Add adversarial incident quarantine labels (Article XIV, hostile market isolation)
+  if (runPlan.resumeQuarantineStatus) {
+    runStartLabels.resume_quarantine_status = runPlan.resumeQuarantineStatus;
+  }
+  if (runPlan.resumeQuarantineIncidentType) {
+    runStartLabels.resume_quarantine_incident_type = runPlan.resumeQuarantineIncidentType;
+  }
+  if (runPlan.resumeQuarantineSeverity) {
+    runStartLabels.resume_quarantine_severity = runPlan.resumeQuarantineSeverity;
+  }
+  if (runPlan.resumeQuarantineExitCondition) {
+    runStartLabels.resume_quarantine_exit_condition = runPlan.resumeQuarantineExitCondition;
+  }
+  if (runPlan.resumeQuarantineAction) {
+    runStartLabels.resume_quarantine_action = runPlan.resumeQuarantineAction;
+  }
+  if (runPlan.resumeQuarantineCodes) {
+    const quarantineCodesSummary = summarizeRunReasonCodesV1(runPlan.resumeQuarantineCodes);
+    runStartLabels.resume_quarantine_codes_status = quarantineCodesSummary.status;
+    runStartLabels.resume_quarantine_codes = quarantineCodesSummary.joined;
+  }
+
+  // PR236: Recovery Governance Layer v1 (Article XV, recovery permission control)
+  if (runPlan.resumeRecoveryPermission) {
+    runStartLabels.resume_recovery_permission = runPlan.resumeRecoveryPermission;
+  }
+  if (runPlan.resumeRecoveryGateAction) {
+    runStartLabels.resume_recovery_gate_action = runPlan.resumeRecoveryGateAction;
+  }
+  if (runPlan.resumeRecoveryGateReason) {
+    runStartLabels.resume_recovery_gate_reason = runPlan.resumeRecoveryGateReason;
+  }
+  if (runPlan.resumeRecoveryGateCooldownClass) {
+    runStartLabels.resume_recovery_gate_cooldown_class = runPlan.resumeRecoveryGateCooldownClass;
+  }
+  if (runPlan.resumeRecoveryGateAgeClass) {
+    runStartLabels.resume_recovery_gate_age_class = runPlan.resumeRecoveryGateAgeClass;
+  }
+  if (runPlan.resumeRecoveryGateCodesStatus) {
+    runStartLabels.resume_recovery_gate_codes_status = runPlan.resumeRecoveryGateCodesStatus;
+  }
+  if (runPlan.resumeRecoveryGateCodes) {
+    runStartLabels.resume_recovery_gate_codes = runPlan.resumeRecoveryGateCodes;
+  }
+
+  // PR237: Learning Freeze & Drift Firewall v1 (Article XVI, prevent learning from disequilibrium)
+  if (runPlan.resumeLearningFreezeStatus) {
+    runStartLabels.resume_learning_freeze_status = runPlan.resumeLearningFreezeStatus;
+  }
+  if (runPlan.resumeLearningFreezeReason) {
+    runStartLabels.resume_learning_freeze_reason = runPlan.resumeLearningFreezeReason;
+  }
+  if (runPlan.resumeLearningFreezeExit) {
+    runStartLabels.resume_learning_freeze_exit = runPlan.resumeLearningFreezeExit;
+  }
+  if (runPlan.resumeLearningFreezeAction) {
+    runStartLabels.resume_learning_freeze_action = runPlan.resumeLearningFreezeAction;
+  }
+  if (runPlan.resumeLearningFreezeCodesStatus) {
+    runStartLabels.resume_learning_freeze_codes_status = runPlan.resumeLearningFreezeCodesStatus;
+  }
+  if (runPlan.resumeLearningFreezeCodes) {
+    runStartLabels.resume_learning_freeze_codes = runPlan.resumeLearningFreezeCodes;
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)

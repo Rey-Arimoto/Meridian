@@ -130,6 +130,59 @@ export interface SupervisorDeps {
     resumeOscChangeLevelStrategy?: string;
     resumeOscChangeLevelRegime?: string;
     resumeOscBasisCodes?: string[];
+    // PR229: Recovery Budgeting (label-only budget status)
+    resumeBudgetAttemptStatus?: string;
+    resumeBudgetImmediateRateStatus?: string;
+    resumeBudgetFailedMarketRateStatus?: string;
+    resumeBudgetOscCooldownStatus?: string;
+    resumeBudgetAction?: string;
+    resumeBudgetCodes?: string[];
+    // PR230a: Signal trust & consensus layer (Article XI passthrough)
+    resumeSignalConsensus?: import("../rebalance/types").SignalConsensusV1;
+    resumeSignalConsensusCodesStatus?: string;
+    resumeSignalConsensusCodes?: string;
+    resumeSignalOracleTrust?: import("../rebalance/types").SignalTrustV1;
+    resumeSignalDexTrust?: import("../rebalance/types").SignalTrustV1;
+    resumeSignalRpcTrust?: import("../rebalance/types").SignalTrustV1;
+    resumeSignalCrosscheckStatus?: import("../rebalance/types").QuoteCrossCheckStatusV1;
+    // PR230b: Consensus → execution hard cap (NEVER LIVE)
+    resumeSignalEnforcedExecutionMode?: import("../rebalance/types").ExecutionMode;
+    resumeSignalEnforcedCodes?: string[];
+    resumeSignalExecCapStatus?: import("../rebalance/types").SignalExecCapStatusV1;
+    // PR231: Invariant Checks v1 (Final defensive layer)
+    resumeInvariantStatus?: import("../rebalance/types").InvariantStatusV1;
+    resumeInvariantFailedGroup?: import("../rebalance/types").InvariantGroupV1;
+    resumeInvariantCodes?: string[];
+    // PR232: Economic Safety Invariants v1 (LIVE capital safety)
+    resumeEconomicInvariantStatus?: import("../rebalance/types").EconomicInvariantStatusV1;
+    resumeEconomicInvariantFailedGroup?: import("../rebalance/types").EconomicInvariantGroupV1;
+    resumeEconomicInvariantCodes?: string[];
+    resumeEconomicActionOverride?: import("../rebalance/types").EconomicActionOverrideV1;
+    // PR233: Economic Risk Constraints Layer v1 (Article XII)
+    resumeEconLiquidityCondition?: import("../rebalance/types").LiquidityConditionV1;
+    resumeEconSlippageRisk?: import("../rebalance/types").SlippageRiskV1;
+    resumeEconExposureStatus?: import("../rebalance/types").ExposureStatusV1;
+    resumeEconDrawdownStatus?: import("../rebalance/types").DrawdownStatusV1;
+    resumeEconConstraintClass?: import("../rebalance/types").EconConstraintClassV1;
+    resumeEconConstraintAction?: import("../rebalance/types").EconConstraintActionV1;
+    resumeEconConstraintCodes?: string[];
+    resumeEconConstraintCodesStatus?: string;
+    // PR233a: Economic Risk Observability Pack v1 (telemetry-only)
+    resumeEconRiskSeverity?: string;
+    resumeEconRiskCooldownStatus?: string;
+    resumeEconRiskWindowStatus?: string;
+    // PR233b: Economic Execution Shaping v1 (Article XII-b)
+    resumeEconExecSizeCap?: import("../rebalance/types").EconomicExecSizeCapV1;
+    resumeEconExecFreqCap?: import("../rebalance/types").EconomicExecFreqCapV1;
+    resumeEconCapitalCap?: import("../rebalance/types").EconomicCapitalCapV1;
+    resumeEconExecShapeStatus?: import("../rebalance/types").EconomicExecShapeStatusV1;
+    resumeEconExecShapeCodes?: string[];
+    // PR234: Capital-at-Risk Envelope v1 (Article XIII)
+    resumeCapitalRiskWindowStatus?: import("../rebalance/types").CapitalRiskWindowStatusV1;
+    resumeCapitalRiskUsageLevel?: import("../rebalance/types").CapitalRiskUsageLevelV1;
+    resumeCapitalRiskAction?: import("../rebalance/types").CapitalRiskActionV1;
+    resumeCapitalRiskCodes?: string[];
+    resumeCapitalRiskCodesStatus?: string;
   }) => void;
 }
 
@@ -1349,6 +1402,2412 @@ function summarizeCodeArrayV1(
 }
 
 /**
+ * PR229: Derive Recovery Budget Decision v1 (暴走防止)
+ *
+ * Purpose:
+ *   Enforce budget rules to prevent autonomous recovery from running away.
+ *   Rules (in priority order):
+ *     1. Attempt limit: >=10 attempts → ABANDON
+ *     2. Oscillation cooldown: CHG_EXCEEDED → DEFER BACKOFF_LONG
+ *     3. FAILED_MARKET cap: >=2/hour → DEFER MANUAL
+ *     4. IMMEDIATE rate limit: >=3/hour → DEFER BACKOFF_LONG
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning
+ *   - Label-only: Budget status classes (B0/B1/B2, R0/R1/R2, etc.)
+ *   - Deterministic: Same inputs → same decision
+ *   - Defensive: Never throws, handles malformed state
+ *
+ * @param args - Budget decision inputs
+ * @returns Budget decision with action, codes, and status labels
+ */
+function deriveRecoveryBudgetDecisionV1(args: {
+  desiredDelayClass: string;
+  desiredDelayOffsetLabel: string;
+  orchEffectiveStatus?: string;
+  oscChangeLevelStrategy: string;
+  oscChangeLevelRegime: string;
+  resumeState: any;
+  nowMs: number;
+}): {
+  action: "ALLOW" | "DEFER" | "ABANDON";
+  overrideDelayClass?: string;
+  overrideDelayOffsetLabel?: string;
+  codes: string[];
+  budgetAttemptStatus: string;
+  budgetImmediateRateStatus: string;
+  budgetFailedMarketRateStatus: string;
+  budgetOscCooldownStatus: string;
+} {
+  const codes: string[] = [];
+
+  try {
+    // Constants (constitutional READ-ONLY)
+    const MAX_RECOVERY_ATTEMPTS = 10;
+    const MAX_IMMEDIATE_PER_1H = 3;
+    const FAILED_MARKET_PER_1H_MAX = 2;
+    const HOUR_MS = 60 * 60 * 1000;
+
+    // Extract budget tracking fields (defensive)
+    const attemptCount = args.resumeState?.recoveryAttemptCount ?? 0;
+    const windowAnchorTs = args.resumeState?.recoveryWindowAnchorTs ?? 0;
+    const immediateCountInWindow = args.resumeState?.recoveryImmediateCountInWindow ?? 0;
+    const failedMarketCountInWindow = args.resumeState?.recoveryFailedMarketCountInWindow ?? 0;
+
+    // Classify attempt budget status
+    let budgetAttemptStatus = "B_UNKNOWN";
+    if (attemptCount >= MAX_RECOVERY_ATTEMPTS) {
+      budgetAttemptStatus = "B2_LIMIT_EXCEEDED";
+    } else if (attemptCount >= MAX_RECOVERY_ATTEMPTS - 2) {
+      budgetAttemptStatus = "B1_NEAR_LIMIT";
+    } else {
+      budgetAttemptStatus = "B0_OK";
+    }
+
+    // Classify IMMEDIATE rate status (within window)
+    let budgetImmediateRateStatus = "R_UNKNOWN";
+    const windowAge = windowAnchorTs > 0 ? args.nowMs - windowAnchorTs : HOUR_MS + 1;
+    const windowActive = windowAge <= HOUR_MS;
+
+    if (windowActive) {
+      if (immediateCountInWindow >= MAX_IMMEDIATE_PER_1H) {
+        budgetImmediateRateStatus = "R2_LIMIT_EXCEEDED";
+      } else if (immediateCountInWindow >= MAX_IMMEDIATE_PER_1H - 1) {
+        budgetImmediateRateStatus = "R1_NEAR_LIMIT";
+      } else {
+        budgetImmediateRateStatus = "R0_OK";
+      }
+    } else {
+      budgetImmediateRateStatus = "R0_OK"; // Window expired, reset counts
+    }
+
+    // Classify FAILED_MARKET rate status (within window)
+    let budgetFailedMarketRateStatus = "F_UNKNOWN";
+    if (windowActive) {
+      if (failedMarketCountInWindow >= FAILED_MARKET_PER_1H_MAX) {
+        budgetFailedMarketRateStatus = "F2_LIMIT_EXCEEDED";
+      } else if (failedMarketCountInWindow >= FAILED_MARKET_PER_1H_MAX - 1) {
+        budgetFailedMarketRateStatus = "F1_NEAR_LIMIT";
+      } else {
+        budgetFailedMarketRateStatus = "F0_OK";
+      }
+    } else {
+      budgetFailedMarketRateStatus = "F0_OK"; // Window expired
+    }
+
+    // Classify oscillation cooldown status
+    let budgetOscCooldownStatus = "C_UNKNOWN";
+    if (args.oscChangeLevelStrategy === "CHG_EXCEEDED" || args.oscChangeLevelRegime === "CHG_EXCEEDED") {
+      budgetOscCooldownStatus = "C1_COOLDOWN_ACTIVE";
+    } else {
+      budgetOscCooldownStatus = "C0_OK";
+    }
+
+    // Rule 1: Attempt limit (>=10 → ABANDON)
+    if (attemptCount >= MAX_RECOVERY_ATTEMPTS) {
+      codes.push("BUDGET_ABANDON_ATTEMPT_LIMIT_EXCEEDED");
+      codes.push(`BUDGET_ATTEMPT_COUNT_${attemptCount}`);
+      return {
+        action: "ABANDON",
+        codes,
+        budgetAttemptStatus,
+        budgetImmediateRateStatus,
+        budgetFailedMarketRateStatus,
+        budgetOscCooldownStatus,
+      };
+    }
+
+    // Rule 2: Oscillation cooldown (CHG_EXCEEDED → DEFER BACKOFF_LONG)
+    if (budgetOscCooldownStatus === "C1_COOLDOWN_ACTIVE") {
+      codes.push("BUDGET_DEFER_OSC_COOLDOWN");
+      codes.push(`BUDGET_OSC_STRATEGY_${args.oscChangeLevelStrategy}`);
+      codes.push(`BUDGET_OSC_REGIME_${args.oscChangeLevelRegime}`);
+      return {
+        action: "DEFER",
+        overrideDelayClass: "BACKOFF_LONG",
+        overrideDelayOffsetLabel: "DELAY_15M",
+        codes,
+        budgetAttemptStatus,
+        budgetImmediateRateStatus,
+        budgetFailedMarketRateStatus,
+        budgetOscCooldownStatus,
+      };
+    }
+
+    // Rule 3: FAILED_MARKET cap (>=2/hour → DEFER MANUAL)
+    if (budgetFailedMarketRateStatus === "F2_LIMIT_EXCEEDED") {
+      codes.push("BUDGET_DEFER_FAILED_MARKET_CAP");
+      codes.push(`BUDGET_FAILED_MARKET_COUNT_${failedMarketCountInWindow}`);
+      return {
+        action: "DEFER",
+        overrideDelayClass: "MANUAL",
+        overrideDelayOffsetLabel: "DELAY_1H",
+        codes,
+        budgetAttemptStatus,
+        budgetImmediateRateStatus,
+        budgetFailedMarketRateStatus,
+        budgetOscCooldownStatus,
+      };
+    }
+
+    // Rule 4: IMMEDIATE rate limit (>=3/hour → DEFER BACKOFF_LONG)
+    if (
+      budgetImmediateRateStatus === "R2_LIMIT_EXCEEDED" &&
+      args.desiredDelayClass === "IMMEDIATE"
+    ) {
+      codes.push("BUDGET_DEFER_IMMEDIATE_RATE_LIMIT");
+      codes.push(`BUDGET_IMMEDIATE_COUNT_${immediateCountInWindow}`);
+      return {
+        action: "DEFER",
+        overrideDelayClass: "BACKOFF_LONG",
+        overrideDelayOffsetLabel: "DELAY_15M",
+        codes,
+        budgetAttemptStatus,
+        budgetImmediateRateStatus,
+        budgetFailedMarketRateStatus,
+        budgetOscCooldownStatus,
+      };
+    }
+
+    // All budget checks passed → ALLOW
+    codes.push("BUDGET_ALLOW_ALL_OK");
+    if (budgetAttemptStatus === "B1_NEAR_LIMIT") {
+      codes.push("BUDGET_WARN_ATTEMPT_NEAR_LIMIT");
+    }
+    if (budgetImmediateRateStatus === "R1_NEAR_LIMIT") {
+      codes.push("BUDGET_WARN_IMMEDIATE_NEAR_LIMIT");
+    }
+    if (budgetFailedMarketRateStatus === "F1_NEAR_LIMIT") {
+      codes.push("BUDGET_WARN_FAILED_MARKET_NEAR_LIMIT");
+    }
+
+    return {
+      action: "ALLOW",
+      codes,
+      budgetAttemptStatus,
+      budgetImmediateRateStatus,
+      budgetFailedMarketRateStatus,
+      budgetOscCooldownStatus,
+    };
+  } catch (err) {
+    // Defensive: Budget evaluation error → DEFER MANUAL (safe default)
+    codes.push("BUDGET_ERROR_EVALUATION_FAILED");
+    codes.push(`BUDGET_ERROR_${String(err).substring(0, 50)}`);
+    return {
+      action: "DEFER",
+      overrideDelayClass: "MANUAL",
+      overrideDelayOffsetLabel: "DELAY_1H",
+      codes,
+      budgetAttemptStatus: "B_UNKNOWN",
+      budgetImmediateRateStatus: "R_UNKNOWN",
+      budgetFailedMarketRateStatus: "F_UNKNOWN",
+      budgetOscCooldownStatus: "C_UNKNOWN",
+    };
+  }
+}
+
+/**
+ * PR230: Derive Signal Trust & Consensus Layer v1 (Article XI)
+ *
+ * Purpose:
+ *   Multi-source signal verification to prevent single-source market truth risks.
+ *   Converts raw signals (oracle/dex/rpc) into per-source trust + consensus.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed trust mapping rules, no learning
+ *   - Label-only: No numeric prices/timestamps/diffs
+ *   - Safety-first: Disagreement/missing → degrade, never upgrade
+ *   - Deterministic: Same inputs → same outputs
+ *   - Defensive: Never throws, fallback to CONSENSUS_UNTRUSTED
+ *
+ * Rules:
+ *   1. Per-signal trust mapping (oracle, dex, rpc)
+ *   2. Cross-check status (oracle vs dex comparison)
+ *   3. Consensus status (multi-source truth confidence)
+ *   4. Explainability codes (dedup/sort/truncate to 8)
+ *
+ * @param args - Signal status inputs (all label-only)
+ * @returns SignalTruthV1 (trust + consensus + codes)
+ */
+function deriveSignalTrustLayerV1(args: {
+  oracleStatus?: import("../rebalance/types").OracleStatusV1;
+  dexStatus?: import("../rebalance/types").DexPriceStatusV1;
+  rpcHealth?: import("../rebalance/types").RpcHealthStatusV1;
+  quoteCrossCheck?: import("../rebalance/types").QuoteCrossCheckStatusV1 | { status: import("../rebalance/types").QuoteCrossCheckStatusV1; sources?: string[] };
+}): import("../rebalance/types").SignalTruthV1 {
+  try {
+    const codes: string[] = [];
+
+    // Rule 1: Per-signal trust mapping
+    let oracle_trust: import("../rebalance/types").SignalTrustV1 = "UNKNOWN";
+    if (args.oracleStatus === "ORACLE_OK") {
+      oracle_trust = "TRUSTED";
+      codes.push("TRUST_ORACLE_TRUSTED");
+    } else if (args.oracleStatus === "ORACLE_STALE") {
+      oracle_trust = "DEGRADED";
+      codes.push("TRUST_ORACLE_DEGRADED");
+    } else if (args.oracleStatus === "ORACLE_MISSING" || args.oracleStatus === "ORACLE_ERROR") {
+      oracle_trust = "UNTRUSTED";
+      codes.push("TRUST_ORACLE_UNTRUSTED");
+    } else {
+      oracle_trust = "UNKNOWN";
+      codes.push("TRUST_ORACLE_UNKNOWN");
+    }
+
+    let dex_trust: import("../rebalance/types").SignalTrustV1 = "UNKNOWN";
+    if (args.dexStatus === "DEX_OK") {
+      dex_trust = "TRUSTED";
+      codes.push("TRUST_DEX_TRUSTED");
+    } else if (args.dexStatus === "DEX_STALE") {
+      dex_trust = "DEGRADED";
+      codes.push("TRUST_DEX_DEGRADED");
+    } else if (args.dexStatus === "DEX_MISSING" || args.dexStatus === "DEX_ERROR") {
+      dex_trust = "UNTRUSTED";
+      codes.push("TRUST_DEX_UNTRUSTED");
+    } else {
+      dex_trust = "UNKNOWN";
+      codes.push("TRUST_DEX_UNKNOWN");
+    }
+
+    let rpc_trust: import("../rebalance/types").SignalTrustV1 = "UNKNOWN";
+    if (args.rpcHealth === "RPC_OK") {
+      rpc_trust = "TRUSTED";
+      codes.push("TRUST_RPC_TRUSTED");
+    } else if (args.rpcHealth === "RPC_DEGRADED") {
+      rpc_trust = "DEGRADED";
+      codes.push("TRUST_RPC_DEGRADED");
+    } else if (args.rpcHealth === "RPC_DOWN") {
+      rpc_trust = "UNTRUSTED";
+      codes.push("TRUST_RPC_UNTRUSTED");
+    } else {
+      rpc_trust = "UNKNOWN";
+      codes.push("TRUST_RPC_UNKNOWN");
+    }
+
+    // Rule 2: Cross-check status (oracle vs dex comparison)
+    let crosscheck_status: import("../rebalance/types").QuoteCrossCheckStatusV1 = "XCHK_UNKNOWN";
+    if (args.quoteCrossCheck) {
+      // Explicit cross-check provided (handle both string and object forms)
+      if (typeof args.quoteCrossCheck === "string") {
+        crosscheck_status = args.quoteCrossCheck;
+      } else {
+        crosscheck_status = args.quoteCrossCheck.status || "XCHK_UNKNOWN";
+      }
+      codes.push(`XCHK_${crosscheck_status.replace("XCHK_", "")}`);
+    } else {
+      // Derive minimal cross-check from trust levels
+      if (oracle_trust === "TRUSTED" && dex_trust === "TRUSTED") {
+        crosscheck_status = "XCHK_OK";
+        codes.push("XCHK_OK");
+      } else if (
+        (oracle_trust === "TRUSTED" || oracle_trust === "DEGRADED") &&
+        (dex_trust === "TRUSTED" || dex_trust === "DEGRADED") &&
+        !(oracle_trust === "TRUSTED" && dex_trust === "TRUSTED")
+      ) {
+        crosscheck_status = "XCHK_INSUFFICIENT";
+        codes.push("XCHK_INSUFFICIENT");
+      } else {
+        crosscheck_status = "XCHK_UNKNOWN";
+        codes.push("XCHK_UNKNOWN");
+      }
+    }
+
+    // Rule 3: Consensus status (Article XI - multi-source truth confidence)
+    // Use string comparison to avoid type narrowing issues
+    let consensus: import("../rebalance/types").SignalConsensusV1 = "CONSENSUS_UNTRUSTED";
+
+    const oracleTrustStr = String(oracle_trust);
+    const dexTrustStr = String(dex_trust);
+    const rpcTrustStr = String(rpc_trust);
+    const xchkStr = String(crosscheck_status);
+
+    // Safety-first priority order:
+    // 1. Any UNTRUSTED → CONSENSUS_UNTRUSTED
+    if (oracleTrustStr === "UNTRUSTED" || dexTrustStr === "UNTRUSTED" || rpcTrustStr === "UNTRUSTED") {
+      consensus = "CONSENSUS_UNTRUSTED";
+      codes.push("CONSENSUS_UNTRUSTED");
+      codes.push("CONSENSUS_REASON_SOURCE_UNTRUSTED");
+    }
+    // 2. Both oracle+dex UNKNOWN → CONSENSUS_UNTRUSTED (signal starvation)
+    else if (oracleTrustStr === "UNKNOWN" && dexTrustStr === "UNKNOWN") {
+      consensus = "CONSENSUS_UNTRUSTED";
+      codes.push("CONSENSUS_UNTRUSTED");
+      codes.push("CONSENSUS_REASON_SIGNAL_STARVATION");
+    }
+    // 3. Cross-check DIVERGED → CONSENSUS_UNTRUSTED
+    else if (xchkStr === "XCHK_DIVERGED") {
+      consensus = "CONSENSUS_UNTRUSTED";
+      codes.push("CONSENSUS_UNTRUSTED");
+      codes.push("CONSENSUS_REASON_XCHK_DIVERGED");
+    }
+    // 4. Any DEGRADED → CONSENSUS_DEGRADED (but none UNTRUSTED)
+    else if (oracleTrustStr === "DEGRADED" || dexTrustStr === "DEGRADED" || rpcTrustStr === "DEGRADED") {
+      consensus = "CONSENSUS_DEGRADED";
+      codes.push("CONSENSUS_DEGRADED");
+      codes.push("CONSENSUS_REASON_SOURCE_DEGRADED");
+    }
+    // 5. Mixed TRUSTED/DEGRADED → CONSENSUS_WEAK
+    else if (
+      ((oracleTrustStr === "TRUSTED" && dexTrustStr === "DEGRADED") ||
+        (oracleTrustStr === "DEGRADED" && dexTrustStr === "TRUSTED")) &&
+      rpcTrustStr !== "UNTRUSTED"
+    ) {
+      consensus = "CONSENSUS_WEAK";
+      codes.push("CONSENSUS_WEAK");
+      codes.push("CONSENSUS_REASON_MIXED_TRUST");
+    }
+    // 6. All trusted + cross-check OK → CONSENSUS_STRONG
+    else if (
+      oracleTrustStr === "TRUSTED" &&
+      dexTrustStr === "TRUSTED" &&
+      (rpcTrustStr === "TRUSTED" || rpcTrustStr === "DEGRADED") &&
+      xchkStr === "XCHK_OK"
+    ) {
+      consensus = "CONSENSUS_STRONG";
+      codes.push("CONSENSUS_STRONG");
+      codes.push("CONSENSUS_REASON_ALL_TRUSTED");
+    }
+    // 7. Fallback → CONSENSUS_UNTRUSTED (safety default)
+    else {
+      consensus = "CONSENSUS_UNTRUSTED";
+      codes.push("CONSENSUS_UNTRUSTED");
+      codes.push("CONSENSUS_REASON_FALLBACK");
+    }
+
+    codes.push("TRUST_LAYER_APPLIED_V1");
+
+    // Dedup + sort + truncate codes
+    const uniqueCodes = Array.from(new Set(codes)).sort();
+    const truncatedCodes = uniqueCodes.length > 8 ? [...uniqueCodes.slice(0, 8), "CODES_TRUNCATED"] : uniqueCodes;
+
+    return {
+      oracle_trust,
+      dex_trust,
+      rpc_trust,
+      crosscheck_status,
+      consensus,
+      truth_codes: truncatedCodes,
+    };
+  } catch (err) {
+    // Defensive: On error, return UNTRUSTED consensus (safety-first)
+    return {
+      oracle_trust: "UNKNOWN",
+      dex_trust: "UNKNOWN",
+      rpc_trust: "UNKNOWN",
+      crosscheck_status: "XCHK_UNKNOWN",
+      consensus: "CONSENSUS_UNTRUSTED",
+      truth_codes: ["TRUST_LAYER_DEFENSIVE_FALLBACK", `ERROR_${String(err).substring(0, 30)}`],
+    };
+  }
+}
+
+/**
+ * PR230b: Derive execution mode override from signal consensus (NEVER LIVE)
+ *
+ * Purpose:
+ *   Enforce a structural safety invariant: if signal consensus is not STRONG,
+ *   execution must be capped to SIM_ONLY (never LIVE).
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed consensus → cap mapping
+ *   - Safety-first: Non-STRONG consensus → SIM_ONLY
+ *   - Label-only: No numeric values
+ *   - Deterministic: Same consensus → same cap
+ *   - Defensive: Errors → SIM_ONLY + CAP_ERROR
+ *
+ * @param args.signalConsensus - Signal consensus status from PR230
+ * @returns Enforcement result with enforcedMode, capStatus, codes
+ */
+function deriveExecutionModeOverrideFromSignalConsensusV1(args: {
+  signalConsensus: import("../rebalance/types").SignalConsensusV1 | undefined;
+}): {
+  enforcedMode?: import("../rebalance/types").ExecutionMode;
+  capStatus: import("../rebalance/types").SignalExecCapStatusV1;
+  codes: string[];
+} {
+  try {
+    const { signalConsensus } = args;
+    const codes: string[] = [];
+
+    // Defensive: undefined consensus → UNTRUSTED (safety-first)
+    if (!signalConsensus) {
+      codes.push("SIGCAP_APPLIED_V1");
+      codes.push("SIGCAP_ERROR_NO_CONSENSUS");
+      codes.push("SIGCAP_EXEC_MODE_SIM_ONLY");
+      return {
+        enforcedMode: "SIM_ONLY",
+        capStatus: "CAP_ERROR",
+        codes: Array.from(new Set(codes)).sort(),
+      };
+    }
+
+    // Rule 1: STRONG consensus → no cap
+    if (signalConsensus === "CONSENSUS_STRONG") {
+      codes.push("SIGCAP_NONE_CONSENSUS_STRONG");
+      return {
+        enforcedMode: undefined, // No override
+        capStatus: "CAP_NONE",
+        codes: Array.from(new Set(codes)).sort(),
+      };
+    }
+
+    // Rule 2: Non-STRONG consensus → SIM_ONLY (NEVER LIVE)
+    codes.push("SIGCAP_APPLIED_V1");
+    codes.push(`SIGCAP_FROM_CONSENSUS_${signalConsensus}`);
+    codes.push("SIGCAP_EXEC_MODE_SIM_ONLY");
+
+    return {
+      enforcedMode: "SIM_ONLY",
+      capStatus: "CAP_SIM_ONLY",
+      codes: Array.from(new Set(codes)).sort(),
+    };
+  } catch (err) {
+    // Defensive: On error, enforce SIM_ONLY
+    return {
+      enforcedMode: "SIM_ONLY",
+      capStatus: "CAP_ERROR",
+      codes: ["SIGCAP_ERROR_FALLBACK_SIM_ONLY", `ERROR_${String(err).substring(0, 30)}`].sort(),
+    };
+  }
+}
+
+/**
+ * PR230b: Combine enforced execution modes (PR214 + PR230b)
+ *
+ * Purpose:
+ *   Compose strategy enforcement (PR214) with signal enforcement (PR230b)
+ *   using min-safety precedence.
+ *
+ * Constitutional:
+ *   - Safety-first: SIM_ONLY wins over DRY_RUN wins over LIVE
+ *   - Deterministic: Same inputs → same output
+ *   - Defensive: Never throws
+ *
+ * Precedence (most restrictive wins):
+ *   1. SIM_ONLY (either source)
+ *   2. DRY_RUN (either source)
+ *   3. undefined (no override)
+ *
+ * @param strategyEnforced - Execution mode from PR214 strategy enforcement
+ * @param signalEnforced - Execution mode from PR230b signal consensus cap
+ * @returns Combined enforced execution mode (most restrictive)
+ */
+function combineEnforcedExecutionModesV1(
+  strategyEnforced: import("../rebalance/types").ExecutionMode | undefined,
+  signalEnforced: import("../rebalance/types").ExecutionMode | undefined
+): import("../rebalance/types").ExecutionMode | undefined {
+  try {
+    // Rule 1: If either enforces SIM_ONLY → SIM_ONLY
+    if (strategyEnforced === "SIM_ONLY" || signalEnforced === "SIM_ONLY") {
+      return "SIM_ONLY";
+    }
+
+    // Rule 2: If either enforces DRY_RUN → DRY_RUN
+    if (strategyEnforced === "DRY_RUN" || signalEnforced === "DRY_RUN") {
+      return "DRY_RUN";
+    }
+
+    // Rule 3: Neither enforces anything → undefined (no override)
+    return undefined;
+  } catch (err) {
+    // Defensive: On error, return most restrictive
+    return "SIM_ONLY";
+  }
+}
+
+/**
+ * PR231: Derive invariant checks (final defensive layer)
+ *
+ * Purpose:
+ *   Validate critical invariants before execution to ensure structural
+ *   safety guarantees haven't been violated by bugs or configuration errors.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Pure rule-based checks, no learning
+ *   - Label-only: No numeric values
+ *   - Deterministic: Same inputs → same result
+ *   - Defensive: Errors → INV_FAIL
+ *   - Safety-first: Violations abort execution
+ *
+ * Invariant Groups:
+ *   I1 (G1_EXEC): NEVER LIVE - finalEnforcedMode must not be LIVE
+ *   I2 (G2_SIGNAL): Non-STRONG consensus requires SIM_ONLY enforcement
+ *   I3 (G3_REGIME): Non-STRONG consensus requires REGIME_ORACLE_UNCERTAIN
+ *   I4 (G4_BUDGET): Budget ABANDON/DEFER must prevent execution
+ *
+ * @param args - Invariant check inputs
+ * @returns { status, failedGroup, codes }
+ */
+function deriveInvariantChecksV1(args: {
+  finalEnforcedExecutionMode?: import("../rebalance/types").ExecutionMode;
+  resumeSignalConsensus?: import("../rebalance/types").SignalConsensusV1;
+  resumeRegimeConfirmed?: import("../rebalance/types").MarketRegimeV1;
+  resumeBudgetAction?: string;
+}): {
+  status: import("../rebalance/types").InvariantStatusV1;
+  failedGroup: import("../rebalance/types").InvariantGroupV1;
+  codes: string[];
+} {
+  try {
+    const {
+      finalEnforcedExecutionMode,
+      resumeSignalConsensus,
+      resumeRegimeConfirmed,
+      resumeBudgetAction,
+    } = args;
+
+    const codes: string[] = [];
+    let status: import("../rebalance/types").InvariantStatusV1 = "INV_PASS";
+    let failedGroup: import("../rebalance/types").InvariantGroupV1 = "G0_NONE";
+
+    // I1: NEVER LIVE invariant (highest priority)
+    if (finalEnforcedExecutionMode === "LIVE") {
+      status = "INV_FAIL";
+      failedGroup = "G1_EXEC";
+      codes.push("INV_FAIL_LIVE_EXECUTION_MODE");
+      codes.push("INV_GROUP_G1_EXEC");
+      // Return immediately - this is critical
+      return {
+        status,
+        failedGroup,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // I2: Non-STRONG consensus requires SIM_ONLY enforcement
+    if (
+      resumeSignalConsensus &&
+      resumeSignalConsensus !== "CONSENSUS_STRONG" &&
+      finalEnforcedExecutionMode !== "SIM_ONLY"
+    ) {
+      status = "INV_FAIL";
+      failedGroup = "G2_SIGNAL";
+      codes.push("INV_FAIL_SIGCAP_NOT_APPLIED_NON_STRONG");
+      codes.push("INV_EXPECTED_SIM_ONLY");
+      codes.push("INV_GROUP_G2_SIGNAL");
+      codes.push(`INV_CONSENSUS_${resumeSignalConsensus}`);
+      codes.push(`INV_ACTUAL_MODE_${finalEnforcedExecutionMode || "NONE"}`);
+      // Return immediately - this is critical
+      return {
+        status,
+        failedGroup,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // I3: Non-STRONG consensus requires REGIME_ORACLE_UNCERTAIN
+    if (
+      resumeSignalConsensus &&
+      resumeSignalConsensus !== "CONSENSUS_STRONG" &&
+      resumeRegimeConfirmed &&
+      resumeRegimeConfirmed !== "REGIME_ORACLE_UNCERTAIN"
+    ) {
+      status = "INV_FAIL";
+      failedGroup = "G3_REGIME";
+      codes.push("INV_FAIL_REGIME_NOT_GATED_NON_STRONG");
+      codes.push("INV_EXPECTED_REGIME_ORACLE_UNCERTAIN");
+      codes.push("INV_GROUP_G3_REGIME");
+      codes.push(`INV_CONSENSUS_${resumeSignalConsensus}`);
+      codes.push(`INV_ACTUAL_REGIME_${resumeRegimeConfirmed}`);
+      // Return immediately - this is critical
+      return {
+        status,
+        failedGroup,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // I4: Budget decision consistency
+    if (resumeBudgetAction) {
+      if (resumeBudgetAction === "ABANDON") {
+        // If budget says ABANDON, we shouldn't be here (supervisor should have aborted earlier)
+        status = "INV_FAIL";
+        failedGroup = "G4_BUDGET";
+        codes.push("INV_FAIL_BUDGET_ABANDON_BUT_RUN");
+        codes.push("INV_GROUP_G4_BUDGET");
+        return {
+          status,
+          failedGroup,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        };
+      }
+
+      if (resumeBudgetAction === "DEFER") {
+        // If budget says DEFER, we shouldn't be attempting RUN
+        status = "INV_FAIL";
+        failedGroup = "G4_BUDGET";
+        codes.push("INV_FAIL_BUDGET_DEFER_BUT_RUN");
+        codes.push("INV_GROUP_G4_BUDGET");
+        return {
+          status,
+          failedGroup,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        };
+      }
+    }
+
+    // All checks passed
+    codes.push("INV_ALL_CHECKS_PASSED");
+    return {
+      status: "INV_PASS",
+      failedGroup: "G0_NONE",
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+    };
+  } catch (err) {
+    // Defensive: On error, fail the invariant check
+    return {
+      status: "INV_FAIL",
+      failedGroup: "G9_UNKNOWN",
+      codes: ["INV_ERROR_DEFENSIVE_FAIL", `ERROR_${String(err).substring(0, 30)}`].sort(),
+    };
+  }
+}
+
+/**
+ * PR232: Economic Safety Invariants v1 (LIVE Capital Safety)
+ *
+ * @param args - Economic invariant check inputs
+ * @returns { status, failedGroup, actionOverride, codes }
+ *
+ * Purpose:
+ *   Final "last mile" economic safety layer to prevent capital loss under:
+ *   - Large LIVE operations
+ *   - Unstable external dependencies (oracle/policy/orchestrator/rpc failures)
+ *   - Adversarial markets (flash crash, oracle manipulation, network partition)
+ *
+ * Constitutional:
+ *   - READ-ONLY: No state modification
+ *   - Label-only: All inputs and outputs are categorical labels
+ *   - Deterministic: Same inputs → same outputs
+ *   - Safety-first: Unknown inputs → EINV_FAIL with appropriate action
+ *   - Defensive: Never throws
+ *
+ * Decision precedence (highest first):
+ *   E0) Non-execution action → PASS (not applicable)
+ *   E1) Budget ABANDON/DEFER → PASS (skip economic checks)
+ *   E2) Market integrity failures → FAIL + ABORT/DEFER_MANUAL
+ *   E3) Liquidity inadequate → FAIL + DEFER_MANUAL/ABORT
+ *   E4) Slippage extreme → FAIL + ABORT/DEFER_BACKOFF_LONG
+ *   E5) Crash risk → FAIL + ABORT/DEFER_BACKOFF_LONG
+ *   E6) Exposure/concentration → FAIL + ABORT/DEFER_MANUAL
+ *   E7) All checks passed → PASS
+ */
+function deriveEconomicInvariantsV1(args: {
+  // Execution intent
+  resumeActionIntent?: string; // ACTION_RUN_TWAP | ACTION_WAIT_* | ACTION_ABORT
+  budgetAction?: string; // ALLOW | DEFER | ABANDON
+  executionModeFinal?: import("../rebalance/types").ExecutionMode; // LIVE | SIM_ONLY | DRY_RUN | NONE
+
+  // Market integrity signals (from PR230)
+  rpcHealth?: string; // RPC_OK | RPC_DEGRADED | RPC_DOWN | RPC_UNKNOWN
+  quoteCrosscheckStatus?: string; // XCHK_OK | XCHK_DIVERGED | XCHK_INSUFFICIENT | XCHK_UNKNOWN
+
+  // Liquidity signals (label-only, from deps or upstream transform)
+  liqDepthClass?: string; // DEPTH_NONE | DEPTH_THIN | DEPTH_OK | DEPTH_DEEP | DEPTH_UNKNOWN
+  orderSizeClass?: string; // SIZE_TINY | SIZE_SMALL | SIZE_MEDIUM | SIZE_LARGE | SIZE_HUGE | SIZE_UNKNOWN
+  liqMatchStatus?: string; // LIQ_OK | LIQ_MARGINAL | LIQ_INADEQUATE | LIQ_UNKNOWN
+
+  // Slippage signals (label-only)
+  slippageRiskClass?: string; // SLIP_LOW | SLIP_MEDIUM | SLIP_HIGH | SLIP_EXTREME | SLIP_UNKNOWN
+
+  // Crash risk signals (label-only)
+  crashRiskClass?: string; // CRASH_NONE | CRASH_ELEVATED | CRASH_FLASH | CRASH_UNKNOWN
+
+  // Exposure signals (label-only, stateful if available)
+  exposureClass?: string; // EXP_LOW | EXP_MEDIUM | EXP_HIGH | EXP_CRITICAL | EXP_UNKNOWN
+  concentrationClass?: string; // CONC_OK | CONC_HIGH | CONC_CRITICAL | CONC_UNKNOWN
+}): {
+  status: import("../rebalance/types").EconomicInvariantStatusV1;
+  failedGroup: import("../rebalance/types").EconomicInvariantGroupV1;
+  actionOverride: import("../rebalance/types").EconomicActionOverrideV1;
+  codes: string[];
+} {
+  try {
+    const {
+      resumeActionIntent,
+      budgetAction,
+      executionModeFinal,
+      rpcHealth,
+      quoteCrosscheckStatus,
+      liqDepthClass,
+      orderSizeClass,
+      liqMatchStatus,
+      slippageRiskClass,
+      crashRiskClass,
+      exposureClass,
+      concentrationClass,
+    } = args;
+
+    const codes: string[] = [];
+    let status: import("../rebalance/types").EconomicInvariantStatusV1 = "EINV_PASS";
+    let failedGroup: import("../rebalance/types").EconomicInvariantGroupV1 = "EG0_NONE";
+    let actionOverride: import("../rebalance/types").EconomicActionOverrideV1 = "NONE";
+
+    // E0: Non-execution action → PASS (not applicable)
+    if (resumeActionIntent && !resumeActionIntent.includes("RUN")) {
+      codes.push("EINV_NOT_APPLICABLE_NON_EXEC_ACTION");
+      return { status: "EINV_PASS", failedGroup: "EG0_NONE", actionOverride: "NONE", codes };
+    }
+
+    // E1: Budget ABANDON/DEFER → PASS (skip economic checks, budget wins)
+    if (budgetAction === "ABANDON") {
+      codes.push("EINV_SKIPPED_BUDGET_ABANDON");
+      return { status: "EINV_PASS", failedGroup: "EG0_NONE", actionOverride: "NONE", codes };
+    }
+    if (budgetAction === "DEFER") {
+      codes.push("EINV_SKIPPED_BUDGET_DEFER");
+      return { status: "EINV_PASS", failedGroup: "EG0_NONE", actionOverride: "NONE", codes };
+    }
+
+    // E2: Market integrity failures (EG5_INTEGRITY) → ABORT or DEFER_MANUAL
+    if (rpcHealth === "RPC_DOWN") {
+      status = "EINV_FAIL";
+      failedGroup = "EG5_INTEGRITY";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_INTEGRITY_RPC_DOWN");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (quoteCrosscheckStatus === "XCHK_DIVERGED") {
+      status = "EINV_FAIL";
+      failedGroup = "EG5_INTEGRITY";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_INTEGRITY_XCHK_DIVERGED");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    // E2b: Degraded integrity (RPC_DEGRADED, XCHK_INSUFFICIENT) → only fail if LIVE execution
+    // Rationale: PR230b already enforces SIM_ONLY for degraded consensus, so if we reach here
+    // with executionModeFinal=SIM_ONLY or DRY_RUN, earlier layers are working correctly.
+    // Only fail if attempting LIVE execution with degraded integrity (defense in depth).
+    if ((rpcHealth === "RPC_DEGRADED" || quoteCrosscheckStatus === "XCHK_INSUFFICIENT") && executionModeFinal === "LIVE") {
+      status = "EINV_FAIL";
+      failedGroup = "EG5_INTEGRITY";
+      actionOverride = "DEFER_MANUAL";
+      codes.push("EINV_FAIL_V1", "EINV_INTEGRITY_DEGRADED_NEVER_LIVE");
+      if (rpcHealth === "RPC_DEGRADED") codes.push("EINV_INTEGRITY_RPC_DEGRADED");
+      if (quoteCrosscheckStatus === "XCHK_INSUFFICIENT") codes.push("EINV_INTEGRITY_XCHK_INSUFFICIENT");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    // E3: Liquidity adequacy (EG1_LIQUIDITY) → DEFER_MANUAL or ABORT
+    // Note: For v1, undefined inputs (missing data) are treated as "not evaluated" and pass through
+    // Only explicit UNKNOWN or failure states cause safety failures
+    if (liqMatchStatus === "LIQ_INADEQUATE") {
+      status = "EINV_FAIL";
+      failedGroup = "EG1_LIQUIDITY";
+      actionOverride = "DEFER_MANUAL";
+      codes.push("EINV_FAIL_V1", "EINV_LIQ_INADEQUATE");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (liqDepthClass === "DEPTH_THIN" && (orderSizeClass === "SIZE_LARGE" || orderSizeClass === "SIZE_HUGE")) {
+      status = "EINV_FAIL";
+      failedGroup = "EG1_LIQUIDITY";
+      actionOverride = "DEFER_MANUAL";
+      codes.push("EINV_FAIL_V1", "EINV_LIQ_THIN_FOR_SIZE");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (liqDepthClass === "DEPTH_NONE") {
+      status = "EINV_FAIL";
+      failedGroup = "EG1_LIQUIDITY";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_LIQ_DEPTH_NONE");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    // E4: Slippage / impact (EG2_SLIPPAGE) → DEFER_BACKOFF_LONG or ABORT
+    if (slippageRiskClass === "SLIP_EXTREME") {
+      status = "EINV_FAIL";
+      failedGroup = "EG2_SLIPPAGE";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_SLIP_EXTREME");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (slippageRiskClass === "SLIP_HIGH") {
+      status = "EINV_FAIL";
+      failedGroup = "EG2_SLIPPAGE";
+      actionOverride = "DEFER_BACKOFF_LONG";
+      codes.push("EINV_FAIL_V1", "EINV_SLIP_HIGH");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    // E5: Crash risk (EG3_CRASH) → ABORT or DEFER_BACKOFF_LONG
+    if (crashRiskClass === "CRASH_FLASH") {
+      status = "EINV_FAIL";
+      failedGroup = "EG3_CRASH";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_CRASH_FLASH");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (crashRiskClass === "CRASH_ELEVATED" && executionModeFinal === "LIVE") {
+      status = "EINV_FAIL";
+      failedGroup = "EG3_CRASH";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_CRASH_ELEVATED_NEVER_LIVE");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    // E6: Exposure / concentration (EG4_EXPOSURE) → DEFER_MANUAL or ABORT
+    if (exposureClass === "EXP_CRITICAL") {
+      status = "EINV_FAIL";
+      failedGroup = "EG4_EXPOSURE";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_EXP_CRITICAL");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (concentrationClass === "CONC_CRITICAL") {
+      status = "EINV_FAIL";
+      failedGroup = "EG4_EXPOSURE";
+      actionOverride = "ABORT";
+      codes.push("EINV_FAIL_V1", "EINV_CONC_CRITICAL");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    if (exposureClass === "EXP_HIGH" || concentrationClass === "CONC_HIGH") {
+      status = "EINV_FAIL";
+      failedGroup = "EG4_EXPOSURE";
+      actionOverride = "DEFER_MANUAL";
+      codes.push("EINV_FAIL_V1", "EINV_EXP_OR_CONC_HIGH");
+      return { status, failedGroup, actionOverride, codes: Array.from(new Set(codes)).sort().slice(0, 8) };
+    }
+
+    // E7: All checks passed
+    codes.push("EINV_PASS_V1");
+    return {
+      status: "EINV_PASS",
+      failedGroup: "EG0_NONE",
+      actionOverride: "NONE",
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+    };
+  } catch (err) {
+    // Defensive: On error, fail the economic invariant check
+    return {
+      status: "EINV_FAIL",
+      failedGroup: "EG9_UNKNOWN",
+      actionOverride: "ABORT",
+      codes: ["EINV_ERROR_DEFENSIVE_FAIL", `ERROR_${String(err).substring(0, 30)}`].sort(),
+    };
+  }
+}
+
+/**
+ * PR233: Economic Risk Constraints Layer v1 (Article XII - LIVE Capital Safety)
+ *
+ * Purpose:
+ *   Active economic constraint layer that can DEFER/ABANDON execution based on
+ *   risk envelope conditions (liquidity, slippage, exposure, drawdown).
+ *   Complements signal trust layer (PR230) and economic invariants (PR232).
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning
+ *   - Label-only: No numeric risk values in telemetry
+ *   - Deterministic: Same inputs → same outputs
+ *   - Defensive: Never throws, fails closed
+ *   - Safety-first: Conservative defaults for missing inputs
+ *
+ * Decision Precedence (highest first):
+ *   R0) Defensive baseline: missing inputs → conservative for LIVE
+ *   R1) NEVER block SIM_ONLY solely due to liquidity/slippage
+ *   R2) LIVE execution fragility: LIQ_VACUUM, SLIP_EXTREME, volatile regimes
+ *   R3) Rate/cooldown: prevent repeated risky attempts
+ *   R4) Exposure hard cap: applies even to SIM_ONLY
+ *   R5) Drawdown protection: circuit breaker for equity losses
+ *
+ * @param args - Economic constraint inputs
+ * @returns { econClass, action, codes, nextStatePatch }
+ */
+function deriveEconomicRiskConstraintsV1(args: {
+  finalDesiredExecutionMode?: import("../rebalance/types").ExecutionMode;
+  finalEnforcedExecutionMode?: import("../rebalance/types").ExecutionMode;
+  signalConsensus?: import("../rebalance/types").SignalConsensusV1;
+  marketRegimeConfirmed?: import("../rebalance/types").MarketRegimeV1;
+  budgetDecision?: { action: string };
+  inputs: {
+    liquidity?: import("../rebalance/types").LiquidityConditionV1;
+    slippageRisk?: import("../rebalance/types").SlippageRiskV1;
+    exposure?: import("../rebalance/types").ExposureStatusV1;
+    drawdown?: import("../rebalance/types").DrawdownStatusV1;
+  };
+  state?: import("../rebalance/types").ResumeState;
+  nowMs: number;
+}): {
+  econClass: import("../rebalance/types").EconConstraintClassV1;
+  action: import("../rebalance/types").EconConstraintActionV1;
+  codes: string[];
+  nextStatePatch?: Partial<import("../rebalance/types").ResumeState>;
+} {
+  try {
+    const codes: string[] = [];
+
+    let econClass: import("../rebalance/types").EconConstraintClassV1 = "E0_OK";
+    let action: import("../rebalance/types").EconConstraintActionV1 = "ECON_ALLOW";
+
+    const {
+      finalDesiredExecutionMode,
+      finalEnforcedExecutionMode,
+      marketRegimeConfirmed,
+      inputs,
+      state,
+      nowMs,
+    } = args;
+
+    const { liquidity, slippageRisk, exposure, drawdown } = inputs;
+
+    // Determine if this is a LIVE execution attempt
+    // isLiveAttempt = trying to execute LIVE AND not already capped to SIM_ONLY/DRY_RUN
+    // If no enforcement (undefined), default to allowing LIVE (conservative: check constraints)
+    const effectiveMode = finalEnforcedExecutionMode || finalDesiredExecutionMode || "LIVE";
+    const isLiveAttempt = (effectiveMode === "LIVE");
+    const isSimOnlyEnforced = (finalEnforcedExecutionMode === "SIM_ONLY");
+
+    // State patch for internal tracking
+    const nextStatePatch: Partial<import("../rebalance/types").ResumeState> = {};
+
+    // R0: Defensive baseline - missing inputs handled per rule context
+
+    // R5: Drawdown protection (highest priority - affects all modes)
+    if (drawdown === "DD_CRITICAL") {
+      econClass = "E3_FORBIDDEN";
+      action = "ECON_ABANDON";
+      codes.push("ECON_ABANDON_V1", "ECON_R5_DRAWDOWN_EMERGENCY");
+      nextStatePatch.econConstraintLastAction = action;
+      return {
+        econClass,
+        action,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        nextStatePatch,
+      };
+    }
+
+    if (drawdown === "DD_WARNING" && isLiveAttempt) {
+      econClass = "E2_RISKY";
+      action = "ECON_DEFER";
+      codes.push("ECON_DD_WARNING_DEFER_LIVE");
+      nextStatePatch.econConstraintLastAction = action;
+      nextStatePatch.econConstraintCooldownUntilTs = nowMs + 15 * 60 * 1000; // 15min cooldown
+      return {
+        econClass,
+        action,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        nextStatePatch,
+      };
+    }
+
+    // R4: Exposure hard cap (applies even to SIM_ONLY)
+    if (exposure === "EXP_EXCESSIVE") {
+      econClass = "E3_FORBIDDEN";
+      action = "ECON_ABANDON";
+      codes.push("ECON_ABANDON_V1", "ECON_R4_EXPOSURE_HARD_CAP");
+      nextStatePatch.econConstraintLastAction = action;
+      return {
+        econClass,
+        action,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        nextStatePatch,
+      };
+    }
+
+    if (exposure === "EXP_LARGE") {
+      const volatileRegimes: string[] = ["REGIME_VOLATILE", "REGIME_FLASH_CRASH", "REGIME_ORACLE_UNCERTAIN"];
+      if (marketRegimeConfirmed && volatileRegimes.includes(marketRegimeConfirmed)) {
+        econClass = "E2_RISKY";
+        action = "ECON_DEFER";
+        codes.push("ECON_EXPOSURE_LARGE_VOLATILE_DEFER");
+        nextStatePatch.econConstraintLastAction = action;
+        nextStatePatch.econConstraintCooldownUntilTs = nowMs + 15 * 60 * 1000;
+        return {
+          econClass,
+          action,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+          nextStatePatch,
+        };
+      }
+    }
+
+    // R3: Check cooldown (if last action was DEFER and within cooldown window)
+    const cooldownActive = state?.econConstraintCooldownUntilTs && state.econConstraintCooldownUntilTs > nowMs;
+    if (cooldownActive) {
+      econClass = "E1_CONSERVATIVE";
+      action = "ECON_DEFER";
+      codes.push("ECON_DEFER_V1", "ECON_R3_COOLDOWN_ACTIVE");
+      nextStatePatch.econConstraintLastAction = action;
+      // Keep cooldown timestamp as-is
+      return {
+        econClass,
+        action,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        nextStatePatch,
+      };
+    }
+
+    // R1: NEVER block SIM_ONLY solely due to liquidity/slippage
+    // If SIM_ONLY enforced and no exposure/drawdown issues, allow
+    if (isSimOnlyEnforced) {
+      codes.push("ECON_ALLOW_V1");
+
+      // Detect if bypassing liquidity or slippage issues
+      if (liquidity === "LIQ_VACUUM" || liquidity === "LIQ_THIN") {
+        codes.push("ECON_R1_SIM_ONLY_LIQUIDITY_BYPASS");
+        econClass = liquidity === "LIQ_VACUUM" ? "E1_CONSERVATIVE" : econClass;
+      }
+      if (slippageRisk === "SLIP_EXTREME" || slippageRisk === "SLIP_HIGH") {
+        codes.push("ECON_R1_SIM_ONLY_SLIPPAGE_BYPASS");
+        econClass = slippageRisk === "SLIP_EXTREME" ? "E2_RISKY" : econClass;
+      }
+
+      nextStatePatch.econConstraintLastAction = action; // ECON_ALLOW
+      return {
+        econClass,
+        action: "ECON_ALLOW",
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        nextStatePatch,
+      };
+    }
+
+    // R2: LIVE execution fragility checks
+    if (isLiveAttempt) {
+      // Liquidity vacuum
+      if (liquidity === "LIQ_VACUUM") {
+        econClass = "E3_FORBIDDEN";
+        action = "ECON_DEFER"; // Could escalate to ABANDON if repeated
+        codes.push("ECON_LIVE_BLOCK_LIQ_VACUUM");
+        nextStatePatch.econConstraintLastAction = action;
+        nextStatePatch.econConstraintCooldownUntilTs = nowMs + 15 * 60 * 1000;
+        return {
+          econClass,
+          action,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+          nextStatePatch,
+        };
+      }
+
+      // Slippage extreme
+      if (slippageRisk === "SLIP_EXTREME") {
+        econClass = "E3_FORBIDDEN";
+        action = "ECON_DEFER";
+        codes.push("ECON_LIVE_BLOCK_SLIP_EXTREME");
+        nextStatePatch.econConstraintLastAction = action;
+        nextStatePatch.econConstraintCooldownUntilTs = nowMs + 15 * 60 * 1000;
+        return {
+          econClass,
+          action,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+          nextStatePatch,
+        };
+      }
+
+      // Volatile/fragile regimes
+      const fragileRegimes: string[] = ["REGIME_VOLATILE", "REGIME_FLASH_CRASH", "REGIME_ORACLE_UNCERTAIN", "CRASH", "VOLATILE", "EXTREME"];
+      if (marketRegimeConfirmed && fragileRegimes.includes(marketRegimeConfirmed)) {
+        econClass = "E2_RISKY";
+        action = "ECON_DEFER";
+        codes.push("ECON_DEFER_V1", "ECON_R2_LIVE_FRAGILE_REGIME");
+        nextStatePatch.econConstraintLastAction = action;
+        nextStatePatch.econConstraintCooldownUntilTs = nowMs + 15 * 60 * 1000;
+        return {
+          econClass,
+          action,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+          nextStatePatch,
+        };
+      }
+
+      // Liquidity thin (warning level)
+      if (liquidity === "LIQ_THIN") {
+        econClass = "E1_CONSERVATIVE";
+        codes.push("ECON_LIVE_LIQ_THIN_CAUTION");
+        // Allow but flag
+      }
+
+      // Slippage high (warning level)
+      if (slippageRisk === "SLIP_HIGH") {
+        econClass = "E1_CONSERVATIVE";
+        codes.push("ECON_LIVE_SLIP_HIGH_CAUTION");
+        // Allow but flag
+      }
+    }
+
+    // R0: Defensive handling for unknown inputs with LIVE attempt
+    if (isLiveAttempt) {
+      if (liquidity === "LIQ_UNKNOWN" || slippageRisk === "SLIP_UNKNOWN" ||
+          exposure === "EXP_UNKNOWN" || drawdown === "DD_UNKNOWN") {
+        econClass = "E1_CONSERVATIVE";
+        action = "ECON_DEFER";
+        codes.push("ECON_DEFER_V1", "ECON_R0_DEFENSIVE_UNKNOWN");
+        nextStatePatch.econConstraintLastAction = action;
+        nextStatePatch.econConstraintCooldownUntilTs = nowMs + 15 * 60 * 1000;
+        return {
+          econClass,
+          action,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+          nextStatePatch,
+        };
+      }
+    }
+
+    // All checks passed - add final codes
+    if (econClass === "E0_OK") {
+      codes.push("ECON_OK");
+    }
+    codes.push("ECON_ALLOW_V1");
+
+    nextStatePatch.econConstraintLastAction = action;
+
+    return {
+      econClass,
+      action,
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      nextStatePatch,
+    };
+  } catch (err) {
+    // Defensive: On error, defer with error class
+    return {
+      econClass: "E9_ERROR",
+      action: "ECON_DEFER",
+      codes: ["ECON_ERROR_DEFENSIVE_DEFER", `ERROR_${String(err).substring(0, 30)}`].sort(),
+    };
+  }
+}
+
+/**
+ * PR233b: Economic Risk → Execution Shaping Layer v1 (Article XII-b)
+ *
+ * Purpose:
+ *   Map PR233 economic constraint decisions to execution control hints
+ *   (size/frequency/capital caps) for runner-side execution shaping.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning
+ *   - Label-only: No numeric amounts
+ *   - Deterministic: Same inputs → same outputs
+ *   - Defensive: Never throws, fails to most restrictive
+ *   - Does NOT override PR233 decision (ALLOW/DEFER/ABANDON)
+ *
+ * Decision Precedence:
+ *   R0) Defensive baseline: missing inputs → most restrictive
+ *   R1) SIM_ONLY bypass: don't overconstrain simulations
+ *   R2) ABANDON/DEFER interplay: map to caps
+ *   R3) Severity shaping: SEV_HIGH/CRITICAL → specific caps
+ *   R4) Deterministic codes: dedup/sort/truncate
+ *
+ * @param args - Shaping inputs (econDecision, severity, executionMode)
+ * @returns { sizeCap, freqCap, capitalCap, shapeStatus, codes }
+ */
+function deriveEconomicExecutionShapingV1(args: {
+  econDecision?: import("../rebalance/types").EconConstraintActionV1;
+  econSeverity?: string; // SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL
+  executionMode?: import("../rebalance/types").ExecutionMode;
+  timingClass?: import("../rebalance/types").ResumeDelayClassV1;
+}): {
+  sizeCap: import("../rebalance/types").EconomicExecSizeCapV1;
+  freqCap: import("../rebalance/types").EconomicExecFreqCapV1;
+  capitalCap: import("../rebalance/types").EconomicCapitalCapV1;
+  shapeStatus: import("../rebalance/types").EconomicExecShapeStatusV1;
+  codes: string[];
+} {
+  try {
+    const codes: string[] = [];
+
+    let sizeCap: import("../rebalance/types").EconomicExecSizeCapV1 = "SIZE_NONE";
+    let freqCap: import("../rebalance/types").EconomicExecFreqCapV1 = "FREQ_NONE";
+    let capitalCap: import("../rebalance/types").EconomicCapitalCapV1 = "CAPITAL_NONE";
+    let shapeStatus: import("../rebalance/types").EconomicExecShapeStatusV1 = "SHAPE_NONE";
+
+    const { econDecision, econSeverity, executionMode, timingClass } = args;
+
+    // R0: Defensive baseline - missing inputs → most restrictive
+    if (!econDecision || !econSeverity) {
+      sizeCap = "SIZE_ZERO";
+      freqCap = "FREQ_COOLDOWN";
+      capitalCap = "CAPITAL_MINIMAL";
+      shapeStatus = "SHAPE_ERROR";
+      codes.push("ECONSHAPE_ERROR_MISSING_INPUTS");
+      return {
+        sizeCap,
+        freqCap,
+        capitalCap,
+        shapeStatus,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // R1: SIM_ONLY bypass - don't overconstrain simulations
+    if (executionMode === "SIM_ONLY") {
+      sizeCap = "SIZE_NONE";
+      freqCap = "FREQ_NONE";
+      capitalCap = "CAPITAL_NONE";
+      shapeStatus = "SHAPE_NONE";
+      codes.push("ECONSHAPE_BYPASS_SIM_ONLY");
+      return {
+        sizeCap,
+        freqCap,
+        capitalCap,
+        shapeStatus,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // R2: ABANDON/DEFER interplay
+    if (econDecision === "ECON_ABANDON") {
+      sizeCap = "SIZE_ZERO";
+      freqCap = "FREQ_COOLDOWN";
+      capitalCap = "CAPITAL_MINIMAL";
+      shapeStatus = "SHAPE_APPLIED";
+      codes.push("ECONSHAPE_FROM_ECON_ABANDON");
+      return {
+        sizeCap,
+        freqCap,
+        capitalCap,
+        shapeStatus,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    if (econDecision === "ECON_DEFER") {
+      sizeCap = "SIZE_SMALL";
+      freqCap = "FREQ_COOLDOWN";
+      capitalCap = "CAPITAL_LOW";
+      shapeStatus = "SHAPE_APPLIED";
+      codes.push("ECONSHAPE_FROM_ECON_DEFER");
+      return {
+        sizeCap,
+        freqCap,
+        capitalCap,
+        shapeStatus,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // R3: Severity shaping (applies when econDecision is ALLOW and executionMode != SIM_ONLY)
+    if (econSeverity === "SEV_CRITICAL") {
+      sizeCap = "SIZE_ZERO";
+      freqCap = "FREQ_COOLDOWN";
+      capitalCap = "CAPITAL_MINIMAL";
+      shapeStatus = "SHAPE_APPLIED";
+      codes.push("ECONSHAPE_FROM_SEV_CRITICAL");
+      return {
+        sizeCap,
+        freqCap,
+        capitalCap,
+        shapeStatus,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    if (econSeverity === "SEV_HIGH") {
+      sizeCap = "SIZE_SMALL";
+      freqCap = "FREQ_SLOW";
+      capitalCap = "CAPITAL_LOW";
+      shapeStatus = "SHAPE_APPLIED";
+      codes.push("ECONSHAPE_FROM_SEV_HIGH");
+      return {
+        sizeCap,
+        freqCap,
+        capitalCap,
+        shapeStatus,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // Else (SEV_LOW / SEV_MEDIUM) - no shaping needed
+    codes.push("ECONSHAPE_NONE_SEV_OK");
+    shapeStatus = "SHAPE_NONE";
+
+    return {
+      sizeCap,
+      freqCap,
+      capitalCap,
+      shapeStatus,
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+    };
+  } catch (err) {
+    // Defensive: On error, return most restrictive caps
+    return {
+      sizeCap: "SIZE_ZERO",
+      freqCap: "FREQ_COOLDOWN",
+      capitalCap: "CAPITAL_MINIMAL",
+      shapeStatus: "SHAPE_ERROR",
+      codes: ["ECONSHAPE_ERROR_DEFENSIVE", `ERROR_${String(err).substring(0, 30)}`].sort(),
+    };
+  }
+}
+
+/**
+ * PR234: Capital-at-Risk Envelope v1 (Article XIII)
+ *
+ * Purpose:
+ *   Prevent runaway scenarios from cumulative risk events within a rolling time window.
+ *   This is a "physical guardrail" that tracks execution attempts that could expose capital.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning
+ *   - Label-only: No raw event counts in telemetry
+ *   - Deterministic: Same state/inputs → same outputs
+ *   - Defensive: Never throws, fails to CAR_DEFER on error
+ *   - Backward compatible: All new fields optional
+ *
+ * Rule Precedence:
+ *   R0) Defensive baseline: Missing/corrupt state → CAR_DEFER
+ *   R1) Window reset: 1h rolling window (anchor tracking)
+ *   R2) Risk event accumulation: Count events that could expose capital (with SIM_ONLY bypass)
+ *   R3) Usage level classification: Convert internal count to label (LOW/MEDIUM/HIGH/EXHAUSTED)
+ *   R4) Action mapping: LOW/MEDIUM→ALLOW, HIGH→DEFER, EXHAUSTED→ABORT
+ *   R5) Precedence: Budget/Econ ABANDON/DEFER take priority (observation only)
+ *
+ * @param args - Envelope inputs (labels + internal counters)
+ * @returns { windowStatus, usageLevel, action, codes, statePatch }
+ */
+function deriveCapitalRiskEnvelopeV1(args: {
+  nowMs: number;
+  resumeState?: import("../rebalance/types").ResumeState;
+  finalEnforcedExecutionMode?: import("../rebalance/types").ExecutionMode;
+  econDecision?: import("../rebalance/types").EconConstraintActionV1;
+  econSeverity?: string; // SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL
+  execShapeStatus?: import("../rebalance/types").EconomicExecShapeStatusV1;
+  execSizeCap?: import("../rebalance/types").EconomicExecSizeCapV1;
+  budgetAction?: string; // ALLOW | DEFER | ABANDON
+}): {
+  windowStatus: import("../rebalance/types").CapitalRiskWindowStatusV1;
+  usageLevel: import("../rebalance/types").CapitalRiskUsageLevelV1;
+  action: import("../rebalance/types").CapitalRiskActionV1;
+  codes: string[];
+  statePatch: Partial<import("../rebalance/types").ResumeState>;
+} {
+  try {
+    const codes: string[] = [];
+    const statePatch: Partial<import("../rebalance/types").ResumeState> = {};
+
+    const {
+      nowMs,
+      resumeState,
+      finalEnforcedExecutionMode,
+      econDecision,
+      econSeverity,
+      execShapeStatus,
+      execSizeCap,
+      budgetAction,
+    } = args;
+
+    let windowStatus: import("../rebalance/types").CapitalRiskWindowStatusV1 = "WIN_FRESH";
+    let usageLevel: import("../rebalance/types").CapitalRiskUsageLevelV1 = "RISK_LOW";
+    let action: import("../rebalance/types").CapitalRiskActionV1 = "CAR_ALLOW";
+
+    // R0: Defensive baseline
+    if (!resumeState) {
+      codes.push("CAR_DEFENSIVE_DEFER_V1");
+      codes.push("CAR_ERROR_NO_RESUME_STATE");
+      return {
+        windowStatus: "WIN_FRESH",
+        usageLevel: "RISK_LOW",
+        action: "CAR_DEFER",
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch: {},
+      };
+    }
+
+    // R1: Window reset (1h rolling)
+    const WINDOW_MS = 60 * 60 * 1000; // 1 hour
+    let anchor = resumeState.capitalRiskWindowAnchorTs;
+    let eventCount = resumeState.capitalRiskEventsInWindow || 0;
+
+    if (!anchor) {
+      // Initialize window
+      anchor = nowMs;
+      eventCount = 0;
+      windowStatus = "WIN_FRESH";
+      codes.push("CAR_WINDOW_INIT");
+      statePatch.capitalRiskWindowAnchorTs = anchor;
+      statePatch.capitalRiskEventsInWindow = eventCount;
+    } else if (nowMs - anchor > WINDOW_MS) {
+      // Window expired, reset
+      anchor = nowMs;
+      eventCount = 0;
+      windowStatus = "WIN_EXPIRED";
+      codes.push("CAR_WINDOW_RESET");
+      statePatch.capitalRiskWindowAnchorTs = anchor;
+      statePatch.capitalRiskEventsInWindow = eventCount;
+    } else {
+      // Window active
+      windowStatus = "WIN_ACTIVE";
+      codes.push("CAR_WINDOW_ACTIVE");
+    }
+
+    // R2: Risk event accumulation (with SIM_ONLY bypass)
+    // A risk event is any attempt that could expose capital:
+    // A) Not SIM_ONLY enforced (DRY_RUN or LIVE possible)
+    // B) High/Critical severity (even if SIM_ONLY, signals severe risk)
+    // C) Size cap applied (indicates shaping needed)
+    // D) Shape status = APPLIED
+    let riskEventTriggered = false;
+
+    // Condition A: Not SIM_ONLY
+    const notSimOnly = finalEnforcedExecutionMode !== "SIM_ONLY";
+    if (notSimOnly) {
+      riskEventTriggered = true;
+      codes.push("CAR_EVENT_TRIGGER_NOT_SIM_ONLY");
+    }
+
+    // Condition B: High/Critical severity
+    if (econSeverity === "SEV_HIGH" || econSeverity === "SEV_CRITICAL") {
+      riskEventTriggered = true;
+      codes.push("CAR_EVENT_TRIGGER_HIGH_SEVERITY");
+    }
+
+    // Condition C: Size cap applied
+    if (execSizeCap && execSizeCap !== "SIZE_NONE") {
+      riskEventTriggered = true;
+      codes.push("CAR_EVENT_TRIGGER_SIZE_CAP");
+    }
+
+    // Condition D: Shape applied
+    if (execShapeStatus === "SHAPE_APPLIED") {
+      riskEventTriggered = true;
+      codes.push("CAR_EVENT_TRIGGER_SHAPE_APPLIED");
+    }
+
+    // SIM_ONLY bypass note
+    if (finalEnforcedExecutionMode === "SIM_ONLY" && !riskEventTriggered) {
+      codes.push("CAR_EVENT_SKIP_SIM_ONLY");
+    }
+
+    // Increment counter if risk event triggered
+    if (riskEventTriggered) {
+      eventCount++;
+      codes.push("CAR_EVENT_INC");
+      statePatch.capitalRiskEventsInWindow = eventCount;
+    } else {
+      codes.push("CAR_EVENT_SKIP");
+    }
+
+    // R3: Usage level classification (label-only)
+    if (eventCount >= 9) {
+      usageLevel = "RISK_EXHAUSTED";
+      codes.push("CAR_LEVEL_EXHAUSTED");
+    } else if (eventCount >= 6) {
+      usageLevel = "RISK_HIGH";
+      codes.push("CAR_LEVEL_HIGH");
+    } else if (eventCount >= 3) {
+      usageLevel = "RISK_MEDIUM";
+      codes.push("CAR_LEVEL_MEDIUM");
+    } else {
+      usageLevel = "RISK_LOW";
+      codes.push("CAR_LEVEL_LOW");
+    }
+
+    // Update last level in state
+    statePatch.capitalRiskLevelLast = usageLevel;
+
+    // R4: Action mapping
+    if (usageLevel === "RISK_EXHAUSTED") {
+      action = "CAR_ABORT";
+      codes.push("CAR_ACTION_ABORT");
+    } else if (usageLevel === "RISK_HIGH") {
+      action = "CAR_DEFER";
+      codes.push("CAR_ACTION_DEFER_BACKOFF_LONG");
+    } else {
+      action = "CAR_ALLOW";
+      codes.push("CAR_ACTION_ALLOW");
+    }
+
+    // R5: Precedence with Budget/Econ (observation only when they block)
+    if (budgetAction === "ABANDON") {
+      action = "CAR_ABORT";
+      codes.push("CAR_BYPASS_BY_BUDGET_ABANDON");
+    } else if (budgetAction === "DEFER") {
+      // If PR234 wants ABORT but Budget is DEFER, keep DEFER (don't escalate)
+      if (action !== "CAR_ABORT") {
+        action = "CAR_DEFER";
+      }
+      codes.push("CAR_BYPASS_BY_BUDGET_DEFER");
+    }
+
+    if (econDecision === "ECON_ABANDON") {
+      action = "CAR_ABORT";
+      codes.push("CAR_BYPASS_BY_ECON_ABANDON");
+    } else if (econDecision === "ECON_DEFER") {
+      // PR234 can escalate DEFER→ABORT if EXHAUSTED, but not relax
+      if (action !== "CAR_ABORT") {
+        action = "CAR_DEFER";
+      }
+      codes.push("CAR_BYPASS_BY_ECON_DEFER");
+    }
+
+    return {
+      windowStatus,
+      usageLevel,
+      action,
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      statePatch,
+    };
+  } catch (err) {
+    // Defensive: On error, defer
+    return {
+      windowStatus: "WIN_FRESH",
+      usageLevel: "RISK_LOW",
+      action: "CAR_DEFER",
+      codes: ["CAR_DEFENSIVE_DEFER_V1", `CAR_ERROR_${String(err).substring(0, 30)}`].sort(),
+      statePatch: {},
+    };
+  }
+}
+
+/**
+ * PR235: Adversarial Incident Quarantine v1 (Article XIV - Adversarial Market Isolation)
+ *
+ * @param args - Quarantine detection inputs
+ * @returns Quarantine status, incident classification, action, codes, and state patch
+ *
+ * Purpose:
+ *   Detect adversarial market conditions (flash crash, oracle manipulation, network partition,
+ *   signal starvation) and quarantine LIVE execution during hostile states.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Never modifies execution directly
+ *   - Deterministic: Always produces same output for same inputs
+ *   - Defensive: Fail-safe to QA_DEFER on errors
+ *   - Backward compatible: All outputs are labels/codes
+ *   - Telemetry parity: State tracking + RunPlan passthrough
+ *
+ * Detection inputs:
+ *   - signalConsensus: CONSENSUS_STRONG | WEAK | DEGRADED | UNTRUSTED
+ *   - crosscheckStatus: XCHK_OK | DIVERGED | INSUFFICIENT | UNKNOWN
+ *   - rpcHealth: TRUSTED | DEGRADED | UNTRUSTED | UNKNOWN (mapped from signalRpcTrust)
+ *   - marketRegime: STABLE | VOLATILE | CRASH
+ *   - oscStatus: OSC_NONE | OSC_WARN | OSC_CRITICAL (from PR228)
+ *   - capriskUsageLevel: RISK_LOW | RISK_MEDIUM | RISK_HIGH | RISK_EXHAUSTED (from PR234)
+ *   - econSeverity: SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL (from PR233a)
+ *
+ * Rules:
+ *   R0: Defensive baseline - missing inputs → QA_DEFER
+ *   R1: SIM_ONLY bypass - no quarantine for simulations
+ *   R2: Incident detection - classify type & severity
+ *   R3: Quarantine activation - activate if SEV2_HIGH+ detected
+ *   R4: Exit condition selection - based on severity:
+ *       - SEV3_CRITICAL → EXIT_MANUAL_ONLY
+ *       - SEV2_HIGH → EXIT_CONSENSUS_STRONG_2TICKS or EXIT_COOLDOWN_EXPIRED (60min)
+ *   R5: Action mapping - QA_ABORT if Q1_ACTIVE, else QA_ALLOW
+ */
+function deriveAdversarialQuarantineV1(args: {
+  nowMs: number;
+  resumeState?: import("../rebalance/types").ResumeState;
+  executionMode?: import("../rebalance/types").ExecutionMode;
+  signalConsensus?: import("../rebalance/types").SignalConsensusV1;
+  crosscheckStatus?: import("../rebalance/types").QuoteCrossCheckStatusV1;
+  rpcHealth?: import("../rebalance/types").SignalTrustV1; // Mapped from signalRpcTrust
+  marketRegime?: import("../rebalance/types").MarketRegimeV1;
+  oscStatus?: string; // OSC_NONE | OSC_WARN | OSC_CRITICAL
+  capriskUsageLevel?: import("../rebalance/types").CapitalRiskUsageLevelV1;
+  econSeverity?: string; // SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL
+}): {
+  quarantineStatus: import("../rebalance/types").QuarantineStatusV1;
+  incidentType: import("../rebalance/types").IncidentTypeV1;
+  severity: import("../rebalance/types").IncidentSeverityV1;
+  exitCondition: import("../rebalance/types").QuarantineExitConditionV1;
+  action: import("../rebalance/types").QuarantineActionV1;
+  codes: string[];
+  statePatch: Partial<import("../rebalance/types").ResumeState>;
+} {
+  try {
+    const codes: string[] = [];
+    const statePatch: Partial<import("../rebalance/types").ResumeState> = {};
+
+    const {
+      nowMs,
+      resumeState,
+      executionMode,
+      signalConsensus,
+      crosscheckStatus,
+      rpcHealth,
+      marketRegime,
+      oscStatus,
+      capriskUsageLevel,
+      econSeverity,
+    } = args;
+
+    let quarantineStatus: import("../rebalance/types").QuarantineStatusV1 = "Q0_NONE";
+    let incidentType: import("../rebalance/types").IncidentTypeV1 = "INC_NONE";
+    let severity: import("../rebalance/types").IncidentSeverityV1 = "SEV0_NONE";
+    let exitCondition: import("../rebalance/types").QuarantineExitConditionV1 = "EXIT_NONE";
+    let action: import("../rebalance/types").QuarantineActionV1 = "QA_ALLOW";
+
+    // R0: Defensive baseline
+    if (!resumeState) {
+      codes.push("Q_DEFENSIVE_DEFER");
+      codes.push("Q_ERROR_NO_RESUME_STATE");
+      return {
+        quarantineStatus: "Q0_NONE",
+        incidentType: "INC_NONE",
+        severity: "SEV0_NONE",
+        exitCondition: "EXIT_NONE",
+        action: "QA_DEFER",
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch: {},
+      };
+    }
+
+    // R1: SIM_ONLY bypass
+    if (executionMode === "SIM_ONLY") {
+      codes.push("Q_BYPASS_SIM_ONLY");
+      return {
+        quarantineStatus: "Q0_NONE",
+        incidentType: "INC_NONE",
+        severity: "SEV0_NONE",
+        exitCondition: "EXIT_NONE",
+        action: "QA_ALLOW",
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch: {},
+      };
+    }
+
+    // R2: Incident detection (classify type & severity)
+    // Check for flash crash (regime=ILLIQUID + crosscheck diverged/insufficient)
+    if (marketRegime === "REGIME_ILLIQUID" && (crosscheckStatus === "XCHK_DIVERGED" || crosscheckStatus === "XCHK_INSUFFICIENT")) {
+      incidentType = "INC_FLASH_CRASH";
+      severity = "SEV3_CRITICAL";
+      codes.push("Q_DETECT_FLASH_CRASH");
+    }
+    // Check for oracle manipulation (crosscheck diverged + consensus untrusted/degraded)
+    else if (
+      crosscheckStatus === "XCHK_DIVERGED" &&
+      (signalConsensus === "CONSENSUS_UNTRUSTED" || signalConsensus === "CONSENSUS_DEGRADED")
+    ) {
+      incidentType = "INC_ORACLE_MANIPULATION";
+      severity = "SEV2_HIGH";
+      codes.push("Q_DETECT_ORACLE_MANIPULATION");
+    }
+    // Check for network partition (rpcHealth untrusted + consensus untrusted/degraded)
+    else if (
+      rpcHealth === "UNTRUSTED" &&
+      (signalConsensus === "CONSENSUS_UNTRUSTED" || signalConsensus === "CONSENSUS_DEGRADED")
+    ) {
+      incidentType = "INC_NETWORK_PARTITION";
+      severity = "SEV2_HIGH";
+      codes.push("Q_DETECT_NETWORK_PARTITION");
+    }
+    // Check for signal starvation (consensus untrusted + crosscheck insufficient)
+    else if (signalConsensus === "CONSENSUS_UNTRUSTED" && crosscheckStatus === "XCHK_INSUFFICIENT") {
+      incidentType = "INC_SIGNAL_STARVATION";
+      severity = "SEV2_HIGH";
+      codes.push("Q_DETECT_SIGNAL_STARVATION");
+    }
+    // Check for suspect conditions (any single degraded signal)
+    else if (
+      signalConsensus === "CONSENSUS_WEAK" ||
+      crosscheckStatus === "XCHK_DIVERGED" ||
+      rpcHealth === "DEGRADED" ||
+      marketRegime === "REGIME_VOLATILE" ||
+      oscStatus === "OSC_WARN" ||
+      capriskUsageLevel === "RISK_HIGH" ||
+      econSeverity === "SEV_HIGH"
+    ) {
+      incidentType = "INC_UNKNOWN";
+      severity = "SEV1_SUSPECT";
+      codes.push("Q_DETECT_SUSPECT");
+    } else {
+      // No incident detected
+      incidentType = "INC_NONE";
+      severity = "SEV0_NONE";
+      codes.push("Q_NO_INCIDENT");
+    }
+
+    // R3: Quarantine activation (activate if SEV2_HIGH+ detected)
+    // Check if already in quarantine
+    const activeQuarantineTs = resumeState.quarantineActiveSinceTs;
+    const existingIncident = resumeState.quarantineIncidentType;
+    const existingSeverity = resumeState.quarantineSeverity;
+    const existingExitCondition = resumeState.quarantineExitCondition;
+
+    if (activeQuarantineTs && existingSeverity && (existingSeverity === "SEV2_HIGH" || existingSeverity === "SEV3_CRITICAL")) {
+      // Already in active quarantine
+      quarantineStatus = "Q1_ACTIVE";
+      incidentType = existingIncident || incidentType;
+      severity = existingSeverity;
+      exitCondition = existingExitCondition || "EXIT_MANUAL_ONLY";
+      codes.push("Q_ACTIVE_EXISTING");
+
+      // R4: Check exit conditions
+      if (exitCondition === "EXIT_MANUAL_ONLY") {
+        codes.push("Q_EXIT_MANUAL_ONLY");
+        // No automatic exit, must wait for manual intervention
+      } else if (exitCondition === "EXIT_CONSENSUS_STRONG_2TICKS") {
+        // Check if we have 2 consecutive ticks of strong consensus
+        const consecutiveCount = resumeState.quarantineConsecutiveStrongConsensus || 0;
+        if (signalConsensus === "CONSENSUS_STRONG") {
+          const newCount = consecutiveCount + 1;
+          statePatch.quarantineConsecutiveStrongConsensus = newCount;
+          codes.push(`Q_EXIT_CONSENSUS_TICK_${newCount}`);
+          if (newCount >= 2) {
+            // Exit quarantine
+            quarantineStatus = "Q2_EXPIRED";
+            statePatch.quarantineActiveSinceTs = undefined;
+            statePatch.quarantineIncidentType = undefined;
+            statePatch.quarantineSeverity = undefined;
+            statePatch.quarantineExitCondition = undefined;
+            statePatch.quarantineConsecutiveStrongConsensus = undefined;
+            codes.push("Q_EXIT_CONSENSUS_STRONG_2TICKS");
+          }
+        } else {
+          // Reset counter if consensus not strong
+          statePatch.quarantineConsecutiveStrongConsensus = 0;
+          codes.push("Q_EXIT_CONSENSUS_RESET");
+        }
+      } else if (exitCondition === "EXIT_COOLDOWN_EXPIRED") {
+        // Check if 60min cooldown has passed
+        const COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes
+        if (nowMs - activeQuarantineTs > COOLDOWN_MS) {
+          // Exit quarantine
+          quarantineStatus = "Q2_EXPIRED";
+          statePatch.quarantineActiveSinceTs = undefined;
+          statePatch.quarantineIncidentType = undefined;
+          statePatch.quarantineSeverity = undefined;
+          statePatch.quarantineExitCondition = undefined;
+          statePatch.quarantineConsecutiveStrongConsensus = undefined;
+          codes.push("Q_EXIT_COOLDOWN_EXPIRED");
+        } else {
+          codes.push("Q_EXIT_COOLDOWN_ACTIVE");
+        }
+      }
+    } else if (severity === "SEV2_HIGH" || severity === "SEV3_CRITICAL") {
+      // New quarantine activation
+      quarantineStatus = "Q1_ACTIVE";
+      statePatch.quarantineActiveSinceTs = nowMs;
+      statePatch.quarantineIncidentType = incidentType;
+      statePatch.quarantineSeverity = severity;
+      statePatch.quarantineConsecutiveStrongConsensus = 0;
+      codes.push("Q_ACTIVATE_NEW");
+
+      // R4: Exit condition selection based on severity
+      if (severity === "SEV3_CRITICAL") {
+        exitCondition = "EXIT_MANUAL_ONLY";
+        codes.push("Q_EXIT_COND_MANUAL_ONLY");
+      } else if (severity === "SEV2_HIGH") {
+        // Choose between consensus or cooldown exit
+        // Prefer consensus exit if signals are available, otherwise cooldown
+        if (signalConsensus && signalConsensus !== "CONSENSUS_UNTRUSTED") {
+          exitCondition = "EXIT_CONSENSUS_STRONG_2TICKS";
+          codes.push("Q_EXIT_COND_CONSENSUS_2TICKS");
+        } else {
+          exitCondition = "EXIT_COOLDOWN_EXPIRED";
+          codes.push("Q_EXIT_COND_COOLDOWN_60MIN");
+        }
+      }
+      statePatch.quarantineExitCondition = exitCondition;
+    } else {
+      // No quarantine (SEV0_NONE or SEV1_SUSPECT)
+      quarantineStatus = "Q0_NONE";
+      codes.push("Q_NO_QUARANTINE");
+    }
+
+    // R5: Action mapping
+    if (quarantineStatus === "Q1_ACTIVE") {
+      action = "QA_ABORT";
+      codes.push("Q_ACTION_ABORT");
+    } else if (quarantineStatus === "Q2_EXPIRED") {
+      action = "QA_DEFER";
+      codes.push("Q_ACTION_DEFER_COOLDOWN");
+    } else {
+      action = "QA_ALLOW";
+      codes.push("Q_ACTION_ALLOW");
+    }
+
+    return {
+      quarantineStatus,
+      incidentType,
+      severity,
+      exitCondition,
+      action,
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      statePatch,
+    };
+  } catch (err) {
+    // Defensive: On error, defer
+    return {
+      quarantineStatus: "Q9_ERROR",
+      incidentType: "INC_UNKNOWN",
+      severity: "SEV0_NONE",
+      exitCondition: "EXIT_NONE",
+      action: "QA_DEFER",
+      codes: ["Q_DEFENSIVE_DEFER", `Q_ERROR_${String(err).substring(0, 30)}`].sort(),
+      statePatch: {},
+    };
+  }
+}
+
+/**
+ * PR236: Recovery Governance Layer v1 (Article XV - Recovery Permission Control)
+ *
+ * @param args - Governance inputs from prior layers
+ * @returns Permission state, gate action, timing overrides, state patch, codes
+ *
+ * Purpose:
+ *   Control when recovery (resume re-execution) is permitted after major stops.
+ *   Implements recovery permission state machine: AUTO_ALLOWED → COOLDOWN_ONLY → MANUAL_ONLY → PERMANENT_HALT.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Never modifies execution directly
+ *   - Deterministic: Same inputs → same outputs
+ *   - Defensive: Fail-safe to COOLDOWN_ONLY + RG_DEFER on errors
+ *   - Backward compatible: All outputs are labels/codes
+ *   - Safety-first: Major stops require manual intervention or cooldown
+ *
+ * Rules:
+ *   R0: Defensive baseline - missing context → COOLDOWN_ONLY + RG_DEFER
+ *   R1: PERMANENT_HALT triggers - invariant fail, quarantine SEV3
+ *   R2: MANUAL_ONLY triggers - CAR exhausted, econ abandon
+ *   R3: COOLDOWN_ONLY triggers - quarantine SEV2, budget abandon
+ *   R4: AUTO_ALLOWED default - normal operation
+ *   R5: Operator overrides - manual hold/release (v1 optional)
+ *   R6: Cooldown enforcement - enforce cooldown timing
+ *   R7: Manual hold max age - anti-deadlock (>24h → PERMANENT_HALT)
+ */
+function deriveRecoveryGovernanceV1(args: {
+  nowMs: number;
+  resumeState?: import("../rebalance/types").ResumeState;
+  // Inputs from prior layers (already computed in tick)
+  quarantineStatus?: import("../rebalance/types").QuarantineStatusV1;
+  quarantineSeverity?: import("../rebalance/types").IncidentSeverityV1;
+  quarantineAction?: import("../rebalance/types").QuarantineActionV1;
+  capitalRiskAction?: import("../rebalance/types").CapitalRiskActionV1;
+  capitalRiskUsageLevel?: import("../rebalance/types").CapitalRiskUsageLevelV1;
+  econAction?: import("../rebalance/types").EconConstraintActionV1;
+  budgetAction?: string; // ALLOW | DEFER | ABANDON
+  invariantStatus?: import("../rebalance/types").InvariantStatusV1;
+  // Operator overrides (v1 optional)
+  operatorOverride?: {
+    manualHoldActive?: boolean;
+    manualReleaseActive?: boolean;
+  };
+}): {
+  permission: import("../rebalance/types").RecoveryPermissionV1;
+  action: import("../rebalance/types").RecoveryGateActionV1;
+  reason: import("../rebalance/types").RecoveryGateReasonV1;
+  cooldownClass: "CD_NONE" | "CD_SHORT" | "CD_LONG" | "CD_ACTIVE";
+  ageClass: "AGE_NONE" | "AGE_FRESH" | "AGE_MODERATE" | "AGE_OLD" | "AGE_EXPIRED";
+  codes: string[];
+  statePatch: Partial<import("../rebalance/types").ResumeState>;
+} {
+  try {
+    const codes: string[] = [];
+    const statePatch: Partial<import("../rebalance/types").ResumeState> = {};
+
+    const {
+      nowMs,
+      resumeState,
+      quarantineStatus,
+      quarantineSeverity,
+      quarantineAction,
+      capitalRiskAction,
+      capitalRiskUsageLevel,
+      econAction,
+      budgetAction,
+      invariantStatus,
+      operatorOverride,
+    } = args;
+
+    let permission: import("../rebalance/types").RecoveryPermissionV1 = "AUTO_ALLOWED";
+    let action: import("../rebalance/types").RecoveryGateActionV1 = "RG_ALLOW";
+    let reason: import("../rebalance/types").RecoveryGateReasonV1 = "BY_NONE";
+    let cooldownClass: "CD_NONE" | "CD_SHORT" | "CD_LONG" | "CD_ACTIVE" = "CD_NONE";
+    let ageClass: "AGE_NONE" | "AGE_FRESH" | "AGE_MODERATE" | "AGE_OLD" | "AGE_EXPIRED" = "AGE_NONE";
+
+    // R0: Defensive baseline
+    if (!resumeState) {
+      permission = "COOLDOWN_ONLY";
+      action = "RG_DEFER";
+      reason = "BY_NONE";
+      cooldownClass = "CD_LONG";
+      codes.push("GOV_R0_DEFENSIVE_DEFAULT");
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch: {},
+      };
+    }
+
+    // R1: PERMANENT_HALT triggers (fatal)
+    if (invariantStatus === "INV_FAIL") {
+      permission = "PERMANENT_HALT";
+      action = "RG_ABORT";
+      reason = "BY_INVARIANT_FAIL";
+      codes.push("GOV_R1_HALT_INVARIANT_FAIL");
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    if (quarantineSeverity === "SEV3_CRITICAL" && quarantineStatus === "Q1_ACTIVE") {
+      permission = "PERMANENT_HALT";
+      action = "RG_ABORT";
+      reason = "BY_QUARANTINE_SEV3";
+      codes.push("GOV_R1_HALT_QUAR_SEV3");
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    // R2: MANUAL_ONLY triggers (major)
+    if (capitalRiskAction === "CAR_ABORT" || capitalRiskUsageLevel === "RISK_EXHAUSTED") {
+      permission = "MANUAL_ONLY";
+      action = "RG_ABORT";
+      reason = "BY_CAR_EXHAUSTED";
+      codes.push("GOV_R2_MANUAL_CAR_EXHAUSTED");
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = resumeState.recoveryPermissionSinceTs || nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    if (econAction === "ECON_ABANDON") {
+      permission = "MANUAL_ONLY";
+      action = "RG_ABORT";
+      reason = "BY_ECON_ABANDON";
+      codes.push("GOV_R2_MANUAL_ECON_ABANDON");
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = resumeState.recoveryPermissionSinceTs || nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    // R3: COOLDOWN_ONLY triggers (high but recoverable)
+    if (
+      (quarantineStatus === "Q1_ACTIVE" && quarantineSeverity === "SEV2_HIGH") ||
+      quarantineAction === "QA_ABORT"
+    ) {
+      permission = "COOLDOWN_ONLY";
+      action = "RG_DEFER";
+      reason = "BY_QUARANTINE_SEV2";
+      cooldownClass = "CD_LONG";
+      codes.push("GOV_R3_COOLDOWN_QUAR_SEV2");
+
+      // R6: Cooldown enforcement (60min)
+      const COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes
+      const cooldownUntil = resumeState.recoveryCooldownUntilTs;
+      if (!cooldownUntil || nowMs >= cooldownUntil) {
+        // Set new cooldown
+        statePatch.recoveryCooldownUntilTs = nowMs + COOLDOWN_MS;
+        cooldownClass = "CD_ACTIVE";
+        codes.push("GOV_R6_COOLDOWN_SET_LONG");
+      } else {
+        // Cooldown still active
+        cooldownClass = "CD_ACTIVE";
+        codes.push("GOV_R6_COOLDOWN_ACTIVE");
+      }
+
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = resumeState.recoveryPermissionSinceTs || nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    if (budgetAction === "ABANDON") {
+      permission = "MANUAL_ONLY";
+      action = "RG_ABORT";
+      reason = "BY_BUDGET_ABANDON";
+      codes.push("GOV_R3_MANUAL_BUDGET_ABANDON");
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = resumeState.recoveryPermissionSinceTs || nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    // R5: Operator overrides (v1 optional)
+    if (operatorOverride?.manualHoldActive && resumeState.recoveryPermission !== "PERMANENT_HALT") {
+      permission = "MANUAL_ONLY";
+      action = "RG_ABORT";
+      reason = "BY_OPERATOR_MANUAL_HOLD";
+      codes.push("GOV_R5_OPERATOR_HOLD");
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = resumeState.recoveryPermissionSinceTs || nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    if (operatorOverride?.manualReleaseActive && resumeState.recoveryPermission === "MANUAL_ONLY") {
+      permission = "COOLDOWN_ONLY";
+      action = "RG_DEFER";
+      reason = "BY_OPERATOR_MANUAL_RELEASE";
+      cooldownClass = "CD_LONG";
+      codes.push("GOV_R5_OPERATOR_RELEASE");
+
+      // Set cooldown on release
+      const COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes
+      statePatch.recoveryCooldownUntilTs = nowMs + COOLDOWN_MS;
+      statePatch.recoveryPermission = permission;
+      statePatch.recoveryPermissionReason = reason;
+      statePatch.recoveryPermissionSinceTs = nowMs;
+      statePatch.recoveryGateLastAction = action;
+      return {
+        permission,
+        action,
+        reason,
+        cooldownClass,
+        ageClass,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        statePatch,
+      };
+    }
+
+    // R7: Manual hold max age (anti-deadlock)
+    if (resumeState.recoveryPermission === "MANUAL_ONLY" && resumeState.recoveryPermissionSinceTs) {
+      const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+      const age = nowMs - resumeState.recoveryPermissionSinceTs;
+      if (age > MAX_AGE_MS) {
+        permission = "PERMANENT_HALT";
+        action = "RG_ABORT";
+        reason = resumeState.recoveryPermissionReason || "BY_NONE";
+        codes.push("GOV_R7_ESCALATE_MANUAL_TOO_OLD");
+        statePatch.recoveryPermission = permission;
+        statePatch.recoveryPermissionSinceTs = nowMs;
+        statePatch.recoveryGateLastAction = action;
+        return {
+          permission,
+          action,
+          reason,
+          cooldownClass,
+          ageClass: "AGE_EXPIRED",
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+          statePatch,
+        };
+      } else if (age > 12 * 60 * 60 * 1000) {
+        ageClass = "AGE_OLD";
+      } else if (age > 6 * 60 * 60 * 1000) {
+        ageClass = "AGE_MODERATE";
+      } else {
+        ageClass = "AGE_FRESH";
+      }
+    }
+
+    // R4: AUTO_ALLOWED default (normal operation)
+    permission = "AUTO_ALLOWED";
+    action = "RG_ALLOW";
+    reason = "BY_NONE";
+    codes.push("GOV_R4_AUTO_ALLOWED");
+
+    return {
+      permission,
+      action,
+      reason,
+      cooldownClass,
+      ageClass,
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      statePatch,
+    };
+  } catch (err) {
+    // Defensive: On error, defer with cooldown
+    return {
+      permission: "COOLDOWN_ONLY",
+      action: "RG_DEFER",
+      reason: "BY_NONE",
+      cooldownClass: "CD_LONG",
+      ageClass: "AGE_NONE",
+      codes: ["GOV_R0_DEFENSIVE_DEFAULT", `GOV_ERROR_${String(err).substring(0, 30)}`].sort(),
+      statePatch: {},
+    };
+  }
+}
+
+/**
+ * PR237: Learning Freeze & Drift Firewall v1 (Article XVI - Prevent Learning from Disequilibrium)
+ *
+ * @param args - Freeze inputs from all prior governance layers
+ * @returns Freeze status, reason, exit condition, action, stable tick count, codes
+ *
+ * Purpose:
+ *   Prevent adaptive/learning components from updating during hostile/degraded/abnormal states.
+ *   Implements a fail-closed firewall: if conditions are unstable → FREEZE_ON.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Never modifies execution directly
+ *   - Deterministic: Same inputs → same outputs
+ *   - Defensive: Fail-closed to FREEZE_ON + FREEZE_ERROR on errors
+ *   - Backward compatible: All outputs are labels/codes
+ *   - Safety-first: Freeze prevents learning from contaminated signals
+ *
+ * Rules:
+ *   R0: Defensive baseline - missing context/errors → FREEZE_ON + FREEZE_ERROR
+ *   R1: Activation triggers (priority order) - any trigger → FREEZE_ON
+ *       INV_FAIL > QUAR_ACTIVE > RISK_EXHAUSTED > GOV_NOT_AUTO > SIGNAL_NOT_STRONG > ECON_SEV_HIGH > RISK_HIGH > OSC_WARN
+ *   R2: Hold behavior - if any trigger present, maintain FREEZE_ON
+ *   R3: Exit protocol - requires 2 stable ticks (no triggers) or manual release
+ */
+function deriveLearningFreezeFirewallV1(args: {
+  // Inputs (label-level)
+  signalConsensus?: import("../rebalance/types").SignalConsensusV1;
+  quarantineStatus?: import("../rebalance/types").QuarantineStatusV1;
+  quarantineSeverity?: import("../rebalance/types").IncidentSeverityV1;
+  governancePermission?: import("../rebalance/types").RecoveryPermissionV1;
+  econSeverity?: string; // SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL
+  capitalRiskLevel?: import("../rebalance/types").CapitalRiskUsageLevelV1;
+  oscillationStatus?: "OSC_NONE" | "OSC_WARN_STRATEGY" | "OSC_WARN_REGIME" | "OSC_WARN_BOTH";
+  invariantStatus?: "INV_PASS" | "INV_FAIL";
+
+  // State
+  priorFreezeStatus?: import("../rebalance/types").LearningFreezeStatusV1;
+  stableTickCount?: number;
+  nowMs: number;
+
+  // Optional operator override signals (v1 optional, future-proof)
+  manualRelease?: boolean;
+}): {
+  freezeStatus: import("../rebalance/types").LearningFreezeStatusV1;
+  reason: import("../rebalance/types").LearningFreezeReasonV1;
+  exit: import("../rebalance/types").LearningFreezeExitV1;
+  action: "FREEZE_APPLY" | "FREEZE_HOLD" | "FREEZE_RELEASE";
+  stableTickCountNext: number;
+  codes: string[];
+} {
+  try {
+    const codes: string[] = [];
+
+    const {
+      signalConsensus,
+      quarantineStatus,
+      quarantineSeverity,
+      governancePermission,
+      econSeverity,
+      capitalRiskLevel,
+      oscillationStatus,
+      invariantStatus,
+      priorFreezeStatus,
+      stableTickCount = 0,
+      nowMs,
+      manualRelease,
+    } = args;
+
+    let freezeStatus: import("../rebalance/types").LearningFreezeStatusV1 = "FREEZE_OFF";
+    let reason: import("../rebalance/types").LearningFreezeReasonV1 = "LFR_NONE";
+    let exit: import("../rebalance/types").LearningFreezeExitV1 = "LFX_NONE";
+    let action: "FREEZE_APPLY" | "FREEZE_HOLD" | "FREEZE_RELEASE" = "FREEZE_RELEASE";
+    let stableTickCountNext = 0;
+
+    // R1: Activation triggers (priority order - most severe wins)
+    let triggerPresent = false;
+
+    // Check triggers in priority order (highest to lowest)
+    if (invariantStatus === "INV_FAIL") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_INVARIANT_FAIL";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_INV_FAIL");
+    } else if (quarantineStatus === "Q1_ACTIVE") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_QUARANTINE_ACTIVE";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_QUAR_ACTIVE");
+    } else if (capitalRiskLevel === "RISK_EXHAUSTED") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_CAPITAL_RISK_HIGH";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_RISK_EXHAUSTED");
+    } else if (governancePermission && governancePermission !== "AUTO_ALLOWED") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_GOV_NOT_AUTO";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_GOV_NOT_AUTO");
+    } else if (signalConsensus && signalConsensus !== "CONSENSUS_STRONG") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_SIGNAL_NOT_STRONG";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_SIGNAL_WEAK");
+    } else if (econSeverity && (econSeverity === "SEV_HIGH" || econSeverity === "SEV_CRITICAL")) {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_ECON_SEV_HIGH";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_ECON_SEV_HIGH");
+    } else if (capitalRiskLevel === "RISK_HIGH") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_CAPITAL_RISK_HIGH";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_RISK_HIGH");
+    } else if (oscillationStatus && oscillationStatus !== "OSC_NONE") {
+      freezeStatus = "FREEZE_ON";
+      reason = "LFR_OSC_WARN";
+      triggerPresent = true;
+      codes.push("FREEZE_R1_TRIGGER_OSC_WARN");
+    }
+
+    // R2: Hold behavior
+    if (triggerPresent) {
+      freezeStatus = "FREEZE_ON";
+      action = priorFreezeStatus === "FREEZE_ON" ? "FREEZE_HOLD" : "FREEZE_APPLY";
+      exit = "LFX_NONE";
+      stableTickCountNext = 0; // Reset stable tick counter
+      codes.push("FREEZE_R2_HOLD");
+
+      return {
+        freezeStatus,
+        reason,
+        exit,
+        action,
+        stableTickCountNext,
+        codes: Array.from(new Set(codes)).sort().slice(0, 8),
+      };
+    }
+
+    // R3: Exit protocol (no triggers present)
+    if (priorFreezeStatus === "FREEZE_ON") {
+      // Manual release override
+      if (manualRelease) {
+        freezeStatus = "FREEZE_OFF";
+        reason = "LFR_NONE";
+        exit = "LFX_MANUAL_RELEASE";
+        action = "FREEZE_RELEASE";
+        stableTickCountNext = 0;
+        codes.push("FREEZE_R3_EXIT_MANUAL");
+
+        return {
+          freezeStatus,
+          reason,
+          exit,
+          action,
+          stableTickCountNext,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        };
+      }
+
+      // Require 2 stable ticks
+      stableTickCountNext = Math.min(2, stableTickCount + 1);
+
+      if (stableTickCountNext < 2) {
+        // Not enough stable ticks yet, keep freeze ON
+        freezeStatus = "FREEZE_ON";
+        reason = priorFreezeStatus === "FREEZE_ON" ? reason : "LFR_NONE"; // Keep prior reason
+        exit = "LFX_AUTO_STABLE_2TICK";
+        action = "FREEZE_HOLD";
+        codes.push("FREEZE_R3_STABLE_TICK_" + stableTickCountNext);
+
+        return {
+          freezeStatus,
+          reason,
+          exit,
+          action,
+          stableTickCountNext,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        };
+      } else {
+        // 2 stable ticks reached, release freeze
+        freezeStatus = "FREEZE_OFF";
+        reason = "LFR_NONE";
+        exit = "LFX_AUTO_STABLE_2TICK";
+        action = "FREEZE_RELEASE";
+        stableTickCountNext = 0;
+        codes.push("FREEZE_R3_EXIT_AUTO_STABLE");
+
+        return {
+          freezeStatus,
+          reason,
+          exit,
+          action,
+          stableTickCountNext,
+          codes: Array.from(new Set(codes)).sort().slice(0, 8),
+        };
+      }
+    }
+
+    // Default: no freeze, no prior freeze, no triggers
+    freezeStatus = "FREEZE_OFF";
+    reason = "LFR_NONE";
+    exit = "LFX_NONE";
+    action = "FREEZE_RELEASE";
+    stableTickCountNext = 0;
+    codes.push("FREEZE_R0_OFF");
+
+    return {
+      freezeStatus,
+      reason,
+      exit,
+      action,
+      stableTickCountNext,
+      codes: Array.from(new Set(codes)).sort().slice(0, 8),
+    };
+  } catch (err) {
+    // R0: Defensive: On error, freeze ON (fail-closed)
+    return {
+      freezeStatus: "FREEZE_ERROR",
+      reason: "LFR_DEFENSIVE_ERROR",
+      exit: "LFX_NONE",
+      action: "FREEZE_APPLY",
+      stableTickCountNext: 0,
+      codes: ["FREEZE_ERROR_FALLBACK_ON", `FREEZE_ERR_${String(err).substring(0, 30)}`].sort().slice(0, 8),
+    };
+  }
+}
+
+/**
  * PR226: Detect strategy/regime oscillation (telemetry only)
  *
  * @param args - Oscillation detection inputs
@@ -1875,6 +4334,77 @@ export async function runSupervisorOnceV1(
       let oscillationStatus: string = "OSC_NONE"; // NONE, WARN_STRATEGY, WARN_REGIME, WARN_BOTH
       let oscillationCodes: string[] = [];
 
+      // PR230a: Signal trust & consensus layer variables (declare outside for wider scope)
+      let signalTruth: import("../rebalance/types").SignalTruthV1 | undefined;
+      let truthCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+      let resumeInputs: any; // Declare at wider scope for PR233 access
+
+      // PR230b: Signal consensus execution cap variables (declare outside for wider scope)
+      let signalEnforcedMode: import("../rebalance/types").ExecutionMode | undefined;
+      let signalCapStatus: import("../rebalance/types").SignalExecCapStatusV1 = "CAP_NONE";
+      let signalCapCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR231: Invariant check variables (declare outside for wider scope)
+      let invariantStatus: import("../rebalance/types").InvariantStatusV1 = "INV_PASS";
+      let invariantFailedGroup: import("../rebalance/types").InvariantGroupV1 | undefined;
+      let invariantCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR232: Economic invariant check variables (declare outside for wider scope)
+      let economicInvariantStatus: import("../rebalance/types").EconomicInvariantStatusV1 = "EINV_PASS";
+      let economicInvariantFailedGroup: import("../rebalance/types").EconomicInvariantGroupV1 | undefined;
+      let economicActionOverride: import("../rebalance/types").EconomicActionOverrideV1 = "NONE";
+      let economicInvariantCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR233: Economic constraint variables (declare outside for wider scope)
+      let econConstraintClass: import("../rebalance/types").EconConstraintClassV1 = "E0_OK";
+      let econConstraintAction: import("../rebalance/types").EconConstraintActionV1 = "ECON_ALLOW";
+      let econConstraintCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+      let econLiquidityCondition: import("../rebalance/types").LiquidityConditionV1 | undefined;
+      let econSlippageRisk: import("../rebalance/types").SlippageRiskV1 | undefined;
+      let econExposureStatus: import("../rebalance/types").ExposureStatusV1 | undefined;
+      let econDrawdownStatus: import("../rebalance/types").DrawdownStatusV1 | undefined;
+
+      // PR233a: Economic risk observability variables (label-only telemetry)
+      let econRiskSeverity: string = "SEV_LOW";
+      let econRiskCooldownStatus: string = "CD0_OK";
+      let econRiskWindowStatus: string = "WINDOW_UNKNOWN";
+
+      // PR233b: Economic execution shaping variables (label-only execution control)
+      let econSizeCap: import("../rebalance/types").EconomicExecSizeCapV1 = "SIZE_NONE";
+      let econFreqCap: import("../rebalance/types").EconomicExecFreqCapV1 = "FREQ_NONE";
+      let econCapitalCap: import("../rebalance/types").EconomicCapitalCapV1 = "CAPITAL_NONE";
+      let econShapeStatus: import("../rebalance/types").EconomicExecShapeStatusV1 = "SHAPE_NONE";
+      let econShapeCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR234: Capital-at-Risk Envelope variables (label-only cumulative risk tracking)
+      let capitalRiskWindowStatus: import("../rebalance/types").CapitalRiskWindowStatusV1 = "WIN_FRESH";
+      let capitalRiskUsageLevel: import("../rebalance/types").CapitalRiskUsageLevelV1 = "RISK_LOW";
+      let capitalRiskAction: import("../rebalance/types").CapitalRiskActionV1 = "CAR_ALLOW";
+      let capitalRiskCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR235: Adversarial Incident Quarantine variables (label-only hostile market isolation)
+      let quarantineStatus: import("../rebalance/types").QuarantineStatusV1 = "Q0_NONE";
+      let quarantineIncidentType: import("../rebalance/types").IncidentTypeV1 = "INC_NONE";
+      let quarantineSeverity: import("../rebalance/types").IncidentSeverityV1 = "SEV0_NONE";
+      let quarantineExitCondition: import("../rebalance/types").QuarantineExitConditionV1 = "EXIT_NONE";
+      let quarantineAction: import("../rebalance/types").QuarantineActionV1 = "QA_ALLOW";
+      let quarantineCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR236: Recovery Governance Layer variables (label-only recovery permission control)
+      let recoveryPermission: import("../rebalance/types").RecoveryPermissionV1 = "AUTO_ALLOWED";
+      let recoveryGateAction: import("../rebalance/types").RecoveryGateActionV1 = "RG_ALLOW";
+      let recoveryGateReason: import("../rebalance/types").RecoveryGateReasonV1 = "BY_NONE";
+      let recoveryCooldownClass: "CD_NONE" | "CD_SHORT" | "CD_LONG" | "CD_ACTIVE" = "CD_NONE";
+      let recoveryAgeClass: "AGE_NONE" | "AGE_FRESH" | "AGE_MODERATE" | "AGE_OLD" | "AGE_EXPIRED" = "AGE_NONE";
+      let recoveryGateCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR237: Learning Freeze & Drift Firewall variables (label-only adaptive freeze control)
+      let learningFreezeStatus: import("../rebalance/types").LearningFreezeStatusV1 = "FREEZE_OFF";
+      let learningFreezeReason: import("../rebalance/types").LearningFreezeReasonV1 = "LFR_NONE";
+      let learningFreezeExit: import("../rebalance/types").LearningFreezeExitV1 = "LFX_NONE";
+      let learningFreezeAction: "FREEZE_APPLY" | "FREEZE_HOLD" | "FREEZE_RELEASE" = "FREEZE_RELEASE";
+      let learningFreezeCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
         // Extract previous run ID if available (assume lastRun has runId)
@@ -1957,7 +4487,27 @@ export async function runSupervisorOnceV1(
         // PR223: Populate signals from current deps.getResumeInputs if available (fresh data)
         if (deps?.getResumeInputs) {
           try {
-            const resumeInputs = await deps.getResumeInputs();
+            resumeInputs = await deps.getResumeInputs();
+
+            // PR230a: Derive trust layer from fresh signals
+            signalTruth = deriveSignalTrustLayerV1({
+              oracleStatus: (resumeInputs as any).oracleStatus === "AVAILABLE" ? "ORACLE_OK" :
+                           (resumeInputs as any).oracleStatus === "STALE" ? "ORACLE_STALE" :
+                           (resumeInputs as any).oracleStatus === "UNAVAILABLE" ? "ORACLE_MISSING" : "ORACLE_UNKNOWN",
+              dexStatus: (resumeInputs as any).dexStatus || "DEX_UNKNOWN",
+              rpcHealth: (resumeInputs as any).rpcHealth || "RPC_UNKNOWN",
+              quoteCrossCheck: (resumeInputs as any).quoteCrossCheck,
+            });
+            truthCodesSummary = summarizeCodeArrayV1(signalTruth.truth_codes);
+
+            // Persist to ResumeState (defensive, optional)
+            if (state.resumeState) {
+              state.resumeState.lastSignalConsensus = signalTruth.consensus;
+              state.resumeState.lastSignalConsensusCodes = signalTruth.truth_codes;
+              state.resumeState.lastSignalTrustOracle = signalTruth.oracle_trust;
+              state.resumeState.lastSignalTrustDex = signalTruth.dex_trust;
+              state.resumeState.lastSignalTrustRpc = signalTruth.rpc_trust;
+            }
 
             // Map resume inputs to regime signals
             if (resumeInputs.oracleStatus) {
@@ -2014,8 +4564,16 @@ export async function runSupervisorOnceV1(
 
         // Derive regime from signals
         const regime = deriveMarketRegimeV1(regimeSignals);
-        const instantRegime = regime.regime; // Instant regime from signals
+        let instantRegime = regime.regime; // Instant regime from signals
         marketRegimeCodes = [...regime.codes, ...regimeSignalsCodes];
+
+        // PR230a: Regime gating (Article XI safety-first)
+        // If signal consensus is not STRONG, force conservative regime
+        if (signalTruth && signalTruth.consensus !== "CONSENSUS_STRONG") {
+          instantRegime = "REGIME_ORACLE_UNCERTAIN";
+          marketRegimeCodes.push("REGIME_GATED_BY_SIGNAL_CONSENSUS");
+          marketRegimeCodes.push(`REGIME_GATED_CONSENSUS_${signalTruth.consensus}`);
+        }
 
         // PR224: Apply regime hysteresis (2-tick confirmation)
         const priorRegime = state.resumeState.priorRegime;
@@ -2170,8 +4728,30 @@ export async function runSupervisorOnceV1(
           resumeStrategy,
           undefined // No current desired mode available in minimal supervisor
         );
-        enforcedExecutionMode = enforcement.enforcedMode;
-        enforcedCodes = enforcement.enforcedCodes;
+        const strategyEnforcedMode = enforcement.enforcedMode;
+        const strategyEnforcedCodes = enforcement.enforcedCodes;
+
+        // PR230b: Derive execution mode cap from signal consensus (NEVER LIVE)
+        const signalCap = deriveExecutionModeOverrideFromSignalConsensusV1({
+          signalConsensus: signalTruth?.consensus,
+        });
+        signalEnforcedMode = signalCap.enforcedMode;
+        signalCapStatus = signalCap.capStatus;
+        const signalCapCodes = signalCap.codes;
+        signalCapCodesSummary = summarizeCodeArrayV1(signalCapCodes);
+
+        // PR230b: Combine PR214 + PR230b enforcement (min-safety precedence)
+        enforcedExecutionMode = combineEnforcedExecutionModesV1(
+          strategyEnforcedMode,
+          signalEnforcedMode
+        );
+
+        // PR230b: Merge enforcement codes (strategy + signal cap)
+        enforcedCodes = Array.from(
+          new Set([...strategyEnforcedCodes, ...signalCapCodes])
+        )
+          .sort()
+          .slice(0, 8); // Dedup/sort/truncate
         enforcedSummary = summarizeStrategyCodesV1(enforcedCodes);
 
         // PR215: Derive timing control from strategy
@@ -2184,7 +4764,719 @@ export async function runSupervisorOnceV1(
         resumeTimingReasonCodes = timing.timingReasonCodes;
         timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
 
-        // PR213/PR214/PR215/PR219/PR220/PR228: Set resume fields on runPlan before execution
+        // PR229: Recovery Budgeting (暴走防止) - check budget limits AFTER timing decision
+        const budgetDecision = deriveRecoveryBudgetDecisionV1({
+          desiredDelayClass: resumeDelayClass,
+          desiredDelayOffsetLabel: resumeDelayOffsetLabel,
+          orchEffectiveStatus: state.resumeState.orchLastStatus,
+          oscChangeLevelStrategy,
+          oscChangeLevelRegime,
+          resumeState: state.resumeState,
+          nowMs: getNowMs(),
+        });
+
+        // PR229: Budget status labels (label-only, for telemetry)
+        const budgetAttemptStatus = budgetDecision.budgetAttemptStatus;
+        const budgetImmediateRateStatus = budgetDecision.budgetImmediateRateStatus;
+        const budgetFailedMarketRateStatus = budgetDecision.budgetFailedMarketRateStatus;
+        const budgetOscCooldownStatus = budgetDecision.budgetOscCooldownStatus;
+        const budgetAction = budgetDecision.action; // ALLOW | DEFER | ABANDON
+        const budgetCodes = budgetDecision.codes;
+        const budgetCodesSummary = summarizeCodeArrayV1(budgetCodes);
+
+        // PR229: Apply budget override if needed
+        if (budgetDecision.overrideDelayClass) {
+          resumeDelayClass = budgetDecision.overrideDelayClass as import("../rebalance/types").ResumeDelayClassV1;
+          resumeDelayOffsetLabel = (budgetDecision.overrideDelayOffsetLabel || resumeDelayOffsetLabel) as import("../rebalance/types").ResumeDelayOffsetLabelV1;
+          resumeTimingReasonCodes = [
+            ...resumeTimingReasonCodes,
+            "TIMING_OVERRIDDEN_BY_BUDGET",
+            ...budgetCodes,
+          ];
+          timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
+        }
+
+        // PR229: Budget ABANDON handling (暴走防止) - check before emission
+        if (budgetAction === "ABANDON") {
+          // Abandon resume (budget limit exceeded)
+          warnings.push("WARN_RESUME_ABANDONED_BUDGET_LIMIT");
+          notes.push("NOTE_BUDGET_LIMIT_EXCEEDED");
+
+          // Emit RESUME_REEXEC_ABANDONED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABANDONED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abandon_reason: "BUDGET_LIMIT_EXCEEDED",
+              budget_attempt_status: budgetAttemptStatus,
+              budget_codes: budgetCodes.join("|") || "NONE",
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, clear resume state)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR233: Economic Risk Constraints v1 (Article XII - LIVE capital safety)
+        // PR233: Get economic risk inputs from resumeInputs
+        econLiquidityCondition = (resumeInputs as any).liquidity || undefined;
+        econSlippageRisk = (resumeInputs as any).slippageRisk || undefined;
+        econExposureStatus = (resumeInputs as any).exposure || undefined;
+        econDrawdownStatus = (resumeInputs as any).drawdown || undefined;
+
+        const econConstraintResult = deriveEconomicRiskConstraintsV1({
+          finalDesiredExecutionMode: undefined, // No desired mode available in minimal supervisor
+          finalEnforcedExecutionMode: enforcedExecutionMode,
+          signalConsensus: signalTruth?.consensus,
+          marketRegimeConfirmed: (resumeInputs as any).marketRegimeConfirmed || regimeConfirmed,
+          budgetDecision: { action: budgetAction },
+          inputs: {
+            liquidity: econLiquidityCondition,
+            slippageRisk: econSlippageRisk,
+            exposure: econExposureStatus,
+            drawdown: econDrawdownStatus,
+          },
+          state: state.resumeState,
+          nowMs: getNowMs(),
+        });
+
+        econConstraintClass = econConstraintResult.econClass;
+        econConstraintAction = econConstraintResult.action;
+        const econConstraintCodes = econConstraintResult.codes;
+        econConstraintCodesSummary = summarizeCodeArrayV1(econConstraintCodes);
+
+        // PR233a: Derive observability fields (telemetry-only, label-only)
+        // Map econClass to severity
+        if (econConstraintClass === "E0_OK") {
+          econRiskSeverity = "SEV_LOW";
+        } else if (econConstraintClass === "E1_CONSERVATIVE") {
+          econRiskSeverity = "SEV_MEDIUM";
+        } else if (econConstraintClass === "E2_RISKY") {
+          econRiskSeverity = "SEV_HIGH";
+        } else if (econConstraintClass === "E3_FORBIDDEN" || econConstraintClass === "E9_ERROR") {
+          econRiskSeverity = "SEV_CRITICAL";
+        }
+
+        // Derive cooldown status from state
+        if (state.resumeState?.econConstraintCooldownUntilTs && state.resumeState.econConstraintCooldownUntilTs > nowMs) {
+          econRiskCooldownStatus = "CD1_ACTIVE";
+        } else {
+          econRiskCooldownStatus = "CD0_OK";
+        }
+
+        // Derive window status (simple v1: fresh if recent action, reset if old)
+        if (state.resumeState?.econConstraintWindowAnchorTs) {
+          const HOUR_MS = 60 * 60 * 1000;
+          const windowAge = nowMs - state.resumeState.econConstraintWindowAnchorTs;
+          if (windowAge < HOUR_MS) {
+            econRiskWindowStatus = "WINDOW_FRESH";
+          } else {
+            econRiskWindowStatus = "WINDOW_RESET";
+          }
+        } else {
+          econRiskWindowStatus = "WINDOW_UNKNOWN";
+        }
+
+        // PR233: Apply state patch if provided
+        if (econConstraintResult.nextStatePatch && state.resumeState) {
+          Object.assign(state.resumeState, econConstraintResult.nextStatePatch);
+        }
+
+        // PR233b: Economic Execution Shaping v1 (Article XII-b)
+        const econShapeResult = deriveEconomicExecutionShapingV1({
+          econDecision: econConstraintAction,
+          econSeverity: econRiskSeverity,
+          executionMode: enforcedExecutionMode,
+          timingClass: resumeDelayClass,
+        });
+
+        econSizeCap = econShapeResult.sizeCap;
+        econFreqCap = econShapeResult.freqCap;
+        econCapitalCap = econShapeResult.capitalCap;
+        econShapeStatus = econShapeResult.shapeStatus;
+        econShapeCodesSummary = summarizeCodeArrayV1(econShapeResult.codes);
+
+        // PR234: Capital-at-Risk Envelope v1 (Article XIII)
+        const capitalRiskResult = deriveCapitalRiskEnvelopeV1({
+          nowMs: getNowMs(),
+          resumeState: state.resumeState,
+          finalEnforcedExecutionMode: enforcedExecutionMode,
+          econDecision: econConstraintAction,
+          econSeverity: econRiskSeverity,
+          execShapeStatus: econShapeStatus,
+          execSizeCap: econSizeCap,
+          budgetAction: budgetAction,
+        });
+
+        capitalRiskWindowStatus = capitalRiskResult.windowStatus;
+        capitalRiskUsageLevel = capitalRiskResult.usageLevel;
+        capitalRiskAction = capitalRiskResult.action;
+        capitalRiskCodesSummary = summarizeCodeArrayV1(capitalRiskResult.codes);
+
+        // PR234: Apply state patch if provided
+        if (capitalRiskResult.statePatch && state.resumeState) {
+          Object.assign(state.resumeState, capitalRiskResult.statePatch);
+        }
+
+        // PR234: Handle CAR_DEFER action
+        if (capitalRiskAction === "CAR_DEFER") {
+          warnings.push("WARN_RESUME_DEFERRED_CAPITAL_RISK");
+          notes.push("NOTE_CAPITAL_RISK_HIGH");
+
+          // Override timing to BACKOFF_LONG
+          resumeDelayClass = "BACKOFF_LONG";
+          resumeDelayOffsetLabel = "DELAY_1H"; // Defensive backoff (capital risk high)
+          resumeTimingReasonCodes.push("TIMING_OVERRIDDEN_BY_CAPITAL_RISK");
+          timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
+
+          // Emit RESUME_REEXEC_DEFERRED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_DEFERRED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              defer_reason: "CAPITAL_RISK_ENVELOPE_HIGH",
+              // PR234: Capital risk labels
+              resume_caprisk_window_status: capitalRiskWindowStatus,
+              resume_caprisk_usage_level: capitalRiskUsageLevel,
+              resume_caprisk_action: capitalRiskAction,
+              resume_caprisk_codes_status: capitalRiskCodesSummary.status,
+              resume_caprisk_codes: capitalRiskCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, keep resume state for next attempt)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR234: Handle CAR_ABORT action
+        if (capitalRiskAction === "CAR_ABORT") {
+          warnings.push("WARN_RESUME_ABANDONED_CAPITAL_RISK");
+          notes.push("NOTE_CAPITAL_RISK_EXHAUSTED");
+
+          // Emit RESUME_REEXEC_ABANDONED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABANDONED", "ERROR", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abandon_reason: "CAPITAL_RISK_ENVELOPE_EXHAUSTED",
+              // PR234: Capital risk labels
+              resume_caprisk_window_status: capitalRiskWindowStatus,
+              resume_caprisk_usage_level: capitalRiskUsageLevel,
+              resume_caprisk_action: capitalRiskAction,
+              resume_caprisk_codes_status: capitalRiskCodesSummary.status,
+              resume_caprisk_codes: capitalRiskCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, clear resume state)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR233: Handle ECON_ABANDON action
+        if (econConstraintAction === "ECON_ABANDON") {
+          warnings.push("WARN_RESUME_ABANDONED_ECON_CONSTRAINT");
+          notes.push(`NOTE_ECON_CONSTRAINT_${econConstraintClass}`);
+
+          // Emit RESUME_REEXEC_ABANDONED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABANDONED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abandon_reason: "ECONOMIC_CONSTRAINT_VIOLATION",
+              // PR233: Economic Risk Constraints v1
+              resume_econ_constraint_class: econConstraintClass,
+              resume_econ_constraint_action: econConstraintAction,
+              resume_econ_codes_status: econConstraintCodesSummary.status,
+              resume_econ_codes: econConstraintCodesSummary.joined,
+              // PR233a: Economic risk observability labels
+              resume_econ_severity: econRiskSeverity,
+              resume_econ_liquidity_class: econLiquidityCondition || "LIQ_UNKNOWN",
+              resume_econ_slippage_class: econSlippageRisk || "SLIP_UNKNOWN",
+              resume_econ_exposure_class: econExposureStatus || "EXP_UNKNOWN",
+              resume_econ_drawdown_class: econDrawdownStatus || "DD_UNKNOWN",
+              resume_econ_cooldown_status: econRiskCooldownStatus,
+              resume_econ_window_status: econRiskWindowStatus,
+              // PR233b: Economic execution shaping labels
+              resume_econ_exec_size_cap: econSizeCap,
+              resume_econ_exec_freq_cap: econFreqCap,
+              resume_econ_capital_cap: econCapitalCap,
+              resume_econ_exec_shape_status: econShapeStatus,
+              resume_econ_exec_shape_codes_status: econShapeCodesSummary.status,
+              resume_econ_exec_shape_codes: econShapeCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, clear resume state)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR233: Handle ECON_DEFER action
+        if (econConstraintAction === "ECON_DEFER") {
+          warnings.push("WARN_RESUME_DEFERRED_ECON_CONSTRAINT");
+          notes.push(`NOTE_ECON_CONSTRAINT_${econConstraintClass}`);
+
+          // Emit RESUME_REEXEC_DEFERRED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_DEFERRED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              defer_reason: "ECONOMIC_CONSTRAINT_VIOLATION",
+              // PR233: Economic Risk Constraints v1
+              resume_econ_constraint_class: econConstraintClass,
+              resume_econ_constraint_action: econConstraintAction,
+              resume_econ_codes_status: econConstraintCodesSummary.status,
+              resume_econ_codes: econConstraintCodesSummary.joined,
+              // PR233a: Economic risk observability labels
+              resume_econ_severity: econRiskSeverity,
+              resume_econ_liquidity_class: econLiquidityCondition || "LIQ_UNKNOWN",
+              resume_econ_slippage_class: econSlippageRisk || "SLIP_UNKNOWN",
+              resume_econ_exposure_class: econExposureStatus || "EXP_UNKNOWN",
+              resume_econ_drawdown_class: econDrawdownStatus || "DD_UNKNOWN",
+              resume_econ_cooldown_status: econRiskCooldownStatus,
+              resume_econ_window_status: econRiskWindowStatus,
+              // PR233b: Economic execution shaping labels
+              resume_econ_exec_size_cap: econSizeCap,
+              resume_econ_exec_freq_cap: econFreqCap,
+              resume_econ_capital_cap: econCapitalCap,
+              resume_econ_exec_shape_status: econShapeStatus,
+              resume_econ_exec_shape_codes_status: econShapeCodesSummary.status,
+              resume_econ_exec_shape_codes: econShapeCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, keep resume state for next attempt)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR235: Adversarial Incident Quarantine v1 (Article XIV)
+        const quarantineResult = deriveAdversarialQuarantineV1({
+          nowMs: getNowMs(),
+          resumeState: state.resumeState,
+          executionMode: enforcedExecutionMode,
+          signalConsensus: signalTruth?.consensus,
+          crosscheckStatus: signalTruth?.crosscheckStatus,
+          rpcHealth: signalTruth?.rpcTrust, // Mapped from signalRpcTrust
+          marketRegime: regimeConfirmed, // Use confirmed regime (after hysteresis)
+          oscStatus: oscillationStatus, // From PR228
+          capriskUsageLevel: capitalRiskUsageLevel, // From PR234
+          econSeverity: econRiskSeverity, // From PR233a
+        });
+
+        quarantineStatus = quarantineResult.quarantineStatus;
+        quarantineIncidentType = quarantineResult.incidentType;
+        quarantineSeverity = quarantineResult.severity;
+        quarantineExitCondition = quarantineResult.exitCondition;
+        quarantineAction = quarantineResult.action;
+        quarantineCodesSummary = summarizeCodeArrayV1(quarantineResult.codes);
+
+        // PR235: Apply state patch if provided
+        if (quarantineResult.statePatch && state.resumeState) {
+          Object.assign(state.resumeState, quarantineResult.statePatch);
+        }
+
+        // PR235: Handle QA_ABORT action (quarantine active)
+        if (quarantineAction === "QA_ABORT") {
+          warnings.push("WARN_RESUME_ABORTED_QUARANTINE");
+          notes.push(`NOTE_QUARANTINE_${quarantineSeverity}_${quarantineIncidentType}`);
+
+          // Emit RESUME_REEXEC_ABORTED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABORTED", "ERROR", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abort_reason: "ADVERSARIAL_INCIDENT_QUARANTINE",
+              // PR235: Quarantine labels
+              resume_quarantine_status: quarantineStatus,
+              resume_quarantine_incident_type: quarantineIncidentType,
+              resume_quarantine_severity: quarantineSeverity,
+              resume_quarantine_exit_condition: quarantineExitCondition,
+              resume_quarantine_action: quarantineAction,
+              resume_quarantine_codes_status: quarantineCodesSummary.status,
+              resume_quarantine_codes: quarantineCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, keep resume state for next quarantine check)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR235: Handle QA_DEFER action (quarantine expired, cooldown)
+        if (quarantineAction === "QA_DEFER") {
+          warnings.push("WARN_RESUME_DEFERRED_QUARANTINE_COOLDOWN");
+          notes.push("NOTE_QUARANTINE_COOLDOWN_ACTIVE");
+
+          // Override timing to BACKOFF_LONG
+          resumeDelayClass = "BACKOFF_LONG";
+          resumeDelayOffsetLabel = "DELAY_1H"; // Defensive backoff (post-quarantine cooldown)
+          resumeTimingReasonCodes.push("TIMING_OVERRIDDEN_BY_QUARANTINE");
+          timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
+
+          // Emit RESUME_REEXEC_DEFERRED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_DEFERRED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              defer_reason: "QUARANTINE_COOLDOWN",
+              // PR235: Quarantine labels
+              resume_quarantine_status: quarantineStatus,
+              resume_quarantine_incident_type: quarantineIncidentType,
+              resume_quarantine_severity: quarantineSeverity,
+              resume_quarantine_exit_condition: quarantineExitCondition,
+              resume_quarantine_action: quarantineAction,
+              resume_quarantine_codes_status: quarantineCodesSummary.status,
+              resume_quarantine_codes: quarantineCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, keep resume state for next attempt)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR231: Invariant Checks v1 (Final defensive layer)
+        const invariantResult = deriveInvariantChecksV1({
+          finalEnforcedExecutionMode: enforcedExecutionMode,
+          resumeSignalConsensus: signalTruth?.consensus,
+          resumeRegimeConfirmed: regimeConfirmed,
+          resumeBudgetAction: budgetAction,
+        });
+
+        invariantStatus = invariantResult.status;
+        invariantFailedGroup = invariantResult.failedGroup;
+        const invariantCodes = invariantResult.codes;
+        invariantCodesSummary = summarizeCodeArrayV1(invariantCodes);
+
+        // PR231: Abort on invariant failure
+        if (invariantStatus === "INV_FAIL") {
+          warnings.push("WARN_RESUME_ABORTED_INVARIANT_VIOLATION");
+          notes.push(`NOTE_INVARIANT_VIOLATION_${invariantFailedGroup}`);
+
+          // Emit RESUME_REEXEC_ABORTED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABORTED", "ERROR", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abort_reason: "INVARIANT_VIOLATION",
+              invariant_status: invariantStatus,
+              invariant_failed_group: invariantFailedGroup || "UNKNOWN",
+              invariant_codes: invariantCodes.join("|") || "NONE",
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, clear resume state)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR232: Economic Safety Invariants v1 (LIVE capital safety)
+        // Note: For v1, economic risk classes (liquidity, slippage, etc.) default to safe values.
+        // These can be extended in future PRs with actual market data transforms.
+        const economicResult = deriveEconomicInvariantsV1({
+          resumeActionIntent: "ACTION_RUN_TWAP", // In resume flow, we're attempting execution
+          budgetAction,
+          executionModeFinal: enforcedExecutionMode,
+          // Market integrity signals (from PR230)
+          quoteCrosscheckStatus: signalTruth?.crosscheck_status,
+          // Economic risk classes (v1: undefined → not evaluated, passes through)
+          // Future PRs can add real transforms from market data
+          // For v1, all undefined (missing data) → EINV_PASS (not enough data to evaluate)
+          liqDepthClass: undefined,
+          orderSizeClass: undefined,
+          liqMatchStatus: undefined,
+          slippageRiskClass: undefined,
+          crashRiskClass: undefined,
+          exposureClass: undefined,
+          concentrationClass: undefined,
+        });
+
+        economicInvariantStatus = economicResult.status;
+        economicInvariantFailedGroup = economicResult.failedGroup;
+        economicActionOverride = economicResult.actionOverride;
+        const economicInvariantCodes = economicResult.codes;
+        economicInvariantCodesSummary = summarizeCodeArrayV1(economicInvariantCodes);
+
+        // PR232: Apply action override on economic invariant failure
+        if (economicInvariantStatus === "EINV_FAIL") {
+          if (economicActionOverride === "ABORT") {
+            warnings.push("WARN_RESUME_ABORTED_ECONOMIC_VIOLATION");
+            notes.push(`NOTE_ECONOMIC_VIOLATION_${economicInvariantFailedGroup}`);
+
+            // Emit RESUME_REEXEC_ABORTED event
+            await appendEventV1(
+              createEventV1("RESUME_REEXEC_ABORTED", "ERROR", {
+                resume_id: resumeId || "UNKNOWN",
+                previous_run_id: previousRunId || "UNKNOWN",
+                abort_reason: "ECONOMIC_INVARIANT_VIOLATION",
+                einv_status: economicInvariantStatus,
+                einv_failed_group: economicInvariantFailedGroup || "UNKNOWN",
+                einv_action_override: economicActionOverride,
+                einv_codes: economicInvariantCodes.join("|") || "NONE",
+              })
+            ).catch(() => {});
+
+            // Return ACTION_ABORT (skip runner call, clear resume state)
+            return {
+              status: "OK",
+              action: "ACTION_ABORT",
+              warnings,
+              notes,
+            };
+          } else if (economicActionOverride === "DEFER_MANUAL" || economicActionOverride === "DEFER_BACKOFF_LONG") {
+            // For DEFER overrides, we could map to delay classes
+            // For v1, treat as ABORT for simplicity (manual intervention required)
+            warnings.push("WARN_RESUME_DEFERRED_ECONOMIC_VIOLATION");
+            notes.push(`NOTE_ECONOMIC_DEFER_${economicInvariantFailedGroup}`);
+
+            // Emit RESUME_REEXEC_DEFERRED event
+            await appendEventV1(
+              createEventV1("RESUME_REEXEC_DEFERRED", "WARN", {
+                resume_id: resumeId || "UNKNOWN",
+                previous_run_id: previousRunId || "UNKNOWN",
+                defer_reason: "ECONOMIC_INVARIANT_VIOLATION",
+                einv_status: economicInvariantStatus,
+                einv_failed_group: economicInvariantFailedGroup || "UNKNOWN",
+                einv_action_override: economicActionOverride,
+                einv_codes: economicInvariantCodes.join("|") || "NONE",
+              })
+            ).catch(() => {});
+
+            // Return ACTION_ABORT (v1: defer treated as abort for manual review)
+            return {
+              status: "OK",
+              action: "ACTION_ABORT",
+              warnings,
+              notes,
+            };
+          }
+        }
+
+        // PR236: Recovery Governance Layer v1 (Article XV - Final Gate)
+        const governanceResult = deriveRecoveryGovernanceV1({
+          nowMs: getNowMs(),
+          resumeState: state.resumeState,
+          quarantineStatus,
+          quarantineSeverity,
+          quarantineAction,
+          capitalRiskAction,
+          capitalRiskUsageLevel,
+          econAction: econConstraintAction,
+          budgetAction,
+          invariantStatus,
+          // operatorOverride: undefined (v1: no manual overrides)
+        });
+
+        recoveryPermission = governanceResult.permission;
+        recoveryGateAction = governanceResult.action;
+        recoveryGateReason = governanceResult.reason;
+        recoveryCooldownClass = governanceResult.cooldownClass;
+        recoveryAgeClass = governanceResult.ageClass;
+        recoveryGateCodesSummary = summarizeCodeArrayV1(governanceResult.codes);
+
+        // PR236: Apply state patch if provided
+        if (governanceResult.statePatch && state.resumeState) {
+          Object.assign(state.resumeState, governanceResult.statePatch);
+        }
+
+        // PR236: Handle RG_ABORT action (recovery blocked - PERMANENT_HALT or MANUAL_ONLY)
+        if (recoveryGateAction === "RG_ABORT") {
+          warnings.push("WARN_RESUME_BLOCKED_GOVERNANCE");
+          notes.push(`NOTE_RECOVERY_${recoveryPermission}_${recoveryGateReason}`);
+
+          // Emit RESUME_REEXEC_ABORTED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABORTED", "ERROR", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abort_reason: "RECOVERY_GOVERNANCE_BLOCKED",
+              // PR236: Recovery governance labels
+              resume_recovery_permission: recoveryPermission,
+              resume_recovery_gate_action: recoveryGateAction,
+              resume_recovery_gate_reason: recoveryGateReason,
+              resume_recovery_gate_cooldown_class: recoveryCooldownClass,
+              resume_recovery_gate_age_class: recoveryAgeClass,
+              resume_recovery_gate_codes_status: recoveryGateCodesSummary.status,
+              resume_recovery_gate_codes: recoveryGateCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, keep resume state for manual intervention)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR236: Handle RG_DEFER action (recovery deferred - COOLDOWN_ONLY with active cooldown)
+        if (recoveryGateAction === "RG_DEFER") {
+          warnings.push("WARN_RESUME_DEFERRED_GOVERNANCE_COOLDOWN");
+          notes.push("NOTE_RECOVERY_COOLDOWN_ACTIVE");
+
+          // Override timing to BACKOFF_LONG
+          resumeDelayClass = "BACKOFF_LONG";
+          resumeDelayOffsetLabel = "DELAY_1H"; // Defensive backoff (governance cooldown)
+          resumeTimingReasonCodes.push("TIMING_OVERRIDDEN_BY_GOVERNANCE");
+          timingSummary = summarizeStrategyCodesV1(resumeTimingReasonCodes);
+
+          // Emit RESUME_REEXEC_DEFERRED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_DEFERRED", "WARN", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              defer_reason: "RECOVERY_GOVERNANCE_COOLDOWN",
+              // PR236: Recovery governance labels
+              resume_recovery_permission: recoveryPermission,
+              resume_recovery_gate_action: recoveryGateAction,
+              resume_recovery_gate_reason: recoveryGateReason,
+              resume_recovery_gate_cooldown_class: recoveryCooldownClass,
+              resume_recovery_gate_age_class: recoveryAgeClass,
+              resume_recovery_gate_codes_status: recoveryGateCodesSummary.status,
+              resume_recovery_gate_codes: recoveryGateCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, keep resume state for next cooldown check)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR236: Handle RG_ABANDON action (recovery abandoned - clear resume state)
+        if (recoveryGateAction === "RG_ABANDON") {
+          warnings.push("WARN_RESUME_ABANDONED_GOVERNANCE");
+          notes.push("NOTE_RECOVERY_ABANDONED");
+
+          // Emit RESUME_REEXEC_ABANDONED event
+          await appendEventV1(
+            createEventV1("RESUME_REEXEC_ABANDONED", "ERROR", {
+              resume_id: resumeId || "UNKNOWN",
+              previous_run_id: previousRunId || "UNKNOWN",
+              abandon_reason: "RECOVERY_GOVERNANCE_ABANDONED",
+              // PR236: Recovery governance labels
+              resume_recovery_permission: recoveryPermission,
+              resume_recovery_gate_action: recoveryGateAction,
+              resume_recovery_gate_reason: recoveryGateReason,
+              resume_recovery_gate_cooldown_class: recoveryCooldownClass,
+              resume_recovery_gate_age_class: recoveryAgeClass,
+              resume_recovery_gate_codes_status: recoveryGateCodesSummary.status,
+              resume_recovery_gate_codes: recoveryGateCodesSummary.joined,
+            })
+          ).catch(() => {});
+
+          // Return ACTION_ABORT (skip runner call, clear resume state)
+          return {
+            status: "OK",
+            action: "ACTION_ABORT",
+            warnings,
+            notes,
+          };
+        }
+
+        // PR237: Learning Freeze & Drift Firewall v1 (Article XVI - Prevent Learning from Disequilibrium)
+        const freezeResult = deriveLearningFreezeFirewallV1({
+          signalConsensus: signalTruth?.consensus,
+          quarantineStatus,
+          quarantineSeverity,
+          governancePermission: recoveryPermission,
+          econSeverity, // Assuming econSeverity is available from PR233
+          capitalRiskLevel: capitalRiskUsageLevel,
+          oscillationStatus: oscStatus, // Assuming oscStatus is available from PR226
+          invariantStatus,
+          priorFreezeStatus: state.resumeState?.learningFreezeStatus,
+          stableTickCount: state.resumeState?.learningFreezeStableTickCount || 0,
+          nowMs: getNowMs(),
+          // manualRelease: undefined (v1: no manual overrides)
+        });
+
+        learningFreezeStatus = freezeResult.freezeStatus;
+        learningFreezeReason = freezeResult.reason;
+        learningFreezeExit = freezeResult.exit;
+        learningFreezeAction = freezeResult.action;
+        learningFreezeCodesSummary = summarizeCodeArrayV1(freezeResult.codes);
+
+        // PR237: Apply state updates
+        if (state.resumeState) {
+          state.resumeState.learningFreezeStatus = learningFreezeStatus;
+          state.resumeState.learningFreezeReason = learningFreezeReason;
+          state.resumeState.learningFreezeStableTickCount = freezeResult.stableTickCountNext;
+          state.resumeState.learningFreezeLastDecisionCodes = freezeResult.codes;
+
+          // Set freeze activation timestamp on first activation
+          if (learningFreezeAction === "FREEZE_APPLY" && !state.resumeState.learningFreezeSinceTs) {
+            state.resumeState.learningFreezeSinceTs = getNowMs();
+          }
+
+          // Clear freeze timestamp on release
+          if (learningFreezeAction === "FREEZE_RELEASE") {
+            state.resumeState.learningFreezeSinceTs = undefined;
+            state.resumeState.learningFreezeStableTickCount = 0;
+          }
+        }
+
+        // PR237: Enforcement - Apply freeze constraints
+        if (learningFreezeStatus === "FREEZE_ON" || learningFreezeStatus === "FREEZE_ERROR") {
+          // A) Escalation clamp: Prevent RETRY_IMMEDIATE during freeze
+          if (escalatedStrategy === "RETRY_IMMEDIATE") {
+            escalatedStrategy = "RETRY_SAFE_SIM_ONLY"; // Downgrade to conservative
+            escalationCodes.push("FREEZE_CLAMP_NO_IMMEDIATE");
+            warnings.push("WARN_FREEZE_CLAMP_ESCALATION");
+          }
+
+          // B) Regime clamp: Force conservative regime (optional, but recommended)
+          // Note: In v1, we trust PR230a consensus enforcement, so this is defensive
+          if (marketRegime && !["REGIME_ORACLE_UNCERTAIN", "REGIME_ORACLE_DEGRADED"].includes(marketRegime)) {
+            // Add warning but don't override (PR230a already enforces)
+            warnings.push("WARN_FREEZE_REGIME_AGGRESSIVE");
+          }
+
+          // C) Execution shaping clamp: No relaxation of constraints
+          // Note: In v1, we don't have explicit shaping relaxation, so this is a marker
+          notes.push("NOTE_FREEZE_NO_RELAX_SHAPING");
+        }
+
+        // PR213/PR214/PR215/PR219/PR220/PR228/PR229/PR231/PR232/PR236/PR237: Set resume fields on runPlan before execution
         if (deps?.setRunPlanResumeFields) {
           deps.setRunPlanResumeFields({
             resumeId,
@@ -2215,6 +5507,82 @@ export async function runSupervisorOnceV1(
             resumeOscChangeLevelStrategy: oscChangeLevelStrategy,
             resumeOscChangeLevelRegime: oscChangeLevelRegime,
             resumeOscBasisCodes: oscBasisCodes,
+            // PR229: Recovery Budgeting (label-only status fields)
+            resumeBudgetAttemptStatus: budgetAttemptStatus,
+            resumeBudgetImmediateRateStatus: budgetImmediateRateStatus,
+            resumeBudgetFailedMarketRateStatus: budgetFailedMarketRateStatus,
+            resumeBudgetOscCooldownStatus: budgetOscCooldownStatus,
+            resumeBudgetAction: budgetAction,
+            resumeBudgetCodes: budgetCodes,
+            // PR230a: Signal trust & consensus layer (Article XI passthrough)
+            resumeSignalConsensus: signalTruth?.consensus,
+            resumeSignalConsensusCodesStatus: truthCodesSummary.status,
+            resumeSignalConsensusCodes: truthCodesSummary.joined,
+            resumeSignalOracleTrust: signalTruth?.oracle_trust,
+            resumeSignalDexTrust: signalTruth?.dex_trust,
+            resumeSignalRpcTrust: signalTruth?.rpc_trust,
+            resumeSignalCrosscheckStatus: signalTruth?.crosscheck_status,
+            // PR230b: Consensus → execution hard cap (NEVER LIVE)
+            resumeSignalEnforcedExecutionMode: signalEnforcedMode,
+            resumeSignalEnforcedCodes: signalCapCodes,
+            resumeSignalExecCapStatus: signalCapStatus,
+            // PR231: Invariant Checks v1 (Final defensive layer)
+            resumeInvariantStatus: invariantStatus,
+            resumeInvariantFailedGroup: invariantFailedGroup,
+            resumeInvariantCodes: invariantCodes,
+            // PR232: Economic Safety Invariants v1 (LIVE capital safety)
+            resumeEconomicInvariantStatus: economicInvariantStatus,
+            resumeEconomicInvariantFailedGroup: economicInvariantFailedGroup,
+            resumeEconomicInvariantCodes: economicInvariantCodes,
+            resumeEconomicActionOverride: economicActionOverride,
+            // PR233: Economic Risk Constraints Layer v1 (Article XII)
+            resumeEconLiquidityCondition: econLiquidityCondition,
+            resumeEconSlippageRisk: econSlippageRisk,
+            resumeEconExposureStatus: econExposureStatus,
+            resumeEconDrawdownStatus: econDrawdownStatus,
+            resumeEconConstraintClass: econConstraintClass,
+            resumeEconConstraintAction: econConstraintAction,
+            resumeEconConstraintCodes: econConstraintCodes,
+            resumeEconConstraintCodesStatus: econConstraintCodesSummary.status,
+            // PR233a: Economic Risk Observability Pack v1 (telemetry-only)
+            resumeEconRiskSeverity: econRiskSeverity,
+            resumeEconRiskCooldownStatus: econRiskCooldownStatus,
+            resumeEconRiskWindowStatus: econRiskWindowStatus,
+            // PR233b: Economic Execution Shaping v1
+            resumeEconExecSizeCap: econSizeCap,
+            resumeEconExecFreqCap: econFreqCap,
+            resumeEconCapitalCap: econCapitalCap,
+            resumeEconExecShapeStatus: econShapeStatus,
+            resumeEconExecShapeCodes: econShapeResult.codes,
+            // PR234: Capital-at-Risk Envelope v1 (Article XIII)
+            resumeCapitalRiskWindowStatus: capitalRiskWindowStatus,
+            resumeCapitalRiskUsageLevel: capitalRiskUsageLevel,
+            resumeCapitalRiskAction: capitalRiskAction,
+            resumeCapitalRiskCodes: capitalRiskResult.codes,
+            resumeCapitalRiskCodesStatus: capitalRiskCodesSummary.status,
+            // PR235: Adversarial Incident Quarantine v1 (Article XIV)
+            resumeQuarantineStatus: quarantineStatus,
+            resumeQuarantineIncidentType: quarantineIncidentType,
+            resumeQuarantineSeverity: quarantineSeverity,
+            resumeQuarantineExitCondition: quarantineExitCondition,
+            resumeQuarantineAction: quarantineAction,
+            resumeQuarantineCodes: quarantineResult.codes,
+            resumeQuarantineCodesStatus: quarantineCodesSummary.status,
+            // PR236: Recovery Governance Layer v1 (Article XV)
+            resumeRecoveryPermission: recoveryPermission,
+            resumeRecoveryGateAction: recoveryGateAction,
+            resumeRecoveryGateReason: recoveryGateReason,
+            resumeRecoveryGateCooldownClass: recoveryCooldownClass,
+            resumeRecoveryGateAgeClass: recoveryAgeClass,
+            resumeRecoveryGateCodes: governanceResult.codes.join("|"),
+            resumeRecoveryGateCodesStatus: recoveryGateCodesSummary.status,
+            // PR237: Learning Freeze & Drift Firewall v1 (Article XVI)
+            resumeLearningFreezeStatus: learningFreezeStatus,
+            resumeLearningFreezeReason: learningFreezeReason,
+            resumeLearningFreezeExit: learningFreezeExit,
+            resumeLearningFreezeAction: learningFreezeAction,
+            resumeLearningFreezeCodes: freezeResult.codes,
+            resumeLearningFreezeCodesStatus: learningFreezeCodesSummary.status,
           });
         }
 
@@ -2277,6 +5645,87 @@ export async function runSupervisorOnceV1(
             resume_osc_change_level_regime: oscChangeLevelRegime, // CHG_LOW/MEDIUM/HIGH/EXCEEDED
             resume_osc_basis_codes_status: oscBasisCodesSummary.status,
             resume_osc_basis_codes: oscBasisCodesSummary.joined,
+            // PR229: Recovery Budgeting labels
+            resume_budget_attempt_status: budgetAttemptStatus, // B0_OK | B1_NEAR_LIMIT | B2_LIMIT_EXCEEDED
+            resume_budget_immediate_rate_status: budgetImmediateRateStatus, // R0_OK | R1_NEAR_LIMIT | R2_LIMIT_EXCEEDED
+            resume_budget_failed_market_rate_status: budgetFailedMarketRateStatus, // F0_OK | F1_NEAR_LIMIT | F2_LIMIT_EXCEEDED
+            resume_budget_osc_cooldown_status: budgetOscCooldownStatus, // C0_OK | C1_COOLDOWN_ACTIVE
+            resume_budget_action: budgetAction, // ALLOW | DEFER | ABANDON
+            resume_budget_codes_status: budgetCodesSummary.status,
+            resume_budget_codes: budgetCodesSummary.joined,
+            // PR230a: Signal trust & consensus layer (Article XI)
+            resume_signal_consensus: signalTruth?.consensus || "CONSENSUS_UNTRUSTED",
+            resume_signal_consensus_codes_status: truthCodesSummary.status,
+            resume_signal_consensus_codes: truthCodesSummary.joined,
+            resume_signal_oracle_trust: signalTruth?.oracle_trust || "UNKNOWN",
+            resume_signal_dex_trust: signalTruth?.dex_trust || "UNKNOWN",
+            resume_signal_rpc_trust: signalTruth?.rpc_trust || "UNKNOWN",
+            resume_signal_crosscheck_status: signalTruth?.crosscheck_status || "XCHK_UNKNOWN",
+            // PR230b: Consensus → execution hard cap (NEVER LIVE)
+            resume_signal_exec_cap_status: signalCapStatus,
+            resume_signal_enforced_execution_mode: signalEnforcedMode || "NONE",
+            resume_signal_enforced_codes_status: signalCapCodesSummary.status,
+            resume_signal_enforced_codes: signalCapCodesSummary.joined,
+            // PR231: Invariant Checks v1 (Final defensive layer)
+            resume_invariant_status: invariantStatus,
+            resume_invariant_failed_group: invariantFailedGroup || "NONE",
+            resume_invariant_codes_status: invariantCodesSummary.status,
+            resume_invariant_codes: invariantCodesSummary.joined,
+            // PR232: Economic Safety Invariants v1 (LIVE capital safety)
+            resume_einv_status: economicInvariantStatus,
+            resume_einv_failed_group: economicInvariantFailedGroup || "NONE",
+            resume_einv_action_override: economicActionOverride,
+            resume_einv_codes_status: economicInvariantCodesSummary.status,
+            resume_einv_codes: economicInvariantCodesSummary.joined,
+            // PR233: Economic Risk Constraints v1 (Article XII)
+            resume_econ_constraint_class: econConstraintClass,
+            resume_econ_constraint_action: econConstraintAction,
+            resume_econ_codes_status: econConstraintCodesSummary.status,
+            resume_econ_codes: econConstraintCodesSummary.joined,
+            // PR233a: Economic Risk Observability Pack v1 (telemetry-only)
+            resume_econ_severity: econRiskSeverity,
+            resume_econ_liquidity_class: econLiquidityCondition || "LIQ_UNKNOWN",
+            resume_econ_slippage_class: econSlippageRisk || "SLIP_UNKNOWN",
+            resume_econ_exposure_class: econExposureStatus || "EXP_UNKNOWN",
+            resume_econ_drawdown_class: econDrawdownStatus || "DD_UNKNOWN",
+            resume_econ_cooldown_status: econRiskCooldownStatus,
+            resume_econ_window_status: econRiskWindowStatus,
+            // PR233b: Economic execution shaping labels
+            resume_econ_exec_size_cap: econSizeCap,
+            resume_econ_exec_freq_cap: econFreqCap,
+            resume_econ_capital_cap: econCapitalCap,
+            resume_econ_exec_shape_status: econShapeStatus,
+            resume_econ_exec_shape_codes_status: econShapeCodesSummary.status,
+            resume_econ_exec_shape_codes: econShapeCodesSummary.joined,
+            // PR234: Capital-at-Risk Envelope labels (Article XIII)
+            resume_caprisk_window_status: capitalRiskWindowStatus,
+            resume_caprisk_usage_level: capitalRiskUsageLevel,
+            resume_caprisk_action: capitalRiskAction,
+            resume_caprisk_codes_status: capitalRiskCodesSummary.status,
+            resume_caprisk_codes: capitalRiskCodesSummary.joined,
+            // PR235: Adversarial Incident Quarantine labels (Article XIV)
+            resume_quarantine_status: quarantineStatus,
+            resume_quarantine_incident_type: quarantineIncidentType,
+            resume_quarantine_severity: quarantineSeverity,
+            resume_quarantine_exit_condition: quarantineExitCondition,
+            resume_quarantine_action: quarantineAction,
+            resume_quarantine_codes_status: quarantineCodesSummary.status,
+            resume_quarantine_codes: quarantineCodesSummary.joined,
+            // PR236: Recovery Governance Layer labels (Article XV)
+            resume_recovery_permission: recoveryPermission,
+            resume_recovery_gate_action: recoveryGateAction,
+            resume_recovery_gate_reason: recoveryGateReason,
+            resume_recovery_gate_cooldown_class: recoveryCooldownClass,
+            resume_recovery_gate_age_class: recoveryAgeClass,
+            resume_recovery_gate_codes_status: recoveryGateCodesSummary.status,
+            resume_recovery_gate_codes: recoveryGateCodesSummary.joined,
+            // PR237: Learning Freeze & Drift Firewall labels (Article XVI)
+            resume_learning_freeze_status: learningFreezeStatus,
+            resume_learning_freeze_reason: learningFreezeReason,
+            resume_learning_freeze_exit: learningFreezeExit,
+            resume_learning_freeze_action: learningFreezeAction,
+            resume_learning_freeze_codes_status: learningFreezeCodesSummary.status,
+            resume_learning_freeze_codes: learningFreezeCodesSummary.joined,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       }
@@ -2449,6 +5898,51 @@ export async function runSupervisorOnceV1(
         };
       } else {
         // PR215: delayClass is IMMEDIATE (or not set), proceed with normal execution
+
+        // PR229: Update recovery budget counters before execution (暴走防止)
+        const HOUR_MS = 60 * 60 * 1000;
+        const nowMsBudget = getNowMs();
+
+        // Increment attempt count (always)
+        const newAttemptCount = (state.resumeState?.recoveryAttemptCount || 0) + 1;
+
+        // Window management (reset if > 1 hour old)
+        const currentWindowAnchor = state.resumeState?.recoveryWindowAnchorTs || 0;
+        const windowAge = currentWindowAnchor > 0 ? nowMsBudget - currentWindowAnchor : HOUR_MS + 1;
+        const windowNeedsReset = windowAge > HOUR_MS;
+
+        let newWindowAnchor = currentWindowAnchor;
+        let newImmediateCount = state.resumeState?.recoveryImmediateCountInWindow || 0;
+        let newFailedMarketCount = state.resumeState?.recoveryFailedMarketCountInWindow || 0;
+
+        if (windowNeedsReset) {
+          // Reset window (new 1-hour period)
+          newWindowAnchor = nowMsBudget;
+          newImmediateCount = 0;
+          newFailedMarketCount = 0;
+        }
+
+        // Increment IMMEDIATE count if delayClass is IMMEDIATE
+        if (resumeDelayClass === "IMMEDIATE") {
+          newImmediateCount = newImmediateCount + 1;
+        }
+
+        // Increment FAILED_MARKET count if orchLastStatus is FAILED_MARKET
+        if (state.resumeState?.orchLastStatus === "FAILED_MARKET") {
+          newFailedMarketCount = newFailedMarketCount + 1;
+        }
+
+        // Update resumeState with new counters
+        if (state.resumeState) {
+          state.resumeState.recoveryAttemptCount = newAttemptCount;
+          state.resumeState.recoveryWindowAnchorTs = newWindowAnchor;
+          state.resumeState.recoveryImmediateCountInWindow = newImmediateCount;
+          state.resumeState.recoveryFailedMarketCountInWindow = newFailedMarketCount;
+          if (windowNeedsReset) {
+            state.resumeState.recoveryWindowLastResetTs = nowMsBudget;
+          }
+        }
+
         try {
           if (deps?.runTwapExecution) {
             runResult = await deps.runTwapExecution();
@@ -2499,6 +5993,50 @@ export async function runSupervisorOnceV1(
                 resume_delay_offset_label: resumeDelayOffsetLabel || "UNKNOWN", // PR215
                 resume_timing_codes_status: timingSummary.status, // PR215
                 resume_timing_codes: timingSummary.joined, // PR215
+                // PR230a: Signal trust & consensus layer (Article XI)
+                resume_signal_consensus: signalTruth?.consensus || "CONSENSUS_UNTRUSTED",
+                resume_signal_consensus_codes_status: truthCodesSummary.status,
+                resume_signal_consensus_codes: truthCodesSummary.joined,
+                resume_signal_oracle_trust: signalTruth?.oracle_trust || "UNKNOWN",
+                resume_signal_dex_trust: signalTruth?.dex_trust || "UNKNOWN",
+                resume_signal_rpc_trust: signalTruth?.rpc_trust || "UNKNOWN",
+                resume_signal_crosscheck_status: signalTruth?.crosscheck_status || "XCHK_UNKNOWN",
+                // PR230b: Consensus → execution hard cap (NEVER LIVE)
+                resume_signal_exec_cap_status: signalCapStatus,
+                resume_signal_enforced_execution_mode: signalEnforcedMode || "NONE",
+                resume_signal_enforced_codes_status: signalCapCodesSummary.status,
+                resume_signal_enforced_codes: signalCapCodesSummary.joined,
+                // PR231: Invariant Checks v1 (Final defensive layer)
+                resume_invariant_status: invariantStatus,
+                resume_invariant_failed_group: invariantFailedGroup || "NONE",
+                resume_invariant_codes_status: invariantCodesSummary.status,
+                resume_invariant_codes: invariantCodesSummary.joined,
+                // PR232: Economic Safety Invariants v1 (LIVE capital safety)
+                resume_einv_status: economicInvariantStatus,
+                resume_einv_failed_group: economicInvariantFailedGroup || "NONE",
+                resume_einv_action_override: economicActionOverride,
+                resume_einv_codes_status: economicInvariantCodesSummary.status,
+                resume_einv_codes: economicInvariantCodesSummary.joined,
+                // PR233: Economic Risk Constraints v1 (Article XII)
+                resume_econ_constraint_class: econConstraintClass,
+                resume_econ_constraint_action: econConstraintAction,
+                resume_econ_codes_status: econConstraintCodesSummary.status,
+                resume_econ_codes: econConstraintCodesSummary.joined,
+                // PR233a: Economic Risk Observability Pack v1 (telemetry-only)
+                resume_econ_severity: econRiskSeverity,
+                resume_econ_liquidity_class: econLiquidityCondition || "LIQ_UNKNOWN",
+                resume_econ_slippage_class: econSlippageRisk || "SLIP_UNKNOWN",
+                resume_econ_exposure_class: econExposureStatus || "EXP_UNKNOWN",
+                resume_econ_drawdown_class: econDrawdownStatus || "DD_UNKNOWN",
+                resume_econ_cooldown_status: econRiskCooldownStatus,
+                resume_econ_window_status: econRiskWindowStatus,
+                // PR233b: Economic execution shaping labels
+                resume_econ_exec_size_cap: econSizeCap,
+                resume_econ_exec_freq_cap: econFreqCap,
+                resume_econ_capital_cap: econCapitalCap,
+                resume_econ_exec_shape_status: econShapeStatus,
+                resume_econ_exec_shape_codes_status: econShapeCodesSummary.status,
+                resume_econ_exec_shape_codes: econShapeCodesSummary.joined,
               })
             ).catch(() => {}); // Defensive: Don't fail on telemetry error
           }
@@ -2542,6 +6080,50 @@ export async function runSupervisorOnceV1(
                 resume_delay_offset_label: resumeDelayOffsetLabel || "UNKNOWN", // PR215
                 resume_timing_codes_status: timingSummary.status, // PR215
                 resume_timing_codes: timingSummary.joined, // PR215
+                // PR230a: Signal trust & consensus layer (Article XI)
+                resume_signal_consensus: signalTruth?.consensus || "CONSENSUS_UNTRUSTED",
+                resume_signal_consensus_codes_status: truthCodesSummary.status,
+                resume_signal_consensus_codes: truthCodesSummary.joined,
+                resume_signal_oracle_trust: signalTruth?.oracle_trust || "UNKNOWN",
+                resume_signal_dex_trust: signalTruth?.dex_trust || "UNKNOWN",
+                resume_signal_rpc_trust: signalTruth?.rpc_trust || "UNKNOWN",
+                resume_signal_crosscheck_status: signalTruth?.crosscheck_status || "XCHK_UNKNOWN",
+                // PR230b: Consensus → execution hard cap (NEVER LIVE)
+                resume_signal_exec_cap_status: signalCapStatus,
+                resume_signal_enforced_execution_mode: signalEnforcedMode || "NONE",
+                resume_signal_enforced_codes_status: signalCapCodesSummary.status,
+                resume_signal_enforced_codes: signalCapCodesSummary.joined,
+                // PR231: Invariant Checks v1 (Final defensive layer)
+                resume_invariant_status: invariantStatus,
+                resume_invariant_failed_group: invariantFailedGroup || "NONE",
+                resume_invariant_codes_status: invariantCodesSummary.status,
+                resume_invariant_codes: invariantCodesSummary.joined,
+                // PR232: Economic Safety Invariants v1 (LIVE capital safety)
+                resume_einv_status: economicInvariantStatus,
+                resume_einv_failed_group: economicInvariantFailedGroup || "NONE",
+                resume_einv_action_override: economicActionOverride,
+                resume_einv_codes_status: economicInvariantCodesSummary.status,
+                resume_einv_codes: economicInvariantCodesSummary.joined,
+                // PR233: Economic Risk Constraints v1 (Article XII)
+                resume_econ_constraint_class: econConstraintClass,
+                resume_econ_constraint_action: econConstraintAction,
+                resume_econ_codes_status: econConstraintCodesSummary.status,
+                resume_econ_codes: econConstraintCodesSummary.joined,
+                // PR233a: Economic Risk Observability Pack v1 (telemetry-only)
+                resume_econ_severity: econRiskSeverity,
+                resume_econ_liquidity_class: econLiquidityCondition || "LIQ_UNKNOWN",
+                resume_econ_slippage_class: econSlippageRisk || "SLIP_UNKNOWN",
+                resume_econ_exposure_class: econExposureStatus || "EXP_UNKNOWN",
+                resume_econ_drawdown_class: econDrawdownStatus || "DD_UNKNOWN",
+                resume_econ_cooldown_status: econRiskCooldownStatus,
+                resume_econ_window_status: econRiskWindowStatus,
+                // PR233b: Economic execution shaping labels
+                resume_econ_exec_size_cap: econSizeCap,
+                resume_econ_exec_freq_cap: econFreqCap,
+                resume_econ_capital_cap: econCapitalCap,
+                resume_econ_exec_shape_status: econShapeStatus,
+                resume_econ_exec_shape_codes_status: econShapeCodesSummary.status,
+                resume_econ_exec_shape_codes: econShapeCodesSummary.joined,
               }, ["ERROR_RUNNER_EXCEPTION"])
             ).catch(() => {}); // Defensive: Don't fail on telemetry error
           }
