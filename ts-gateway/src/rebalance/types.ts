@@ -527,6 +527,13 @@ export interface RunPlan {
   resumeLearningFreezeAction?: "FREEZE_APPLY" | "FREEZE_HOLD" | "FREEZE_RELEASE"; // Action taken
   resumeLearningFreezeCodesStatus?: "PRESENT" | "EMPTY"; // Parity with supervisor telemetry
   resumeLearningFreezeCodes?: string; // Pipe-separated codes (dedup/sort/truncate(8))
+
+  // PR240: Market Phase Graph v1 (Article XVII, market phase state machine)
+  resumeMarketPhase?: MarketPhaseV1; // PHASE_CALM | PHASE_TENSION | PHASE_STRESS | PHASE_DISLOCATION | PHASE_RECOVERY | PHASE_UNKNOWN_SAFE
+  resumeMarketPhaseEdge?: MarketPhaseEdgeV1; // EDGE_STAY | EDGE_ESCALATE | EDGE_DEESCALATE | EDGE_RESET_SAFE | EDGE_ERROR_SAFE
+  resumeMarketPhaseConfidence?: MarketPhaseConfidenceV1; // CONF_STRONG | CONF_WEAK | CONF_UNKNOWN
+  resumeMarketPhaseCodes?: string[]; // Phase codes (label-only, dedup/sort/truncate(8))
+  resumeMarketPhaseEdgeCodes?: string[]; // Edge codes (label-only, dedup/sort/truncate(8))
 }
 
 /**
@@ -1495,6 +1502,100 @@ export type LearningFreezeExitV1 =
   | "LFX_MANUAL_RELEASE";
 
 /**
+ * PR240: Market Phase Graph v1 (Article XVII - Market Phase State Machine)
+ *
+ * Purpose:
+ *   Introduce "Market Phase" as a higher-order state machine above Regime.
+ *   - Regime = instantaneous market condition label
+ *   - Phase = structural stage of market evolution (state + transition graph)
+ *   Provides deterministic, READ-ONLY, label-only phase derivation and phase transition rules.
+ *
+ * Use Cases:
+ *   (A) Clamp which regimes/strategies are eligible
+ *   (B) Adjust recovery timing
+ *   (C) Improve safety explainability
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning, no numeric telemetry
+ *   - Label-only outputs: phases, edges, reasons, confidence buckets
+ *   - Deterministic: Same inputs → same phase/transition
+ *   - Defensive: Never throws; on error → safety-first phase
+ *
+ * Phases (ordered by severity: CALM < TENSION < STRESS < DISLOCATION):
+ *   - PHASE_CALM: Stable signals + low stress
+ *   - PHASE_TENSION: Early stress / weak consensus / mild risk shaping
+ *   - PHASE_STRESS: Degraded signals / repeated tightening / conservative execution
+ *   - PHASE_DISLOCATION: Incident/quarantine/capital-risk high; only sim/manual pathways
+ *   - PHASE_RECOVERY: Post-incident normalization under cooldown governance
+ *   - PHASE_UNKNOWN_SAFE: Defensive fallback (safety-first)
+ */
+export type MarketPhaseV1 =
+  | "PHASE_CALM"
+  | "PHASE_TENSION"
+  | "PHASE_STRESS"
+  | "PHASE_DISLOCATION"
+  | "PHASE_RECOVERY"
+  | "PHASE_UNKNOWN_SAFE";
+
+/**
+ * PR240: Market Phase Edge v1 (Phase Transition Labels)
+ *
+ * Purpose:
+ *   Track how phase transitions occur (for observability and safety audit).
+ *
+ * Edges:
+ *   - EDGE_STAY: No phase change (stable)
+ *   - EDGE_ESCALATE: Phase worsened (CALM→TENSION→STRESS→DISLOCATION)
+ *   - EDGE_DEESCALATE: Phase improved (DISLOCATION→RECOVERY→TENSION→CALM)
+ *   - EDGE_RESET_SAFE: Initial safe posture (no prior phase)
+ *   - EDGE_ERROR_SAFE: Defensive error fallback
+ */
+export type MarketPhaseEdgeV1 =
+  | "EDGE_STAY"
+  | "EDGE_ESCALATE"
+  | "EDGE_DEESCALATE"
+  | "EDGE_RESET_SAFE"
+  | "EDGE_ERROR_SAFE";
+
+/**
+ * PR240: Market Phase Confidence v1 (Label-only confidence buckets)
+ *
+ * Purpose:
+ *   Indicate confidence level in phase derivation based on input signal quality.
+ *
+ * Confidence Levels:
+ *   - CONF_STRONG: All required signals present & trusted
+ *   - CONF_WEAK: Some degraded but sufficient
+ *   - CONF_UNKNOWN: Missing/unknown inputs → safe fallback
+ */
+export type MarketPhaseConfidenceV1 =
+  | "CONF_STRONG"
+  | "CONF_WEAK"
+  | "CONF_UNKNOWN";
+
+/**
+ * PR240: Market Phase Truth v1 (Phase derivation output)
+ *
+ * Purpose:
+ *   Deterministic output of phase derivation function.
+ *   Contains phase, edge, confidence, and explainability codes.
+ *
+ * Fields:
+ *   - phase: Current market phase
+ *   - edge: Phase transition edge
+ *   - confidence: Confidence level in phase derivation
+ *   - phase_codes: Explainability codes for phase (dedup/sort/truncate 8)
+ *   - phase_edge_codes: Explainability codes for edge (dedup/sort/truncate 8)
+ */
+export interface MarketPhaseTruthV1 {
+  phase: MarketPhaseV1;
+  edge: MarketPhaseEdgeV1;
+  confidence: MarketPhaseConfidenceV1;
+  phase_codes: string[];
+  phase_edge_codes: string[];
+}
+
+/**
  * Normalized signal truth output (for downstream regime derivation)
  */
 export interface SignalTruthV1 {
@@ -1667,6 +1768,11 @@ export interface ResumeState {
   learningFreezeCooldownAnchorTs?: number; // Cooldown window anchor timestamp (internal only, v1.1)
   learningFreezeStableTickCount?: number; // Consecutive stable ticks counter (internal only, 0/1/2 for exit)
   learningFreezeLastDecisionCodes?: string[]; // Last decision codes (internal audit trail)
+
+  // PR240: Market Phase Graph v1 (Article XVII - Market Phase State Machine)
+  lastMarketPhase?: MarketPhaseV1; // Last market phase (for edge derivation)
+  lastMarketPhaseTs?: number; // Phase activation timestamp (internal only, NOT emitted)
+  lastMarketPhaseCodes?: string[]; // Last phase decision codes (optional)
 }
 
 /**

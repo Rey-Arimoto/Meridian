@@ -206,6 +206,12 @@ export interface SupervisorDeps {
     resumeLearningFreezeAction?: string;
     resumeLearningFreezeCodes?: string[];
     resumeLearningFreezeCodesStatus?: string;
+    // PR240: Market Phase Graph v1 (Article XVII)
+    resumeMarketPhase?: import("../rebalance/types").MarketPhaseV1;
+    resumeMarketPhaseEdge?: import("../rebalance/types").MarketPhaseEdgeV1;
+    resumeMarketPhaseConfidence?: import("../rebalance/types").MarketPhaseConfidenceV1;
+    resumeMarketPhaseCodes?: string[];
+    resumeMarketPhaseEdgeCodes?: string[];
   }) => void;
 }
 
@@ -3831,6 +3837,238 @@ function deriveLearningFreezeFirewallV1(args: {
 }
 
 /**
+ * PR240: Market Phase Graph v1 (Article XVII - Market Phase State Machine)
+ *
+ * @param args - Phase derivation inputs from v1.4 layers
+ * @returns Phase, edge, confidence, codes
+ *
+ * Purpose:
+ *   Derive market phase as a higher-order state machine above regime.
+ *   Phase = structural stage of market evolution (calm → tension → stress → dislocation → recovery).
+ *   Used to: (A) clamp regime/strategy eligibility, (B) adjust recovery timing, (C) improve safety explainability.
+ *
+ * Constitutional:
+ *   - READ-ONLY: Fixed rules, no learning, no numeric telemetry
+ *   - Label-only outputs: phases, edges, reasons, confidence buckets
+ *   - Deterministic: Same inputs → same phase/transition
+ *   - Defensive: Never throws; on error → PHASE_UNKNOWN_SAFE
+ *
+ * Rules:
+ *   R0: Defensive baseline - errors → PHASE_UNKNOWN_SAFE + EDGE_ERROR_SAFE
+ *   R1: Hard overrides (highest priority → PHASE_DISLOCATION)
+ *   R2: Stress classification
+ *   R3: Tension classification
+ *   R4: Calm classification
+ *   R5: Recovery classification
+ *   R6: Confidence derivation
+ *   R7: Edge derivation (STAY | ESCALATE | DEESCALATE | RESET_SAFE | ERROR_SAFE)
+ */
+function deriveMarketPhaseGraphV1(args: {
+  // Inputs (label-only, from v1.4 layers)
+  signalConsensus?: import("../rebalance/types").SignalConsensusV1;
+  regime?: import("../rebalance/types").MarketRegimeV1;
+  executionModeEnforced?: import("../rebalance/types").ExecutionMode;
+  quarantineStatus?: import("../rebalance/types").QuarantineStatusV1;
+  quarantineSeverity?: import("../rebalance/types").IncidentSeverityV1;
+  capitalRiskLevel?: import("../rebalance/types").CapitalRiskUsageLevelV1;
+  econSeverity?: string; // SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL
+  recoveryGovernance?: import("../rebalance/types").RecoveryPermissionV1;
+  learningFreezeStatus?: import("../rebalance/types").LearningFreezeStatusV1;
+  oscillationWarn?: boolean; // true = WARN, false = OK
+  lastPhase?: import("../rebalance/types").MarketPhaseV1;
+  nowMs: number;
+}): import("../rebalance/types").MarketPhaseTruthV1 {
+  try {
+    const phase_codes: string[] = [];
+    const phase_edge_codes: string[] = [];
+
+    const {
+      signalConsensus,
+      regime,
+      executionModeEnforced,
+      quarantineStatus,
+      quarantineSeverity,
+      capitalRiskLevel,
+      econSeverity,
+      recoveryGovernance,
+      learningFreezeStatus,
+      oscillationWarn,
+      lastPhase,
+      nowMs,
+    } = args;
+
+    let phase: import("../rebalance/types").MarketPhaseV1 = "PHASE_CALM";
+    let edge: import("../rebalance/types").MarketPhaseEdgeV1 = "EDGE_STAY";
+    let confidence: import("../rebalance/types").MarketPhaseConfidenceV1 = "CONF_STRONG";
+
+    // R1: Hard overrides (highest priority → PHASE_DISLOCATION)
+    if (quarantineStatus === "Q1_ACTIVE" || quarantineSeverity === "SEV3_CRITICAL") {
+      phase = "PHASE_DISLOCATION";
+      confidence = "CONF_STRONG";
+      phase_codes.push("PHASE_FROM_QUARANTINE");
+      phase_codes.push("PHASE_R1_DISLOCATION");
+    } else if (capitalRiskLevel === "RISK_EXHAUSTED") {
+      phase = "PHASE_DISLOCATION";
+      confidence = "CONF_STRONG";
+      phase_codes.push("PHASE_FROM_CAPITAL_RISK_EXHAUSTED");
+      phase_codes.push("PHASE_R1_DISLOCATION");
+    } else if (recoveryGovernance === "PERMANENT_HALT") {
+      phase = "PHASE_DISLOCATION";
+      confidence = "CONF_STRONG";
+      phase_codes.push("PHASE_FROM_GOV_PERMANENT_HALT");
+      phase_codes.push("PHASE_R1_DISLOCATION");
+    }
+    // R2: Stress classification
+    else if (signalConsensus === "CONSENSUS_UNTRUSTED") {
+      // Check if combined with high risk → DISLOCATION
+      if (capitalRiskLevel === "RISK_HIGH" || econSeverity === "SEV_CRITICAL") {
+        phase = "PHASE_DISLOCATION";
+        phase_codes.push("PHASE_FROM_SIGNAL_UNTRUSTED_HIGH_RISK");
+        phase_codes.push("PHASE_R2_DISLOCATION");
+      } else {
+        phase = "PHASE_STRESS";
+        phase_codes.push("PHASE_FROM_SIGNAL_UNTRUSTED");
+        phase_codes.push("PHASE_R2_STRESS");
+      }
+      confidence = "CONF_WEAK";
+    } else if (signalConsensus === "CONSENSUS_DEGRADED") {
+      phase = "PHASE_STRESS";
+      confidence = "CONF_WEAK";
+      phase_codes.push("PHASE_FROM_SIGNAL_DEGRADED");
+      phase_codes.push("PHASE_R2_STRESS");
+    } else if (econSeverity === "SEV_CRITICAL") {
+      // Check if combined with high capital risk → DISLOCATION
+      const riskLevel = capitalRiskLevel as import("../rebalance/types").CapitalRiskUsageLevelV1 | undefined;
+      const isHighRisk = riskLevel === "RISK_HIGH" || riskLevel === "RISK_EXHAUSTED";
+      if (isHighRisk) {
+        phase = "PHASE_DISLOCATION";
+        phase_codes.push("PHASE_FROM_ECON_CRITICAL_HIGH_RISK");
+        phase_codes.push("PHASE_R2_DISLOCATION");
+      } else {
+        phase = "PHASE_STRESS";
+        phase_codes.push("PHASE_FROM_ECON_CRITICAL");
+        phase_codes.push("PHASE_R2_STRESS");
+      }
+      confidence = "CONF_WEAK";
+    } else if (learningFreezeStatus === "FREEZE_ON") {
+      // Minimum PHASE_TENSION (never CALM)
+      phase = "PHASE_TENSION";
+      confidence = "CONF_WEAK";
+      phase_codes.push("PHASE_FROM_FREEZE");
+      phase_codes.push("PHASE_R2_TENSION_FROM_FREEZE");
+    }
+    // R5: Recovery classification (check before R3/R4)
+    else if (
+      (lastPhase === "PHASE_DISLOCATION" || lastPhase === "PHASE_STRESS") &&
+      (!quarantineStatus || (quarantineStatus as import("../rebalance/types").QuarantineStatusV1) !== "Q1_ACTIVE") &&
+      (recoveryGovernance === "COOLDOWN_ONLY" || recoveryGovernance === "MANUAL_ONLY")
+    ) {
+      phase = "PHASE_RECOVERY";
+      confidence = signalConsensus === "CONSENSUS_STRONG" ? "CONF_STRONG" : "CONF_WEAK";
+      phase_codes.push("PHASE_FROM_POST_INCIDENT_GOV");
+      phase_codes.push("PHASE_R5_RECOVERY");
+    }
+    // R3: Tension classification
+    else if (
+      signalConsensus === "CONSENSUS_WEAK" ||
+      oscillationWarn === true ||
+      econSeverity === "SEV_HIGH"
+    ) {
+      phase = "PHASE_TENSION";
+      confidence = signalConsensus === "CONSENSUS_WEAK" ? "CONF_WEAK" : "CONF_STRONG";
+      phase_codes.push("PHASE_FROM_WEAK_OR_OSC_OR_ECON_HIGH");
+      phase_codes.push("PHASE_R3_TENSION");
+    }
+    // R4: Calm classification
+    else if (
+      signalConsensus === "CONSENSUS_STRONG" &&
+      (econSeverity === "SEV_LOW" || econSeverity === "SEV_MEDIUM" || !econSeverity) &&
+      (capitalRiskLevel === "RISK_LOW" || capitalRiskLevel === "RISK_MEDIUM" || !capitalRiskLevel) &&
+      (!quarantineStatus || (quarantineStatus as import("../rebalance/types").QuarantineStatusV1) !== "Q1_ACTIVE") &&
+      (!learningFreezeStatus || (learningFreezeStatus as import("../rebalance/types").LearningFreezeStatusV1) !== "FREEZE_ON")
+    ) {
+      phase = "PHASE_CALM";
+      confidence = "CONF_STRONG";
+      phase_codes.push("PHASE_FROM_STRONG_STABLE");
+      phase_codes.push("PHASE_R4_CALM");
+    }
+    // Fallback to TENSION if no other rules matched
+    else {
+      phase = "PHASE_TENSION";
+      confidence = signalConsensus === "CONSENSUS_STRONG" ? "CONF_STRONG" : "CONF_WEAK";
+      phase_codes.push("PHASE_FALLBACK_TENSION");
+    }
+
+    // R6: Confidence adjustment
+    // Only adjust confidence if not already set by specific rules (e.g., freeze, quarantine)
+    // Freeze ON always means CONF_WEAK, even if signals are strong
+    if (!signalConsensus) {
+      confidence = "CONF_UNKNOWN";
+      phase_codes.push("PHASE_CONF_UNKNOWN_NO_CONSENSUS");
+    } else if (learningFreezeStatus === "FREEZE_ON") {
+      // Keep CONF_WEAK from freeze rule (don't override)
+      confidence = "CONF_WEAK";
+    } else if (signalConsensus === "CONSENSUS_STRONG") {
+      confidence = "CONF_STRONG";
+    } else if (signalConsensus === "CONSENSUS_WEAK" || signalConsensus === "CONSENSUS_DEGRADED") {
+      confidence = "CONF_WEAK";
+    } else if (signalConsensus === "CONSENSUS_UNTRUSTED") {
+      confidence = "CONF_WEAK";
+    }
+
+    // R7: Edge derivation
+    const phaseSeverity: { [key in import("../rebalance/types").MarketPhaseV1]: number } = {
+      PHASE_CALM: 0,
+      PHASE_TENSION: 1,
+      PHASE_RECOVERY: 1.5, // Between TENSION and STRESS
+      PHASE_STRESS: 2,
+      PHASE_DISLOCATION: 3,
+      PHASE_UNKNOWN_SAFE: 4,
+    };
+
+    if (!lastPhase) {
+      // No prior phase
+      if (phase === "PHASE_CALM") {
+        edge = "EDGE_STAY"; // Starting in calm is not a reset
+        phase_edge_codes.push("EDGE_STAY_INITIAL_CALM");
+      } else {
+        edge = "EDGE_RESET_SAFE"; // Starting in non-calm is a safe reset
+        phase_edge_codes.push("EDGE_RESET_SAFE_INITIAL");
+      }
+    } else if (phase === lastPhase) {
+      edge = "EDGE_STAY";
+      phase_edge_codes.push("EDGE_STAY_NO_CHANGE");
+    } else if (phaseSeverity[phase] > phaseSeverity[lastPhase]) {
+      edge = "EDGE_ESCALATE";
+      phase_edge_codes.push(`EDGE_ESCALATE_${lastPhase}_TO_${phase}`);
+    } else if (phaseSeverity[phase] < phaseSeverity[lastPhase]) {
+      edge = "EDGE_DEESCALATE";
+      phase_edge_codes.push(`EDGE_DEESCALATE_${lastPhase}_TO_${phase}`);
+    } else {
+      edge = "EDGE_STAY"; // Safety fallback
+      phase_edge_codes.push("EDGE_STAY_FALLBACK");
+    }
+
+    return {
+      phase,
+      edge,
+      confidence,
+      phase_codes: Array.from(new Set(phase_codes)).sort().slice(0, 8),
+      phase_edge_codes: Array.from(new Set(phase_edge_codes)).sort().slice(0, 8),
+    };
+  } catch (err) {
+    // R0: Defensive: On error, return PHASE_UNKNOWN_SAFE
+    return {
+      phase: "PHASE_UNKNOWN_SAFE",
+      edge: "EDGE_ERROR_SAFE",
+      confidence: "CONF_UNKNOWN",
+      phase_codes: ["PHASE_ERR_FALLBACK", `PHASE_ERR_${String(err).substring(0, 30)}`].sort().slice(0, 8),
+      phase_edge_codes: ["EDGE_ERR_FALLBACK"].slice(0, 8),
+    };
+  }
+}
+
+/**
  * PR226: Detect strategy/regime oscillation (telemetry only)
  *
  * @param args - Oscillation detection inputs
@@ -4427,6 +4665,13 @@ export async function runSupervisorOnceV1(
       let learningFreezeExit: import("../rebalance/types").LearningFreezeExitV1 = "LFX_NONE";
       let learningFreezeAction: "FREEZE_APPLY" | "FREEZE_HOLD" | "FREEZE_RELEASE" = "FREEZE_RELEASE";
       let learningFreezeCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+
+      // PR240: Market Phase Graph v1 variables (label-only market phase state machine)
+      let marketPhase: import("../rebalance/types").MarketPhaseV1 = "PHASE_CALM";
+      let marketPhaseEdge: import("../rebalance/types").MarketPhaseEdgeV1 = "EDGE_STAY";
+      let marketPhaseConfidence: import("../rebalance/types").MarketPhaseConfidenceV1 = "CONF_STRONG";
+      let marketPhaseCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
+      let marketPhaseEdgeCodesSummary: { status: "PRESENT" | "EMPTY"; joined: string } = { status: "EMPTY", joined: "" };
 
       if (state.resumeState) {
         resumeId = generateResumeIdV1();
@@ -5499,7 +5744,40 @@ export async function runSupervisorOnceV1(
           notes.push("NOTE_FREEZE_NO_RELAX_SHAPING");
         }
 
-        // PR213/PR214/PR215/PR219/PR220/PR228/PR229/PR231/PR232/PR236/PR237: Set resume fields on runPlan before execution
+        // PR240: Market Phase Graph v1 (Article XVII - Market Phase State Machine)
+        const phaseResult = deriveMarketPhaseGraphV1({
+          signalConsensus: signalTruth?.consensus,
+          regime: marketRegime,
+          executionModeEnforced: enforcedExecutionMode,
+          quarantineStatus,
+          quarantineSeverity,
+          capitalRiskLevel: capitalRiskUsageLevel,
+          econSeverity: econRiskSeverity, // From PR233a
+          recoveryGovernance: recoveryPermission,
+          learningFreezeStatus,
+          oscillationWarn: oscillationStatus !== "OSC_NONE", // Convert to boolean
+          lastPhase: state.resumeState?.lastMarketPhase,
+          nowMs: getNowMs(),
+        });
+
+        marketPhase = phaseResult.phase;
+        marketPhaseEdge = phaseResult.edge;
+        marketPhaseConfidence = phaseResult.confidence;
+        marketPhaseCodesSummary = summarizeCodeArrayV1(phaseResult.phase_codes);
+        marketPhaseEdgeCodesSummary = summarizeCodeArrayV1(phaseResult.phase_edge_codes);
+
+        // PR240: Apply state updates
+        if (state.resumeState) {
+          state.resumeState.lastMarketPhase = marketPhase;
+          state.resumeState.lastMarketPhaseCodes = phaseResult.phase_codes;
+
+          // Set phase timestamp on phase change
+          if (marketPhaseEdge !== "EDGE_STAY" || !state.resumeState.lastMarketPhaseTs) {
+            state.resumeState.lastMarketPhaseTs = getNowMs();
+          }
+        }
+
+        // PR213/PR214/PR215/PR219/PR220/PR228/PR229/PR231/PR232/PR236/PR237/PR240: Set resume fields on runPlan before execution
         if (deps?.setRunPlanResumeFields) {
           deps.setRunPlanResumeFields({
             resumeId,
@@ -5606,6 +5884,12 @@ export async function runSupervisorOnceV1(
             resumeLearningFreezeAction: learningFreezeAction,
             resumeLearningFreezeCodes: freezeResult.codes,
             resumeLearningFreezeCodesStatus: learningFreezeCodesSummary.status,
+            // PR240: Market Phase Graph v1 (Article XVII)
+            resumeMarketPhase: marketPhase,
+            resumeMarketPhaseEdge: marketPhaseEdge,
+            resumeMarketPhaseConfidence: marketPhaseConfidence,
+            resumeMarketPhaseCodes: phaseResult.phase_codes,
+            resumeMarketPhaseEdgeCodes: phaseResult.phase_edge_codes,
           });
         }
 
@@ -5749,6 +6033,14 @@ export async function runSupervisorOnceV1(
             resume_learning_freeze_action: learningFreezeAction,
             resume_learning_freeze_codes_status: learningFreezeCodesSummary.status,
             resume_learning_freeze_codes: learningFreezeCodesSummary.joined,
+            // PR240: Market Phase Graph labels (Article XVII)
+            resume_market_phase: marketPhase,
+            resume_market_phase_edge: marketPhaseEdge,
+            resume_market_phase_confidence: marketPhaseConfidence,
+            resume_market_phase_codes_status: marketPhaseCodesSummary.status,
+            resume_market_phase_codes: marketPhaseCodesSummary.joined,
+            resume_market_phase_edge_codes_status: marketPhaseEdgeCodesSummary.status,
+            resume_market_phase_edge_codes: marketPhaseEdgeCodesSummary.joined,
           })
         ).catch(() => {}); // Defensive: Don't fail on telemetry error
       }

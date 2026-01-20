@@ -1036,6 +1036,31 @@ export async function runChunkedExecutionV1(
     runStartLabels.resume_learning_freeze_codes = runPlan.resumeLearningFreezeCodes;
   }
 
+  // PR240: Market Phase Graph v1 (Article XVII, market phase state machine)
+  if (runPlan.resumeMarketPhase) {
+    runStartLabels.resume_market_phase = runPlan.resumeMarketPhase;
+  }
+  if (runPlan.resumeMarketPhaseEdge) {
+    runStartLabels.resume_market_phase_edge = runPlan.resumeMarketPhaseEdge;
+  }
+  if (runPlan.resumeMarketPhaseConfidence) {
+    runStartLabels.resume_market_phase_confidence = runPlan.resumeMarketPhaseConfidence;
+  }
+  if (runPlan.resumeMarketPhaseCodes && runPlan.resumeMarketPhaseCodes.length > 0) {
+    runStartLabels.resume_market_phase_codes_status = "PRESENT";
+    runStartLabels.resume_market_phase_codes = runPlan.resumeMarketPhaseCodes.join("|");
+  } else {
+    runStartLabels.resume_market_phase_codes_status = "EMPTY";
+    runStartLabels.resume_market_phase_codes = "";
+  }
+  if (runPlan.resumeMarketPhaseEdgeCodes && runPlan.resumeMarketPhaseEdgeCodes.length > 0) {
+    runStartLabels.resume_market_phase_edge_codes_status = "PRESENT";
+    runStartLabels.resume_market_phase_edge_codes = runPlan.resumeMarketPhaseEdgeCodes.join("|");
+  } else {
+    runStartLabels.resume_market_phase_edge_codes_status = "EMPTY";
+    runStartLabels.resume_market_phase_edge_codes = "";
+  }
+
   // PR210: Add resume diff labels (origin vs current start context)
   if (runPlan.resumeOriginRunReasonCodes) {
     // Build "current" start context reasons (deterministic, label-only)
